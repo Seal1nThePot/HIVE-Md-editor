@@ -559,7 +559,7 @@ function WritingApp() {
     if(historyRunning.current)return;
     humanHistory.flushAll();
     setHistoryLaunch(previous=>({tab,version:previous.version+1}));
-    if(desktopPanels.enabled&&!document.hasFocus())window.hiveDesktop?.windowCommand('focus');
+    if(tab==='ai'&&desktopPanels.windows.has('conversation'))window.hiveDesktop?.windowCommand('focus');
     setHistoryError('');setHistoryOpen(true);void history.read();
   }
   function runChatAction(id:AIButtonId){
