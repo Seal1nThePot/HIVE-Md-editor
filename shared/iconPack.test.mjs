@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import manifest from '../Test_UI/icons/icons.manifest.json' with {type:'json'};
+import approvedIconIds from '../scripts/approved-icon-ids.json' with {type:'json'};
 import template from '../templates/icons.json' with {type:'json'};
 import builtins from './icons.json' with {type:'json'};
 import {dockIconPayload,normalizeIconOverrides,validateIconDefinition,validateIconPack} from './iconPack.mjs';
@@ -9,7 +9,7 @@ const icon=(tag,attrs)=>({viewBox:'0 0 24 24',shapes:[{tag,attrs}]});
 describe('template icons',()=>{
   it('ships a valid default pack with every registered key and approved asset',()=>{
     expect(Object.keys(validateIconPack(template).icons).sort()).toEqual(Object.keys(builtins).sort());
-    expect(manifest.entries.every(({id})=>Object.hasOwn(template.icons,id))).toBe(true);
+    expect(approvedIconIds.every(id=>Object.hasOwn(template.icons,id))).toBe(true);
     expect(template.icons.AiLauncher.viewBox).toBe('0 0 32 32');
     expect(template.icons['model.reasoning.serviceDefault'].shapes[1].attrs.fill).toBe('var(--icon-accent,currentColor)');
   });

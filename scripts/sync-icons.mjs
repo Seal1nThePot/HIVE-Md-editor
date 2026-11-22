@@ -4,14 +4,14 @@ import {validateIconDefinition} from '../shared/iconPack.mjs';
 
 const templateFile=new URL('../templates/icons.json',import.meta.url);
 const fallbackFile=new URL('../shared/icons.json',import.meta.url);
-const manifestFile=new URL('../Test_UI/icons/icons.manifest.json',import.meta.url);
+const approvedIdsFile=new URL('./approved-icon-ids.json',import.meta.url);
 const readJson=async file=>JSON.parse(await readFile(file,'utf8'));
-const [pack,fallback,manifest]=await Promise.all([templateFile,fallbackFile,manifestFile].map(readJson));
+const [pack,fallback,approvedIconIds]=await Promise.all([templateFile,fallbackFile,approvedIdsFile].map(readJson));
 const flag=process.argv[2]??'--check';
 assert.ok(['--check','--write-fallback'].includes(flag),'Use --check or --write-fallback.');
 assert.ok(pack?.version===1&&pack.icons&&typeof pack.icons==='object'&&!Array.isArray(pack.icons),'Expected a version 1 icon pack.');
 
-const requiredNames=new Set([...Object.keys(fallback),...manifest.entries.map(entry=>entry.id)]);
+const requiredNames=new Set([...Object.keys(fallback),...approvedIconIds]);
 for(const name of requiredNames)assert.ok(Object.hasOwn(pack.icons,name),`Missing template icon ${name}.`);
 
 function validate(name,icon){
