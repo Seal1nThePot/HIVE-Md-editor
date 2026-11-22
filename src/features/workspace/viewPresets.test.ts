@@ -36,9 +36,13 @@ describe('saved views',()=>{
     const view=sample();view.layout.open.push('search');view.layout.rects.search=rect;
     expect(parseViewCollection(encode(view)).views[0].layout.open).toContain('search');
   });
-  it('keeps the custom status order, paragraph count and count mode together, while accepting older views',()=>{
-    const view=sample();view.statusItems=['paragraphs','count','save'];view.statusCountMode='text';
-    expect(parseViewCollection(encode(view)).views[0]).toMatchObject({statusItems:['paragraphs','count','save'],statusCountMode:'text'});
+  it('keeps the custom status order and count mode together while accepting older views',()=>{
+    const view=sample();view.statusItems=['averageParagraphLength','paragraphs','count','narrationDialogue','save'];view.statusCountMode='text';
+    expect(parseViewCollection(encode(view)).views[0]).toMatchObject({
+      statusItems:['averageParagraphLength','paragraphs','count','narrationDialogue','save'],statusCountMode:'text',
+    });
+    view.statusItems=['paragraphs','count','save'];
+    expect(parseViewCollection(encode(view)).views[0].statusItems).toEqual(['paragraphs','count','save']);
     delete view.statusCountMode;expect(parseViewCollection(encode(view)).views[0].statusCountMode).toBeUndefined();
     view.statusCountMode='invalid' as never;expect(()=>parseViewCollection(encode(view))).toThrow('格式无效');
   });

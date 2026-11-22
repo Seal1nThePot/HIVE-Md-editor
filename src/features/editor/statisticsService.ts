@@ -1,19 +1,23 @@
 import type {Text} from '@codemirror/state';
-import {cacheDocumentStatistics,cachedDocumentStatistics,type textStatistics} from './statusModel';
+import {cacheDocumentStatistics,cachedDocumentStatistics,type DocumentStatistics,type TextStatistics} from './statusModel';
 
-type Statistics=ReturnType<typeof textStatistics>;
-type Result={value?:Statistics;error?:string};
-type Listener=(result:Result)=>void;
-type Job={id:number;key:object;parts:readonly Text[];doc?:Text;listeners:Set<Listener>};
+type Result<Statistics>={value?:Statistics;error?:string};
+type Listener<Statistics=TextStatistics>=(result:Result<Statistics>)=>void;
+type WorkerStatistics=TextStatistics|DocumentStatistics;
+type Job={id:number;key:object;parts:readonly Text[];doc?:Text;listeners:Set<Listener<WorkerStatistics>>};
 let worker:Worker|null=null,active:Job|null=null,timer:ReturnType<typeof setTimeout>|undefined,sequence=0;
 let idleTimer:ReturnType<typeof setTimeout>|undefined;
 export const statisticsIdleDelay=1500;
+const statisticsUnavailable='字数统计暂时不可用';
 const pending=new Map<object,Job>();
 function stopWorker(){const previous=worker;worker=null;previous?.terminate();}
 
-function finish(result:Result){
+function finish(result:Result<WorkerStatistics>){
   const job=active;active=null;
-  if(job?.listeners.size){if(result.value&&job.doc)cacheDocumentStatistics(job.doc,result.value);for(const listener of job.listeners)listener(result);}
+  if(job?.listeners.size){
+    if(job.doc&&result.value&&'narrationCount' in result.value)cacheDocumentStatistics(job.doc,result.value);
+    for(const listener of job.listeners)listener(result);
+  }
   schedule();
 }
 function start(){
@@ -23,11 +27,11 @@ function start(){
   try{
     if(!worker){
       const created=new Worker(new URL('./statistics.worker.ts',import.meta.url),{type:'module'});worker=created;
-      created.onmessage=(event:MessageEvent<Result&{id:number}>)=>{if(worker===created&&event.data.id===active?.id)finish(event.data);};
-      created.onerror=()=>{if(worker!==created)return;stopWorker();finish({error:'字数统计暂时不可用'});};
+      created.onmessage=(event:MessageEvent<Result<WorkerStatistics>&{id:number}>)=>{if(worker===created&&event.data.id===active?.id)finish(event.data);};
+      created.onerror=()=>{if(worker!==created)return;stopWorker();finish({error:statisticsUnavailable});};
     }
-    worker.postMessage({id:job.id,texts:job.parts.map(doc=>doc.toString())});
-  }catch{finish({error:'字数统计暂时不可用'});}
+    worker.postMessage({id:job.id,texts:job.parts.map(doc=>doc.toString()),document:!!job.doc});
+  }catch{finish({error:statisticsUnavailable});}
 }
 function schedule(){
   clearTimeout(idleTimer);idleTimer=undefined;
@@ -36,12 +40,15 @@ function schedule(){
 }
 
 /** One worker and at most one pending state per live subscriber, with no queued full strings. */
-export function requestDocumentStatistics(doc:Text,listener:Listener){
+export function requestDocumentStatistics(doc:Text,listener:Listener<DocumentStatistics>){
   const cached=cachedDocumentStatistics(doc);if(cached){listener({value:cached});return ()=>{};}
-  return request(doc,[doc],listener,doc);
+  return request(doc,[doc],({error})=>{
+    const value=cachedDocumentStatistics(doc);
+    listener(value?{value}:{error:error??statisticsUnavailable});
+  },doc);
 }
 export function requestSelectionStatistics(parts:readonly Text[],listener:Listener){return request(parts,parts,listener);}
-function request(key:object,parts:readonly Text[],listener:Listener,doc?:Text){
+function request(key:object,parts:readonly Text[],listener:Listener<WorkerStatistics>,doc?:Text){
   let job=active?.key===key?active:pending.get(key);
   if(!job){job={id:++sequence,key,doc,parts,listeners:new Set()};pending.set(key,job);}
   job.listeners.add(listener);schedule();
