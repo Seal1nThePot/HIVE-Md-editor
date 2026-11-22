@@ -12,7 +12,7 @@ type Failure={id:string;path:string;error:string;dataDeleted?:boolean;partialDat
 export type TrashDeleteResult={deletedIds:string[];failed:Failure[]};
 export type TrashPurgeResult=TrashDeleteResult;
 export type TrashConfirmationRequest={workspaceId:string;items:TrashRecord[]};
-type Props={open:boolean;refreshKey:number;onRestore:(id:string)=>Promise<unknown>;onChanged:()=>void;deleteRequest?:TrashConfirmationRequest|null;onDeleteRequestShown?:(request:TrashConfirmationRequest)=>void;onDeleted?:(items:TrashRecord[])=>void};
+type Props={open:boolean;refreshKey:number;onRestore:(id:string)=>Promise<unknown>;onPreview?:(item:TrashRecord)=>Promise<unknown>;onChanged:()=>void;deleteRequest?:TrashConfirmationRequest|null;onDeleteRequestShown?:(request:TrashConfirmationRequest)=>void;onDeleted?:(items:TrashRecord[])=>void};
 
 const SORTS=[
   {id:'newest',label:'删除时间（新→旧）',icon:'file.sortNewest',by:'time',direction:-1},
@@ -40,7 +40,7 @@ const relativeTime=(value:string)=>{
 const dayLabel=(days:number)=>days===0?'全部':days+' 天';
 const failureText=(item:Failure)=>item.dataDeleted?'内容已永久删除，记录待清理':item.partialDataDeleted?'部分内容已删除，余项保留':'未完成';
 
-export default function TrashPanel({open,refreshKey,onRestore,onChanged,deleteRequest,onDeleteRequestShown,onDeleted}:Props){
+export default function TrashPanel({open,refreshKey,onRestore,onPreview,onChanged,deleteRequest,onDeleteRequestShown,onDeleted}:Props){
   const {info,request}=useFileWorkspace(),document=usePanelDocument(),window=document.defaultView!;
   const [items,setItems]=useState<TrashRecord[]>([]),[query,setQuery]=useState(''),[sort,setSort]=useState<SortId>('newest'),[days,setDays]=useState(30);
   const [sortMenuOpen,setSortMenuOpen]=useState(false);
@@ -48,6 +48,7 @@ export default function TrashPanel({open,refreshKey,onRestore,onChanged,deleteRe
   const [busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const [confirm,setConfirm]=useState<{preview:TrashPreview}|{items:TrashRecord[]}|null>(null);
   const dialog=useRef<HTMLDialogElement>(null),generation=useRef(0),controllers=useRef(new Set<AbortController>()),listSequence=useRef(0),busyRef=useRef(false);
+  const openings=useRef(new Map<string,number>());
   const abortAll=useCallback(()=>{generation.current++;listSequence.current++;controllers.current.forEach(controller=>controller.abort());controllers.current.clear();busyRef.current=false;},[]);
   const load=useCallback(async()=>{
     if(!open)return;
@@ -135,6 +136,16 @@ export default function TrashPanel({open,refreshKey,onRestore,onChanged,deleteRe
     finally{controllers.current.delete(controller);if(epoch===generation.current){busyRef.current=false;setBusy(false);}}
   }
   async function restore(item:TrashRecord){if(busyRef.current)return;busyRef.current=true;setBusy(true);setError('');setNotice('');const epoch=generation.current;try{await onRestore(item.id);if(epoch!==generation.current)return;setNotice('已恢复 '+nameOf(item.path)+'。');onChanged();await load();}catch(e){if(epoch===generation.current)setError((e as Error).message);}finally{if(epoch===generation.current){busyRef.current=false;setBusy(false);}}}
+  function canPreview(item:TrashRecord){return !!onPreview&&item.type==='file'&&!item.missing&&/\.md$/i.test(item.path);}
+  async function openDocument(item:TrashRecord){
+    const epoch=generation.current;
+    if(!onPreview||busyRef.current||!canPreview(item)||openings.current.get(item.id)===epoch)return;
+    openings.current.set(item.id,epoch);
+    setError('');
+    try{await onPreview(item);}
+    catch(error){if(generation.current===epoch&&(error as Error).name!=='AbortError')setError((error as Error).message);}
+    finally{if(openings.current.get(item.id)===epoch)openings.current.delete(item.id);}
+  }
   if(!open)return null;
   const preview=confirm&&'preview' in confirm?confirm.preview:null;
   const targets=confirm&&'items' in confirm?confirm.items:[];
@@ -170,9 +181,11 @@ export default function TrashPanel({open,refreshKey,onRestore,onChanged,deleteRe
     </div>,document.body)}
     {error&&<p className="trash-panel-message" role="alert">{error}</p>}{notice&&<p className="trash-panel-message" role="status">{notice}</p>}
     <div className="trash-panel-list">
-      {visible.map(item=><div className="trash-panel-row" key={item.id} title={item.path}>
+      {visible.map(item=><div className="trash-panel-row" key={item.id} title={item.path} data-trash-id={item.id}
+        onDoubleClick={canPreview(item)?event=>{if(!(event.target as Element).closest('.trash-panel-actions'))void openDocument(item);}:undefined}>
         <Icon name={item.type==='folder'?'trash.deletedFolder':'trash.deletedFile'} size={15} className="trash-panel-kind"/>
-        <span className="trash-panel-name">{nameOf(item.path)}</span>
+        {canPreview(item)?<button type="button" className="trash-panel-name trash-preview-trigger" title="双击预览文稿" disabled={busy}
+          aria-label={'预览 '+nameOf(item.path)} onClick={event=>{if(event.detail===0)void openDocument(item);}}>{nameOf(item.path)}</button>:<span className="trash-panel-name">{nameOf(item.path)}</span>}
         <span className="trash-panel-meta">
           <span className="trash-panel-path" title={parentOf(item.path)||'根目录'}>{parentOf(item.path)||'根目录'}</span>
           <time dateTime={item.deletedAt} title={dateOf(item.deletedAt)}>{relativeTime(item.deletedAt)}</time>

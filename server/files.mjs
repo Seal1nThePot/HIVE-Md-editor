@@ -7,6 +7,8 @@ import { scanFileTree } from "./file-index-scan.mjs";
 
 export const hash = (text) =>
   crypto.createHash("sha256").update(text).digest("hex");
+export const MAX_MARKDOWN_BYTES = 2_000_000;
+export const markdownText = raw => raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
 const fail = (message, status = 400) =>
   Object.assign(new Error(message), { status });
 
@@ -95,7 +97,7 @@ export function fileStore(root, state, options = {}) {
   async function read(relative, knownHash) {
     const target = await resolve(relative);
     const stat = await fs.stat(target);
-    if (stat.size > 2_000_000)
+    if (stat.size > MAX_MARKDOWN_BYTES)
       throw fail("原型支持 2 MB 以内的 Markdown 文件。");
     const raw = await fs.readFile(target, "utf8");
     const currentHash = hash(raw);
@@ -103,7 +105,7 @@ export function fileStore(root, state, options = {}) {
       return { path: relative, hash: currentHash, unchanged: true };
     return {
       path: relative,
-      text: raw.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n"),
+      text: markdownText(raw),
       hash: currentHash,
       eol: raw.includes("\r\n") ? "CRLF" : "LF",
       bom: raw.startsWith("\uFEFF"),
@@ -117,7 +119,7 @@ export function fileStore(root, state, options = {}) {
     bom = false,
   }) {
     const target = await resolve(relative);
-    if (typeof text !== "string" || Buffer.byteLength(text) > 2_000_000)
+    if (typeof text !== "string" || Buffer.byteLength(text) > MAX_MARKDOWN_BYTES)
       throw fail("文件内容无效或超过 2 MB。");
     return exclusive(target, async () => {
       const old = await readIfPresent(target);

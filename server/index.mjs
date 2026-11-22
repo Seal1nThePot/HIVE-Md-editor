@@ -145,6 +145,7 @@ app.get("/api/health", (_req, res) =>
   }),
 );
 app.get('/api/explorer/trash',async(req,res)=>res.json(await req.workspace.explorer.listTrash()));
+app.get('/api/explorer/trash/document',async(req,res)=>res.json(await req.workspace.explorer.readTrashedDocument(req.query.id)));
 app.post('/api/explorer/trash/preview',async(req,res)=>res.json(await req.workspace.explorer.previewTrash(req.body.days)));
 app.post('/api/explorer/trash/purge',async(req,res)=>res.json(await req.workspace.explorer.purgeTrash(req.body.token)));
 app.post('/api/explorer/trash/delete',async(req,res)=>res.json(await req.workspace.explorer.deleteTrash(req.body?.ids)));

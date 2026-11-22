@@ -3,6 +3,7 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {EventEmitter} from 'node:events';
+import {randomUUID} from 'node:crypto';
 import {fileStore} from './files.mjs';
 import {explorerStore} from './explorer.mjs';
 let root,state,files,explorer,base;
@@ -38,6 +39,39 @@ it('does not overwrite a collision while renaming, moving or restoring',async()=
   const deleted=await explorer.manage({action:'trash',path:'a.md'});await files.save({path:'a.md',text:'new',baseline:null});
   await expect(explorer.manage({action:'restore',id:deleted.id})).rejects.toMatchObject({status:409});
   expect((await files.read('a.md')).text).toBe('new');expect(await explorer.listTrash()).toHaveLength(1);
+});
+it('reads a deleted Markdown snapshot by ID without restoring a file or replacing a same-name live note',async()=>{
+  const pathName='notes/旧稿.MD', removed='# 旧稿\n带 **加粗** 的行。';
+  await files.save({path:pathName,text:removed,baseline:null,eol:'CRLF',bom:true});
+  const trashed=await explorer.manage({action:'trash',path:pathName});
+  await expect(files.read(pathName)).rejects.toMatchObject({code:'ENOENT'});
+  expect(await explorer.readTrashedDocument(trashed.id)).toEqual({id:trashed.id,path:pathName,text:removed});
+  expect(await fs.readFile(path.join(root,'.hive-trash',trashed.id),'utf8')).toBe('\uFEFF'+removed.replace('\n','\r\n'));
+  await files.save({path:pathName,text:'后来重建的文稿',baseline:null});
+  expect((await explorer.readTrashedDocument(trashed.id)).text).toBe(removed);
+  expect((await files.read(pathName)).text).toBe('后来重建的文稿');
+  expect(await explorer.listTrash()).toEqual([trashed]);
+});
+it('validates trash preview ID, type, workspace, data identity and size',async()=>{
+  await expect(explorer.readTrashedDocument('../notes/secret.md')).rejects.toMatchObject({status:400});
+  await expect(explorer.readTrashedDocument(randomUUID())).rejects.toMatchObject({status:404});
+  await expect(fs.lstat(path.join(root,'.hive-trash'))).rejects.toMatchObject({code:'ENOENT'});
+  await files.folder('folder');
+  const folder=await explorer.manage({action:'trash',path:'folder'});
+  await expect(explorer.readTrashedDocument(folder.id)).rejects.toMatchObject({status:400});
+  await fs.writeFile(path.join(root,'image.png'),'image');
+  const image=await explorer.manage({action:'trash',path:'image.png'});
+  await expect(explorer.readTrashedDocument(image.id)).rejects.toMatchObject({status:400});
+  await fs.writeFile(path.join(root,'large.md'),Buffer.alloc(2_000_001));
+  const large=await explorer.manage({action:'trash',path:'large.md'});
+  await expect(explorer.readTrashedDocument(large.id)).rejects.toMatchObject({status:400});
+  const otherRoot=path.join(base,'other');await fs.mkdir(otherRoot);
+  const other=explorerStore({root:otherRoot,state,files:fileStore(otherRoot)});
+  await expect(other.readTrashedDocument(large.id)).rejects.toMatchObject({status:404});
+  const linked=path.join(root,'.hive-trash',large.id);
+  await fs.rename(linked,linked+'.previous');
+  await fs.symlink(otherRoot,linked,process.platform==='win32'?'junction':'dir');
+  await expect(explorer.readTrashedDocument(large.id)).rejects.toMatchObject({status:409});
 });
 it('trashes the AI scratch note like any other document while keeping it out of rename and move',async()=>{
   await files.save({path:'自由草稿.md',text:'草稿正文',baseline:null});

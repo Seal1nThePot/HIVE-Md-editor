@@ -98,6 +98,6 @@ export function explorerStore({root,files,state},launch=spawn,opts={}) {
     }
     return {matches,truncated};
   }
-  return {manage,prepareCreate,listTrash,search,previewTrash:retention.preview,purgeTrash:retention.purge,deleteTrash:retention.remove};
+  return {manage,prepareCreate,listTrash,search,readTrashedDocument:retention.readDocument,previewTrash:retention.preview,purgeTrash:retention.purge,deleteTrash:retention.remove};
 }
 

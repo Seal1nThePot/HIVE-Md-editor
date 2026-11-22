@@ -19,6 +19,9 @@
 .trash-panel-row:hover,.trash-panel-row:focus-within{background:var(--gold-bg)}
 .trash-panel-kind{color:var(--muted)}
 .trash-panel-name{font-size:calc(13px * var(--text-scale,1));color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trash-preview-trigger{display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer}
+.trash-preview-trigger:focus-visible{outline:1px solid var(--gold);outline-offset:2px}
+.trash-document-preview{display:flex;flex:1;min-width:0;min-height:0}
 .trash-panel-meta{display:flex;justify-content:flex-end;align-items:center;gap:5px;min-width:0;font-size:calc(11px * var(--text-scale,1));color:var(--muted);line-height:1.25}
 .trash-panel-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .trash-panel-meta time{flex:none;white-space:nowrap}
