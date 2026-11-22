@@ -1,6 +1,7 @@
 import ImageFileView from '../features/files/ImageFileView';
 import {retireDeletedImage} from '../features/files/imageSession';
 import {resolveLinkTarget} from '../features/editor/linkNavigation';
+import {openExternalHttpLink} from '../shared/externalLinks';
 import {useApplyTheme} from '../features/theme/applyTheme';
 import {flushThemeFiles} from '../features/theme/templateFiles';
 import {flushThemePreferences} from '../features/theme/themeStore';
@@ -9,7 +10,7 @@ import {Transaction,type EditorState} from '@codemirror/state';
 import {captureEditorView} from '../features/editor/editorViewSnapshot';
 import {findAnnotatedNote,planAnnotatedDocuments,planAnnotatedTrash,planNoteOutline,planNoteProperties,requestApi,runAnnotatedRepositories,type DocumentsToolResult,type NoteFindResult,type NoteOutlineToolResult,type NotePropertiesToolResult,type NoteSnapshotToolResult,type RepositoriesToolResult,type TrashToolResult} from './api';
 import {activeEditor} from '../features/editor/activeEditor';
-import {hello,type Message} from '../features/chat/chatTypes';
+import {hello,type ChatAnnotationBatch,type ChatMessageDetails,type Message} from '../features/chat/chatTypes';
 import type {EditorSession} from '../features/editor/editorSessionTypes';
 import type {Dialog} from '../features/editor/editorDialogTypes';
 import {useDocumentPersistence} from '../features/files/useDocumentPersistence';
@@ -104,6 +105,9 @@ import {CHAPTER_DRAG_TYPE,appendDraftContext,chapterForQuickAI,readChapterDrag,t
 import type {DragEvent as ReactDragEvent} from 'react';
 import {useModelReasoning} from '../features/chat/modelReasoning';
 import ChatComposer from "../features/chat/ChatComposer";
+import {ChatMarkdown} from '../features/chat/ChatMarkdown';
+import {ChatAnnotationBatchView,ChatAnnotationEntries} from '../features/chat/ChatAnnotationEntries';
+import '../features/chat/chat-messages.css';
 import InputBasisPanel,{type InputBasisRequest} from '../features/chat/InputBasisPanel';
 import WorkspaceTabs from "../features/workspace/WorkspaceTabs";
 import RailEdgeHandle from "../features/workspace/RailEdgeHandle";
@@ -125,6 +129,7 @@ import { createPortal } from 'react-dom';
 import { DesktopPanel, DesktopPanelsProvider, useDesktopPanels } from '../features/workspace/DesktopPanels';
 import {
   type AnnotationSource,
+  type SubmittedAnnotation,
   type TextAnnotation,
 } from "../features/annotations/annotations";
 import {
@@ -215,7 +220,6 @@ function WritingApp() {
     input.focus({preventScroll:true});
     setFocusFileSearch(false);
   });
-  const setChatOpen = (value: boolean) => value ? workspace.open("conversation") : workspace.close("conversation");
   const scratchView = useRef<EditorView | null>(null),
     activeTextSource = useRef<AnnotationSource>("document"),
     orbBounds = useRef({ width: 344, height: 520 });
@@ -253,6 +257,8 @@ function WritingApp() {
     ),
     [annotationInstruction, setAnnotationInstruction] = useState(""),
     [annotationFocus, setAnnotationFocus] = useState<{id:string;nonce:number}|null>(null),
+    [annotationBatch, setAnnotationBatch] = useState<ChatAnnotationBatch|null>(null),
+    [annotationLocation, setAnnotationLocation] = useState<{snapshot:SubmittedAnnotation;tabId?:string}|null>(null),
     [chatOrb, setChatOrb] = useState(false);
   const [outline, setOutline] = useState<ReturnType<typeof headings>>([]),
     [selection, setSelection] = useState({ from: 0, to: 0, text: "" }),
@@ -280,7 +286,7 @@ function WritingApp() {
     [prompt, setPrompt] = useState(""),
     [messages, setMessages] = useState<Message[]>([hello]),
     [busy, setBusy] = useState(false),
-    [stream, setStream] = useState(""),
+    [stream, setStream] = useState<{text:string;documentFile?:string}|null>(null),
     [lastRequest, setLastRequest] = useState<InputBasisRequest|null>(null);
   const currentMode=useRef(mode),viewApplying=useRef(false),appAlive=useRef(true);currentMode.current=mode;
   useEffect(()=>{appAlive.current=true;return()=>{appAlive.current=false;};},[]);
@@ -295,11 +301,13 @@ function WritingApp() {
     [notice, setNotice] = useState(""),
     [help, setHelp] = useState(false);
   const setError=useCallback((message:string,persistent=false)=>setErrorToast(message?{message,persistent}:null),[]);
-  const [fileBusy, setFileBusy] = useState(false),
+  const [fileActivity, setFileActivity] = useState<'idle'|'opening'|'busy'>('idle'),
     [confirm, setConfirm] = useState<{
       text: string;
       action: () => void;
     } | null>(null);
+  const fileBusy=fileActivity!=='idle';
+  const setFileBusy=(busy:boolean,openingFile:boolean)=>setFileActivity(busy?(openingFile?'opening':'busy'):'idle');
   const references=useReferenceSources(fileWorkspace.info.id,file||'@'+activeEditorId);
   const reasoning=useModelReasoning(!config.demo?config.selection:null,!config.demo?selectedModelEntry(config):undefined);
   function addReference(source:WorkspaceReferenceSource,openBasis=true){
@@ -329,8 +337,9 @@ function WritingApp() {
   const inform = (text: string) => {
     setNotice(text);
   };
-  const add = (role: Message["role"], content: string) =>
-    setMessages((ms) => [...ms, { id: uid(), role, content }]);
+  const add = (role: Message["role"], content: string, details?: ChatMessageDetails) =>
+    setMessages((ms) => [...ms, { id: uid(), role, content, ...details }]);
+  const showStream = (text:string,documentFile?:string) => setStream(text?{text,documentFile}:null);
   const dialogRef=useRef(dialog);dialogRef.current=dialog;
   function handleStoredChange(id:string,transaction:Transaction,mapAnnotations=true){
     const path=sessions.current.get(id)?.disk?.path;if(path&&mapAnnotations)annotations.mapStoredDocument(path,transaction);
@@ -436,16 +445,25 @@ function WritingApp() {
     session.view = next;
     if(next)session.state=next.state;
     if(next){
-      const top=session.restoreScroll,left=session.restoreScrollLeft,window=next.dom.ownerDocument.defaultView!;
+      const top=session.restoreScroll,left=session.restoreScrollLeft,target=session.restoreScrollTarget;
+      const window=next.dom.ownerDocument.defaultView!;
+      if(target?.doc===next.state.doc){
+        next.dispatch({effects:target.effect});
+        // The layout query flushes CodeMirror's pending scroll measurement before paint.
+        next.lineBlockAtHeight(top||0);
+      }else if(top||left){
+        // View presets store pixel offsets. Measure the new document before applying them.
+        next.lineBlockAtHeight(top||0);
+        next.scrollDOM.scrollTop=top||0;next.scrollDOM.scrollLeft=left||0;
+      }
       const remember=()=>captureEditorView(session);next.scrollDOM.addEventListener('scroll',remember);
       let frame:number|undefined;
-      if(top!==undefined||left!==undefined||reviewTarget.current===id)frame=window.requestAnimationFrame(()=>{
+      if(reviewTarget.current===id)frame=window.requestAnimationFrame(()=>{
         if(session.view!==next)return;
         if(reviewTarget.current===id){
           reviewTarget.current=null;
           if(activeSession.current===id){revealProposal(id,next);return;}
         }
-        next.scrollDOM.scrollTop=top||0;next.scrollDOM.scrollLeft=left||0;
       });
       sessionScrollBindings.current.set(id,()=>{next.scrollDOM.removeEventListener('scroll',remember);if(frame!==undefined)window.cancelAnimationFrame(frame);});
     }
@@ -481,7 +499,7 @@ function WritingApp() {
   function activateEditor(id: string) {
     if (id === activeSession.current) return;
     const previous = sessions.current.get(activeSession.current)!;
-    previous.state = previous.view?.state ?? previous.state;
+    captureEditorView(previous);
     previous.context = {proposal:proposal.current,undo:undo.current,writingNodeId};
     if (requestAnchor.current && running.current) stop();
     const next = sessions.current.get(id)!;
@@ -672,7 +690,7 @@ function WritingApp() {
       }
       session.contentVersion=(session.contentVersion||0)+1;
       session.imagePath=undefined;session.disk=null;session.state=null;session.view=null;session.dirty=false;session.landing=true;
-      session.context=undefined;session.restoreScroll=undefined;session.restoreScrollLeft=undefined;
+      session.context=undefined;session.restoreScroll=undefined;session.restoreScrollLeft=undefined;session.restoreScrollTarget=undefined;
       if(activeSession.current===session.id){
         proposal.current=null;undo.current=[];
         setWritingNodeId(null);
@@ -882,7 +900,7 @@ function WritingApp() {
       }
       session.contentVersion=(session.contentVersion||0)+1;
       session.imagePath=undefined;session.disk=null;session.state=null;session.view=null;session.dirty=false;session.landing=true;
-      session.context=undefined;session.restoreScroll=undefined;session.restoreScrollLeft=undefined;
+      session.context=undefined;session.restoreScroll=undefined;session.restoreScrollLeft=undefined;session.restoreScrollTarget=undefined;
       if(activeSession.current===id){
         proposal.current=null;undo.current=[];
         setWritingNodeId(null);
@@ -892,7 +910,7 @@ function WritingApp() {
     } finally {closingDocumentTab.current=false;}
   }
   function stop() {
-    stopWritingGeneration({generation,controller,requestAnchor,running,proposal},{setBusy,setStream});
+    stopWritingGeneration({generation,controller,requestAnchor,running,proposal},{setBusy,setStream:showStream});
   }
   useEffect(() => {
     let cancelled = false;
@@ -1043,9 +1061,8 @@ function WritingApp() {
     tab: "conversation" | "annotations" = "conversation",
     position?: { x: number; y: number },
   ) {
-    if (tab === "annotations") { workspace.open("annotations"); return; }
+    if (tab === "annotations") { setAnnotationBatch(null); workspace.reveal("annotations"); return; }
     setChatTab("conversation");
-    rightPanel.raise();
     if (chatOrb || position) {
       const width = Math.min(orbBounds.current.width, window.innerWidth - 16),
         height = Math.min(orbBounds.current.height, window.innerHeight - 16);
@@ -1068,8 +1085,84 @@ function WritingApp() {
       });
     }
     setChatOrb(false);
-    setChatOpen(true);
+    workspace.reveal("conversation");
   }
+  function revealConversation() {
+    if (workspace.autoHideItems.some(item=>item.id==='conversation')) {
+      setChatTab('conversation');
+      setChatOrb(false);
+      workspace.reveal('conversation');
+    } else openChat('conversation');
+    if (!chatOpen) setTimeout(()=>promptRef.current?.focus(),0);
+  }
+  const annotationNavigation = useRef(0);
+  async function locateSubmittedAnnotation(snapshot:SubmittedAnnotation) {
+    const ticket = ++annotationNavigation.current;
+    setAnnotationLocation(null);
+    try {
+      if (snapshot.source === 'scratch') {
+        workspace.reveal('scratch');
+        setAnnotationLocation({snapshot});
+        return;
+      }
+      const active = sessions.current.get(activeSession.current);
+      const existing = active?.disk?.path===snapshot.file ? active : [...sessions.current.values()].find(
+        session=>session.disk?.path===snapshot.file&&workspace.isOpen(session.id),
+      );
+      if (existing) workspace.reveal(existing.id);
+      else await openExplorerFile(snapshot.file,true);
+      if (ticket!==annotationNavigation.current||!appAlive.current) return;
+      const tabId = activeSession.current;
+      if (sessions.current.get(tabId)?.disk?.path!==snapshot.file) {
+        setError('未能打开标注所在的文稿。');
+        return;
+      }
+      setAnnotationLocation({snapshot,tabId});
+    } catch (error) {
+      if (ticket===annotationNavigation.current&&appAlive.current)
+        setError('无法定位文本标注：'+(error as Error).message);
+    }
+  }
+  useEffect(()=>{
+    if (!annotationLocation) return;
+    const {snapshot,tabId}=annotationLocation;
+    if (tabId && (activeEditorId!==tabId||file!==snapshot.file)) {
+      setAnnotationLocation(null);
+      return;
+    }
+    const item=annotations.findSubmitted(snapshot);
+    if (item==='loading') return;
+    setAnnotationLocation(null);
+    if (item==='unavailable') {
+      setError('原标注已移动、删除或失效，请在文稿中核对。');
+      return;
+    }
+    try {
+      activeTextSource.current=snapshot.source;
+      annotations.locate(item);
+    } catch(error) { setError((error as Error).message); }
+  },[annotationLocation,activeEditorId,file,annotations.findSubmitted,annotations.locate,setError]);
+  useEffect(()=>{
+    if (!annotationLocation) return;
+    const timeout=setTimeout(()=>{
+      setAnnotationLocation(current=>current===annotationLocation?null:current);
+      setError('标注位置暂未载入，请稍后重试。');
+    },8000);
+    return ()=>clearTimeout(timeout);
+  },[annotationLocation,setError]);
+  const annotationPanelOpen=workspace.isOpen('annotations');
+  useEffect(()=>{if(!annotationPanelOpen)setAnnotationBatch(null);},[annotationPanelOpen]);
+  const chatFileOpener = useRef(openExplorerFile);
+  chatFileOpener.current = openExplorerFile;
+  const openChatDocument = useCallback((source:string,target:string)=>{
+    try {
+      const path=resolveLinkTarget(source,target);
+      void chatFileOpener.current(path,true).catch(error=>setError(error.message));
+    } catch(error) { setError((error as Error).message); }
+  },[setError]);
+  const openChatExternal = useCallback((target:string)=>{
+    void openExternalHttpLink(target).then(opened=>{if(!opened)setError('无法打开外部链接。');});
+  },[setError]);
   function locate(pos: number) {
     workspace.open(activeSession.current);
     const v = view.current;
@@ -1116,7 +1209,7 @@ function WritingApp() {
       conversation:{mode,prompt,messages,setPrompt,setLastRequest,add},
       lifecycle:{running,generation,controller,requestAnchor,proposal},
       references,writingOutline,request:requestModel,annotationResponded:annotations.responded,
-      ui:{setError,setBusy,setStream,openPanel:workspace.open,inform,redraw},
+      ui:{setError,setBusy,setStream:showStream,openPanel:workspace.open,inform,redraw},
     },options);
   }
 
@@ -1166,8 +1259,8 @@ function WritingApp() {
       if(generation.current!==id||!appAlive.current)return;
       const reply=await applyWindowToolResult(mark,result,finishPlanning,noteState);
       if(generation.current!==id||!appAlive.current)return;
-      add('user',instruction);
-      add('assistant',reply);
+      add('user',instruction,{documentFile:target?.file});
+      add('assistant',reply,{documentFile:target?.file});
       setLastRequest({messages:[{role:'user',content:instruction}],mode:'discuss',node:panelLabel(mark.id),scope:'标注的窗口 · '+panelLabel(mark.id),file:target?.file||''});
       setPrompt(current=>current===input?'':current);
       if(result.kind==='repository-location-required')setRepositoryFollowUp({mark,name:result.name});
@@ -1284,7 +1377,7 @@ function WritingApp() {
       <AppHeader
         workspace={workspace} openChat={openChat} openSettings={openSettings} openHistory={showHistory}
         save={save} fileWorkspace={fileWorkspace} config={config}
-        file={file} fileBusy={fileBusy} chatOpen={chatOpen} leftOpen={leftOpen} setError={setError} setHelp={setHelp}/>
+        file={file} fileBusy={fileBusy} openingFile={fileActivity==='opening'} chatOpen={chatOpen} leftOpen={leftOpen} setError={setError} setHelp={setHelp}/>
       <Ribbon visible={appearanceSettings.appearance.ribbonVisible} collapsed={appearanceSettings.appearance.ribbonCollapsed}
         onCommand={ribbonCommand} editorReady={activeTextSource.current==='scratch'?workspace.isOpen('scratch')&&!!scratchView.current:!!view.current}
         fileActions={{new:{run:()=>void createQuickNote(),disabled:fileBusy||newNoteBusy||busy},open:{run:openDocumentList},
@@ -1430,17 +1523,18 @@ function WritingApp() {
               <div className="messages">
                 {messages.filter(message=>message.id!=="welcome"&&message.role!=="system").map((message) => (
                   <div key={message.id} className={"message " + message.role}>
-                    <p>{message.content}</p>
+                    <ChatMarkdown text={message.annotationBatch?.instruction ?? message.content} documentFile={message.documentFile}
+                      onOpenExternal={openChatExternal} onOpenDocument={openChatDocument}/>
+                    {message.annotationBatch&&<ChatAnnotationEntries batch={message.annotationBatch}
+                      onLocate={item=>void locateSubmittedAnnotation(item)}
+                      onOpenBatch={()=>{setAnnotationBatch(message.annotationBatch!);workspace.reveal('annotations');}}/>}
                   </div>
                 ))}
                 {busy && (
                   <div className="message assistant thinking">
                     <span className="chat-reply-status">正在回复…</span>
-                    {stream ? (
-                      <pre>{stream}</pre>
-                    ) : (
-                      null
-                    )}
+                    {stream&&<ChatMarkdown text={stream.text} documentFile={stream.documentFile}
+                      onOpenExternal={openChatExternal} onOpenDocument={openChatDocument}/>}
                   </div>
                 )}
                 {reviewSessions.map(id=>(
@@ -1508,7 +1602,9 @@ function WritingApp() {
               onOpenFile={() => safeSwitch(() => void openFile("自由草稿.md"))}
             />
 </PanelFrame>
-        <PanelFrame chrome={chrome} id="annotations" title="标注" className="annotations-workspace"><AnnotationPanel focusRequest={annotationFocus}
+        <PanelFrame chrome={chrome} id="annotations" title="标注" className="annotations-workspace">{annotationBatch
+                ? <ChatAnnotationBatchView batch={annotationBatch} onLocate={item=>void locateSubmittedAnnotation(item)} onBack={()=>setAnnotationBatch(null)}/>
+                : <AnnotationPanel focusRequest={annotationFocus}
                 items={annotations.items}
                 selected={annotations.selected}
                 toggle={annotations.toggle}
@@ -1521,7 +1617,7 @@ function WritingApp() {
                 busy={busy}
                 saveError={annotations.saveError}
                 retrySave={annotations.retrySave}
-              />
+              />}
 </PanelFrame>
         <PanelFrame chrome={chrome} id="properties" title="笔记属性" className="properties-workspace"><NotePropertiesPanel target={(()=>{if(activeTextSource.current==='scratch'){const editor=scratchView.current;if(!editor)return null;return {editor,file:'自由草稿.md',valid:()=>activeTextSource.current==='scratch'&&scratchView.current===editor};}const session=sessions.current.get(activeEditorId),editor=session?.view,path=session?.disk?.path;if(!editor||!path||session?.landing)return null;return {editor,file:path,valid:()=>activeTextSource.current==='document'&&activeSession.current===activeEditorId&&sessions.current.get(activeEditorId)?.view===editor&&sessions.current.get(activeEditorId)?.disk?.path===path};})()} targetKey={activeTextSource.current==='scratch'?'scratch:自由草稿.md':'document:'+activeEditorId+':'+file} onApplied={()=>inform('笔记属性已应用。')} onTargetAvailability={ready=>{propertyTargetAvailable.current=ready;}}/></PanelFrame>
         <PanelFrame chrome={chrome} id="basis" title="依据" className="basis-workspace"><InputBasisPanel request={lastRequest} file={file} mode={mode} sources={references.sources} entries={entries} workspaceId={fileWorkspace.info.id} onChange={updateReferenceSources} onExternalDrop={addExternalReferences}/>{references.saveError&&<p role="status">{references.saveError}</p>}</PanelFrame>
@@ -1557,7 +1653,7 @@ function WritingApp() {
         onEdit={annotations.edit}
         onSend={sendAnnotations}
         onReveal={()=>window.hiveDesktop?.windowCommand('focus',host||undefined)}
-        onRemove={annotations.remove} onFocusGlobal={id=>setAnnotationFocus({id,nonce:Date.now()})} onOpenGlobal={id=>{setAnnotationFocus({id,nonce:Date.now()});workspace.open('annotations');}}
+        onRemove={annotations.remove} onFocusGlobal={id=>{setAnnotationBatch(null);setAnnotationFocus({id,nonce:Date.now()});}} onOpenGlobal={id=>{setAnnotationBatch(null);setAnnotationFocus({id,nonce:Date.now()});workspace.open('annotations');}}
         saving={annotations.saving}
         busy={busy}
         toolActive={annotationTool}
@@ -1568,7 +1664,7 @@ function WritingApp() {
         if(annotationInPreview){setAnnotationTool(false);setError(previewAnnotationHint);return;}
         setAnnotationTool(active=>!active);
       }}
-        onRun={runFromDock} busy={busy} onToggleAi={()=>{if(desktopPanels.windows.has('conversation')){desktopPanels.toggleVisibility('conversation');return;}if(chatOpen)workspace.minimize('conversation');else {if(workspace.autoHideItems.some(item=>item.id==='conversation')){setChatTab('conversation');setChatOrb(false);workspace.open('conversation');}else openChat('conversation');setTimeout(()=>promptRef.current?.focus(),0);}}}/>}
+        onRun={runFromDock} busy={busy} onToggleAi={revealConversation}/>}
       {notice && (
         <div className="toast" role="status">
           <CheckCheck size={16} />

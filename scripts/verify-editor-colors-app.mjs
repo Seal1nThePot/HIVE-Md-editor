@@ -29,11 +29,11 @@ async function worker(){
       }
       await openColors();await pause();
       check('complete app has dedicated editor color section',get('#editor-colors-title').textContent==='文本编辑页面');
-      check('complete app exposes 16 colors and 9 alpha controls',get('.editor-color-settings').querySelectorAll('input[type=color]').length===16&&get('.editor-color-settings').querySelectorAll('input[type=range]').length===9);
+      check('complete app exposes 17 colors and 10 alpha controls',get('.editor-color-settings').querySelectorAll('input[type=color]').length===17&&get('.editor-color-settings').querySelectorAll('input[type=range]').length===10);
       const set=(label,value)=>{const node=get('[aria-label="'+label+'颜色值"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(node,value);node.dispatchEvent(new Event('input',{bubbles:true}));};
       const css=(node,property,pseudo)=>getComputedStyle(node,pseudo).getPropertyValue(property);
       const beforeSelection=css(document.documentElement,'--hive-selection-bg').trim();
-      set('页面背景','#203047');set('正文文字','#dae6f8');set('选中文字高亮','#bc6de577');set('选中文字颜色','#102030');set('失去焦点的选区','#75b8d955');set('当前行高亮','#efba3233');set('输入光标','#ee7799');set('搜索结果高亮','#33bb8855');set('当前搜索结果','#e9923377');set('文本标注底色','#4477bb55');set('文本标注边框','#66ccdd');await pause();
+      set('页面背景','#203047');set('正文文字','#dae6f8');set('选区底色','#bc6de577');set('选区线框','#4433ccbb');set('选中文字颜色','#102030');set('失去焦点的选区','#75b8d955');set('当前行高亮','#efba3233');set('输入光标','#ee7799');set('搜索结果高亮','#33bb8855');set('当前搜索结果','#e9923377');set('文本标注底色','#4477bb55');set('文本标注边框','#66ccdd');await pause();
       check('page background changes immediately',css(get('.document-pane'),'background-color')==='rgb(32, 48, 71)');
       check('document text changes immediately',css(get('.document-pane .cm-line'),'color')==='rgb(218, 230, 248)');
       check('selection alpha is independent of interface selection',css(document.documentElement,'--hive-editor-selection-background').trim()==='#bc6de577'&&css(document.documentElement,'--hive-selection-bg').trim()===beforeSelection);
@@ -41,10 +41,10 @@ async function worker(){
       check('native selection background avoids double alpha',css(get('.document-pane .cm-line'),'background-color','::selection')==='rgba(0, 0, 0, 0)');
       check('search and annotation colors update',css(document.documentElement,'--hive-editor-search-match-background').trim()==='#33bb8855'&&css(document.documentElement,'--hive-editor-annotation-underline').trim()==='#66ccdd');
       await closeColors();button('设为默认').click();
-      await openColors();set('选中文字高亮','#abcdef44');await pause();await closeColors();
+      await openColors();set('选区底色','#abcdef44');await pause();await closeColors();
       button('恢复默认').click();await pause();check('restoring personal default restores editor colors',css(document.documentElement,'--hive-editor-selection-background').trim()==='#bc6de577');
       await openColors();
-      const stored=JSON.parse(localStorage.getItem('hive.theme.v1'));check('editor colors persist under current base',stored.editorProfiles[stored.base].selectionBackground==='#bc6de577');
+      const stored=JSON.parse(localStorage.getItem('hive.theme.v1'));check('editor colors persist under current base',stored.editorProfiles[stored.base].selectionBackground==='#bc6de577'&&stored.editorProfiles[stored.base].selectionBorder==='#4433ccbb');
       get('.editor-color-settings').scrollIntoView({block:'start'});await pause();
       check('color group has no horizontal overflow',get('.editor-color-settings').scrollWidth<=get('.editor-color-settings').clientWidth+1);
       return {checks,base:stored.base};

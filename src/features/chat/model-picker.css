@@ -31,51 +31,56 @@
 .model-picker-default:hover [role=tooltip],.model-picker-default:focus-visible [role=tooltip]{display:block}
 .model-picker-unknown{margin:10px 0 0;color:var(--muted);font-size:12px}
 
+@property --reasoning-ratio{
+  syntax:'<number>';inherits:true;initial-value:0
+}
 .model-picker-range{
   --reasoning-axis:50%;
   --reasoning-track-height:12px;
+  --reasoning-tick-color:#fff;
   --reasoning-track-color:color-mix(in srgb,var(--hive-popup-text) 27%,var(--hive-popup-bg));
   --reasoning-glow-color:var(--reasoning-color-end,var(--gold));
+  --reasoning-position:clamp(0,var(--reasoning-ratio),1);
+  --thumb-position:calc(var(--reasoning-thumb-inset) + var(--reasoning-position) * (100% - 2 * var(--reasoning-thumb-inset)));
+  --reasoning-progress:calc(var(--thumb-position) + var(--reasoning-position) * var(--reasoning-thumb-inset));
+  --reasoning-fill-opacity:1;
   /* Translucent sheen layer: soft directional highlight that only ever moves via background-position. */
   --reasoning-sheen:linear-gradient(100deg,transparent 0%,transparent 36%,color-mix(in srgb,#fff 12%,transparent) 50%,transparent 64%,transparent 100%);
-  position:relative;height:26px;margin:6px 0 0
+  position:relative;height:26px;margin:6px 0 0;
+  transition:--reasoning-ratio var(--reasoning-duration,350ms) var(--reasoning-easing,cubic-bezier(.22,1,.36,1))
 }
-.model-picker-range::before,.model-picker-range::after,.reasoning-custom-fill,.reasoning-particles{
+.model-picker-range.reasoning-has-off{
+  --reasoning-fill-opacity:clamp(0,calc(var(--reasoning-position) * var(--reasoning-fade-rate)),1)
+}
+.model-picker-range::before,.model-picker-range::after,.reasoning-fill,.reasoning-particles{
   position:absolute;left:0;top:calc(var(--reasoning-axis) - var(--reasoning-track-height) / 2);height:var(--reasoning-track-height);border-radius:999px;pointer-events:none
 }
 .model-picker-range::before,.model-picker-range::after{content:''}
 .model-picker-range::after{z-index:0;right:0;background:var(--reasoning-track-color)}
-/* Base theme gradient stays in place; only the oversized sheen layer's position animates. */
+/* The thumb, fill, glow and particles follow one coordinate during the snap animation. */
 .model-picker-range::before{
-  z-index:1;width:var(--reasoning-progress);
-  background-image:var(--reasoning-sheen),linear-gradient(to right,var(--reasoning-color-start,var(--gold)),var(--reasoning-color-end,var(--hive-accent)));
+  z-index:1;width:var(--reasoning-progress);opacity:var(--reasoning-fill-opacity);
+  box-shadow:0 0 var(--reasoning-glow-blur,0px) color-mix(in srgb,var(--reasoning-glow-color) var(--reasoning-glow-opacity,0%),transparent)
+}
+.reasoning-fill{
+  --reasoning-gradient:linear-gradient(to right,var(--reasoning-color-start,var(--gold)),var(--reasoning-color-end,var(--hive-accent)));
+  z-index:1;right:0;opacity:var(--reasoning-fill-opacity);
+  background-image:var(--reasoning-sheen),var(--reasoning-gradient);
   background-size:220% 100%,100% 100%;background-repeat:no-repeat,no-repeat;background-position:100% 0,0 0;
-  box-shadow:0 0 var(--reasoning-glow-blur,0px) color-mix(in srgb,var(--reasoning-glow-color) var(--reasoning-glow-opacity,0%),transparent);
-  transition:width var(--reasoning-duration,350ms) var(--reasoning-easing,cubic-bezier(.22,1,.36,1));
+  clip-path:inset(0 calc(100% - var(--reasoning-progress)) 0 0 round 999px);
   animation:reasoning-sheen 3s ease-in-out infinite alternate;animation-play-state:paused
 }
-/* Custom tracks keep this width-driven pseudo-element transparent so it only carries the unclipped glow. */
-.custom-track::before{background:transparent;animation:none}
-.reasoning-custom-fill{
-  z-index:1;right:0;
-  background-image:var(--reasoning-sheen),linear-gradient(to right,var(--track-left) 0%,var(--track-middle) 50%,var(--track-right) 100%);
-  background-size:220% 100%,100% 100%;background-repeat:no-repeat,no-repeat;background-position:100% 0,0 0;
-  clip-path:inset(0 calc(100% - var(--reasoning-progress)) 0 0);
-  transition:clip-path var(--reasoning-duration,350ms) var(--reasoning-easing,cubic-bezier(.22,1,.36,1));
-  animation:reasoning-sheen 3s ease-in-out infinite alternate;animation-play-state:paused
+.custom-track .reasoning-fill{
+  --reasoning-gradient:linear-gradient(to right,var(--track-left),var(--track-middle),var(--track-right))
 }
 /* 3s one way, 3s back via alternate = ~6s round trip. Runs only while TSX marks the range as on-screen/visible. */
-.model-picker-range[data-motion-active]::before,.model-picker-range[data-motion-active] .reasoning-custom-fill{animation-play-state:running}
+.model-picker-range[data-motion-active] .reasoning-fill{animation-play-state:running}
 @keyframes reasoning-sheen{
   from{background-position:100% 0,0 0}
   to{background-position:0% 0,0 0}
 }
-.model-picker-range.is-dragging::before,.model-picker-range.is-dragging .reasoning-custom-fill{transition:none}
-.model-picker-range.reasoning-unfilled{--reasoning-glow-color:var(--hive-shadow-color)}
-.reasoning-unfilled::before,.reasoning-unfilled .reasoning-custom-fill{background:none}
-/* Off preview/selection is completely neutral: no colored fill, sheen, glow or particles. */
-.model-picker-range.reasoning-unfilled::before,.model-picker-range.reasoning-unfilled .reasoning-custom-fill{box-shadow:none;animation:none}
-.reasoning-unfilled .reasoning-particles{visibility:hidden}
+.model-picker-range.is-dragging{transition:none}
+.model-picker-range[data-motion-active].reasoning-unfilled .reasoning-fill{animation-play-state:paused}
 
 .model-picker-range input{
   position:relative;z-index:4;display:block;appearance:none;-webkit-appearance:none;width:100%;height:100%;
@@ -92,12 +97,13 @@
 .model-picker-range input::-moz-range-thumb{width:calc(2 * var(--reasoning-thumb-inset));height:20px;border:0;border-radius:50%;background:transparent}
 /* The visual thumb grows on hover while the native range stays the hit target and keyboard control. */
 .reasoning-thumb{
-  position:absolute;z-index:3;left:var(--thumb-position);top:var(--reasoning-axis);box-sizing:border-box;width:16px;height:16px;
-  border-radius:50%;background:var(--hive-raised-bg);
+  position:absolute;z-index:3;left:var(--thumb-position);top:var(--reasoning-axis);box-sizing:border-box;
+  width:calc(2 * var(--reasoning-thumb-inset));height:calc(2 * var(--reasoning-thumb-inset));
+  border:1px solid color-mix(in srgb,var(--reasoning-color-end,var(--gold)) 42%,#252525);
+  border-radius:50%;background:color-mix(in srgb,#fff 87%,var(--reasoning-color-end,var(--gold)));
   transform:translate(-50%,-50%) scale(1);
-  transform-origin:center;transition:left var(--reasoning-duration,350ms) var(--reasoning-easing,cubic-bezier(.22,1,.36,1)),transform 160ms cubic-bezier(.22,1,.36,1);pointer-events:none
+  transform-origin:center;transition:transform 160ms cubic-bezier(.22,1,.36,1);pointer-events:none
 }
-.model-picker-range.is-dragging .reasoning-thumb{transition:transform 160ms cubic-bezier(.22,1,.36,1)}
 .thumb-hover .reasoning-thumb,.is-snapped .reasoning-thumb{transform:translate(-50%,-50%) scale(1.15)}
 /* The stops share the thumb's travel and sit above the fill, behind the thumb. */
 .model-picker-dots{
@@ -106,7 +112,7 @@
 /* Tick cores are white in both themes. */
 .model-picker-dots span{
   position:absolute;top:var(--reasoning-axis);width:4px;height:4px;border-radius:50%;
-  background:#fff;
+  background:var(--reasoning-tick-color);
   transform:translate(-50%,-50%) scale(1);
   transition:opacity 130ms ease-out,transform 130ms cubic-bezier(.22,1,.36,1)
 }
@@ -115,7 +121,7 @@
   transition-delay:var(--stop-exit-delay)
 }
 
-.reasoning-particles{z-index:2;width:var(--reasoning-progress);overflow:hidden}
+.reasoning-particles{z-index:2;width:var(--reasoning-progress);opacity:var(--reasoning-fill-opacity);overflow:hidden}
 .reasoning-particles i{
   position:absolute;right:0;top:calc(50% + var(--particle-row) - 1px);width:2px;height:2px;border-radius:50%;
   background:var(--reasoning-particle-color);
@@ -134,8 +140,8 @@
 @media(max-width:300px){.model-picker-nav{flex-basis:76px;padding:4px}.model-picker-nav button{padding:7px 4px}.model-picker-header,.model-picker-reasoning{padding:8px}}
 @media(prefers-reduced-motion:reduce){
   .reasoning-particles{display:none}
-  .reasoning-thumb,.model-picker-range.is-dragging .reasoning-thumb,.model-picker-range::before,.reasoning-custom-fill,.model-picker-dots span{transition:none}
+  .model-picker-range,.reasoning-thumb,.model-picker-dots span{transition:none}
   .model-picker-range .reasoning-thumb{transform:translate(-50%,-50%)}
   /* Stop the sheen motion but keep the static base gradient and the glow: park the sheen layer off-frame. */
-  .model-picker-range::before,.reasoning-custom-fill{animation:none;background-position:-100% 0,0 0}
+  .reasoning-fill{animation:none;background-position:-100% 0,0 0}
 }

@@ -12,3 +12,23 @@ it('uses the native shell with the exact validated Unicode path and rejects bad 
   stat.mockRejectedValueOnce(Error('private path'));expect(await handle(message)).toEqual({type:'hive-reveal-result',id:message.id,ok:false});
   shell.showItemInFolder.mockImplementationOnce(()=>{throw Error('native failure');});expect(await handle(message)).toMatchObject({ok:false});
 });
+
+it('opens a directory with the native shell and waits for its result',async()=>{
+  const directory={isSymbolicLink:()=>false,isFile:()=>false,isDirectory:()=>true};
+  const stat=vi.fn(async()=>directory),shell={showItemInFolder:vi.fn(),openPath:vi.fn(async()=>'')};
+  const handle=createFileRevealHandler({shell,stat});
+  const message={type:'hive-open-directory',id:'12345678-1234-1234-1234-123456789abc',path:path.resolve('中文 & 模板')};
+  const failure={type:'hive-open-directory-result',id:message.id,ok:false};
+  stat.mockResolvedValueOnce({...directory,isDirectory:()=>false,isFile:()=>true});
+  expect(await handle(message)).toEqual(failure);
+  stat.mockResolvedValueOnce({...directory,isSymbolicLink:()=>true});
+  expect(await handle(message)).toEqual(failure);
+  expect(shell.openPath).not.toHaveBeenCalled();
+  expect(await handle(message)).toEqual({...failure,ok:true});
+  expect(shell.openPath).toHaveBeenCalledExactlyOnceWith(message.path);
+  expect(shell.showItemInFolder).not.toHaveBeenCalled();
+  shell.openPath.mockResolvedValueOnce('native shell error');
+  expect(await handle(message)).toEqual(failure);
+  shell.openPath.mockRejectedValueOnce(Error('native shell failure'));
+  expect(await handle(message)).toEqual(failure);
+});

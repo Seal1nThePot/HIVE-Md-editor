@@ -25,10 +25,13 @@ function isNewer(current, next) {
   if (current.version === next.version) {
     return next.buildNumber !== current.buildNumber && next.buildTime > current.buildTime;
   }
-  const versionPattern = /^\d+\.\d+\.\d+$/;
-  if (![current.version, next.version].every(version => versionPattern.test(version))) return false;
-  const from = current.version.split('.').map(Number);
-  const to = next.version.split('.').map(Number);
+  const versionPattern = /^(\d+)\.(\d+)\.(\d+)(?:-r(\d+))?$/;
+  const currentVersion = versionPattern.exec(current.version);
+  const nextVersion = versionPattern.exec(next.version);
+  if (!currentVersion || !nextVersion) return false;
+  // A stable release sorts after any revision of the same version.
+  const from = currentVersion.slice(1).map(part => part === undefined ? Infinity : Number(part));
+  const to = nextVersion.slice(1).map(part => part === undefined ? Infinity : Number(part));
   const firstDifference = to.findIndex((part, index) => part !== from[index]);
   return firstDifference >= 0 && to[firstDifference] > from[firstDifference];
 }

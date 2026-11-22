@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/Seal1nThePot/HIVE-Md-editor/releases/download/v0.1.7-icon/HIVE-0.1.7-Windows-x64.zip"><strong>下载 Windows x64 · v0.1.7</strong></a>
+  · <a href="https://github.com/Seal1nThePot/HIVE-Md-editor/releases/tag/v0.1.7-r3">0.1.7r3 修订预发行</a>
   · <a href="https://github.com/Seal1nThePot/HIVE-Md-editor/releases">发行记录</a>
   · <a href="#快速开始">快速开始</a>
   · <a href="#界面一览">界面一览</a>

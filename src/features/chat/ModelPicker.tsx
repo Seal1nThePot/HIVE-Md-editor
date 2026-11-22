@@ -8,7 +8,7 @@ import {activeModelLabel,modelChoice,effectiveReasoningLevels,type Config} from 
 import {previewReasoningDrag,reasoningLevels,type ReasoningEffort} from './modelReasoning';
 import './model-picker.css';
 
-const thumbInset=10;
+const thumbInset=8;
 type ReasoningDrag=ReturnType<typeof previewReasoningDrag>;
 
 export default function ModelPicker({config,disabled,onModelChange,reasoningEffort='default',onReasoningChange}:{config:Config;disabled:boolean;onModelChange:(choice:string)=>void;reasoningEffort?:ReasoningEffort;onReasoningChange?:(effort:ReasoningEffort)=>void}){
@@ -34,29 +34,31 @@ export default function ModelPicker({config,disabled,onModelChange,reasoningEffo
  const selectedIndex=reasoningEffort==='default'?lastIndex:Math.max(0,levels.indexOf(reasoningEffort));
  const index=drag?.index??selectedIndex;
  const effectLevel=levels[index];
- const effect=effectLevel?preferences.reasoningEffects?.[effectLevel]:undefined;
+ const firstColorIndex=levels[0]==='off'?1:0;
+ const colorIndex=Math.max(index,firstColorIndex);
+ const colorLevel=levels[colorIndex];
+ const effect=colorLevel?preferences.reasoningEffects?.[colorLevel]:undefined;
+ const thumbRatio=drag?.ratio??(lastIndex?index/lastIndex:1);
+ const unfilled=effectLevel==='off'&&(!drag||thumbRatio===0);
  const particleColor=effect?.color??'#ffffff';
  const strength=serviceDefault?1:levels.length>1?(index+1)/levels.length:1;
- const particleCount=effectLevel&&effectLevel!=='off'?(effect?.particles??Math.max(1,Math.ceil(strength*8))):0;
+ const particleCount=colorLevel&&!unfilled?(effect?.particles??Math.max(1,Math.ceil(strength*8))):0;
  const motionActive=trailVisible&&documentVisible;
- const firstColorIndex=levels[0]==='off'?1:0;
- const colorRank=index-firstColorIndex+1;
+ const colorRank=colorIndex-firstColorIndex+1;
  const colorCount=levels.length-firstColorIndex;
  // Reserve the top quarter of each tier for the template's glow preference.
  const glow=colorRank>0&&colorCount>0?(colorRank-.25+.25*(effect?.glow??1))/colorCount:0;
  const trailSpeed=Math.round(1900-strength*1150);
- const thumbRatio=drag?.ratio??(lastIndex?index/lastIndex:1);
- const thumbPosition=`calc(${thumbInset}px + ${thumbRatio*100}% - ${thumbRatio*thumbInset*2}px)`;
  const rangeStyle={
-   '--reasoning-progress':thumbRatio===1?'100%':thumbPosition,
+   '--reasoning-ratio':thumbRatio,
+   '--reasoning-fade-rate':lastIndex*2,
    '--reasoning-glow-blur':glow?`${2+5*glow}px`:'0px',
    '--reasoning-glow-opacity':glow?`${14+24*glow}%`:'0%',
    '--reasoning-thumb-inset':`${thumbInset}px`,
-   '--thumb-position':thumbPosition,
    '--trail-speed':`${trailSpeed}ms`,
    '--reasoning-particle-color':particleColor,
    '--reasoning-particle-edge':accentForeground(particleColor),
-   '--reasoning-color-end':`var(--reasoning-${effectLevel}-color, var(--gold))`,
+   '--reasoning-color-end':`var(--reasoning-${colorLevel}-color, var(--gold))`,
    '--reasoning-duration':`var(--reasoning-${effectLevel}-duration,350ms)`,
    '--reasoning-easing':`var(--reasoning-${effectLevel}-easing,cubic-bezier(.22,1,.36,1))`,
  } as CSSProperties;
@@ -88,6 +90,10 @@ export default function ModelPicker({config,disabled,onModelChange,reasoningEffo
  useEffect(()=>{setThumbHover(false);setTrailVisible(false);if(!open||!rangeRef.current)return;const observer=new IntersectionObserver(entries=>setTrailVisible(entries.some(x=>x.isIntersecting)),{root:panel.current,threshold:.01});observer.observe(rangeRef.current);return()=>observer.disconnect();},[open,levels.length]);
  const levelLabel=(value:string)=>reasoningLevels.find(x=>x.value===value)?.label||value;
  const levelText=validCurrent?(serviceDefault?'服务默认':levelLabel(effectLevel??reasoningEffort)):'未选择';
+ const lowerPreview=drag&&drag.snapIndex===null?Math.floor(thumbRatio*lastIndex):-1;
+ const previewText=lowerPreview>=0&&lowerPreview<lastIndex
+   ?`${levelLabel(levels[lowerPreview])}至${levelLabel(levels[lowerPreview+1])}`
+   :levelText;
  const meterBars=levels.length&&effectLevel!=='off'?Math.max(1,Math.round(((index+1)/levels.length)*4)):0;
  useLayoutEffect(()=>{if(!open)return;const update=()=>{const r=trigger.current?.getBoundingClientRect();if(r){const left=Math.max(8,Math.min(r.left,window.innerWidth-Math.min(380,window.innerWidth-16)-8));const above=Math.max(0,r.top-14),below=Math.max(0,window.innerHeight-r.bottom-14);if(above>=320||above>=below){setPosition({left,bottom:Math.max(8,window.innerHeight-r.top+6),maxHeight:Math.max(0,Math.min(380,above,window.innerHeight-16))});}else{setPosition({left,top:Math.max(8,r.bottom+6),maxHeight:Math.max(0,Math.min(380,below,window.innerHeight-16))});}}};update();window.addEventListener('resize',update);window.addEventListener('scroll',update,true);search.current?.focus();return()=>{window.removeEventListener('resize',update);window.removeEventListener('scroll',update,true);};},[open,document,window]);
  useEffect(()=>{if(!open)return;const outside=(e:PointerEvent)=>{if(!panel.current?.contains(e.target as Node)&&!trigger.current?.contains(e.target as Node))setOpen(false);};const escape=(e:KeyboardEvent)=>{if(e.key==='Escape'){setOpen(false);trigger.current?.focus();}};document.addEventListener('pointerdown',outside);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',outside);document.removeEventListener('keydown',escape);};},[open,document,window]);
@@ -97,10 +103,10 @@ export default function ModelPicker({config,disabled,onModelChange,reasoningEffo
  {open&&createPortal(<div ref={panel} className="model-picker" style={{left:position.left,top:position.top,bottom:position.bottom,maxHeight:position.maxHeight}} role="dialog" aria-label="选择模型">
  <div className="model-picker-header"><div className="model-picker-search"><Search size={16}/><input ref={search} aria-label="搜索模型" placeholder="搜索模型" value={query} onChange={e=>setQuery(e.target.value)}/></div><button type="button" className="model-picker-settings" title="模型设置" aria-label="模型设置" onClick={settings}><Icon name="model.settings" size={17}/></button></div>
  <div className="model-picker-body"><nav className="model-picker-nav" aria-label="模型服务">{services.map(s=><button type="button" key={s.id} className={activeSection===s.id?'active':''} onClick={()=>setSection(s.id)}>{s.name}</button>)}</nav><div className="model-picker-list">{filtered.length?filtered.map(x=><button type="button" key={x.value} className="model-picker-item" onClick={()=>choose(x.value)}><span><strong>{x.model.name}</strong><small>{x.service.name}</small></span>{current===x.value&&<Check size={16} aria-label="当前模型"/>}</button>):<div className="model-picker-empty">{models.length?(query?'没有找到匹配的模型':'该服务暂无可用模型'):<>暂无可用模型 <button type="button" onClick={settings}>前往模型设置</button></>}</div>}</div></div>
- <div className="model-picker-reasoning"><div className="model-picker-reasoning-head"><span>推理强度{!serviceDefault&&effectLevel&&` · ${levelText}`}</span>{!!levels.length&&<button type="button" className="model-picker-default" aria-label={serviceDefault?'关闭服务默认推理强度':'使用服务默认推理强度'} aria-pressed={serviceDefault} disabled={!canChangeReasoning} onClick={()=>{onReasoningChange?.(serviceDefault?(levels[0]??'default'):'default');}}><Icon name="model.reasoning.serviceDefault" size={13}/><span className="model-picker-default-label">服务默认</span><span className="model-picker-default-short">默认</span><span role="tooltip">{serviceDefault?'关闭服务默认：回到初始档':'使用服务默认推理强度'}</span></button>}</div>
+ <div className="model-picker-reasoning"><div className="model-picker-reasoning-head"><span>推理强度{!serviceDefault&&effectLevel&&` · ${previewText}`}</span>{!!levels.length&&<button type="button" className="model-picker-default" aria-label={serviceDefault?'关闭服务默认推理强度':'使用服务默认推理强度'} aria-pressed={serviceDefault} disabled={!canChangeReasoning} onClick={()=>{onReasoningChange?.(serviceDefault?(levels[0]??'default'):'default');}}><Icon name="model.reasoning.serviceDefault" size={13}/><span className="model-picker-default-label">服务默认</span><span className="model-picker-default-short">默认</span><span role="tooltip">{serviceDefault?'关闭服务默认：回到初始档':'使用服务默认推理强度'}</span></button>}</div>
  {levels.length?<div ref={rangeRef} className={
    'model-picker-range'+(drag?' is-dragging':'')+(drag?.snapIndex!=null?' is-snapped':'')+
-   (thumbHover?' thumb-hover':'')+(trackColors?' custom-track':'')+(effectLevel==='off'?' reasoning-unfilled':'')
+   (thumbHover?' thumb-hover':'')+(trackColors?' custom-track':'')+(firstColorIndex?' reasoning-has-off':'')+(unfilled?' reasoning-unfilled':'')
  } style={rangeStyle} data-motion-active={motionActive||undefined}>
    <input type="range" aria-label="推理强度" min="0" max={lastIndex} step="1" value={index}
      aria-valuetext={levelText}
@@ -136,9 +142,9 @@ export default function ModelPicker({config,disabled,onModelChange,reasoningEffo
      }}
      onPointerCancel={cancelDrag} onLostPointerCapture={cancelDrag}
    />
-   {trackColors&&<span className="reasoning-custom-fill" aria-hidden="true" style={{
+   <span className="reasoning-fill" aria-hidden="true" style={trackColors?{
      '--track-left':trackColors.left,'--track-middle':trackColors.middle,'--track-right':trackColors.right,
-   } as CSSProperties}/>}
+   } as CSSProperties:undefined}/>
    <span ref={thumbRef} className="reasoning-thumb" aria-hidden="true"/>
    <div className="reasoning-particles" aria-hidden="true">
      {motionActive&&Array.from({length:particleCount},(_,i)=><i key={i} style={{

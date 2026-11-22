@@ -1,4 +1,4 @@
-import {beginFileActivity,beginFileRead} from './fileOperations';
+import {beginFileActivity,beginFileRead,type FileActivityUpdate} from './fileOperations';
 import {checkFileOperations} from './fileOperationChecks';
 import {documentMatchesText} from '../editor/documentText';
 import {diskSyncDecision} from './fileSync';
@@ -6,6 +6,7 @@ import {workspaceTreeSync} from './workspaceSync';
 import {isImagePath} from './fileKinds';
 import {writeDocument} from './writeDocument';
 import type { Dispatch, FormEvent, RefObject, SetStateAction } from 'react';
+import { flushSync } from 'react-dom';
 import type { ApiClient } from '../../shared/api';
 import type { DiskFile } from '../../shared/fileTypes';
 import type { EditorSession } from '../editor/editorSessionTypes';
@@ -52,7 +53,7 @@ type FileActionsOptions = {
     redraw: () => void;
     inform: (message: string) => void;
     setError: (message: string) => void;
-    setFileBusy: (busy: boolean) => void;
+    setFileBusy: FileActivityUpdate;
     setNewNoteBusy: (busy: boolean) => void;
     setEntries: Dispatch<SetStateAction<Entry[]>>;
     setRoot: (root: string) => void;
@@ -84,7 +85,7 @@ export function useFileActions(options: FileActionsOptions) {
     const treeSync=workspaceTreeSync(setEntries,fileWorkspace.info),treeOwner=treeSync.owner();
 
     const scope=()=>options.appAlive?.current!==false&&!switching.current;
-    const loading=(value:boolean)=>{if(options.appAlive?.current!==false)setFileBusy(value);};
+    const loading:FileActivityUpdate=(busy,openingFile)=>{if(options.appAlive?.current!==false)setFileBusy(busy,openingFile);};
     const proposalFor=(id:string)=>id===activeSession.current?proposal.current:sessions.current.get(id)?.context?.proposal??null;
     const pendingReview=(path:string)=>[...sessions.current.values()].find(session=>session.disk?.path===path&&proposalFor(session.id));
     const writing=()=>running.current&&!!requestAnchor.current;
@@ -95,9 +96,9 @@ export function useFileActions(options: FileActionsOptions) {
         else if(workspace.openDocumentTab(pending.id)!=='succeeded')throw new Error('无法打开待审建议，请完成输入法组词或当前窗口操作后重试。');
         return true;
     }
-    const beginRead=(id=activeSession.current)=>{
+    const beginRead=(id=activeSession.current,openingFile=true)=>{
         const identity=fileWorkspace?.info?.id,root=fileWorkspace?.info?.root,pending=proposalFor(id);
-        const ticket=beginFileRead(sessions,id,()=>scope()&&fileWorkspace?.info?.id===identity&&fileWorkspace?.info?.root===root,loading,workspace.isOpen?.bind(workspace));
+        const ticket=beginFileRead(sessions,id,()=>scope()&&fileWorkspace?.info?.id===identity&&fileWorkspace?.info?.root===root,loading,workspace.isOpen?.bind(workspace),openingFile);
         return {...ticket,valid:()=>ticket.valid()&&proposalFor(id)===pending};
     };
     const requireRead=(ticket:ReturnType<typeof beginRead>)=>{if(ticket.valid())return true;if(ticket.current())setError('等待读取时标签或正文已变化，当前内容仍保留，请重新打开。');return false;};
@@ -136,13 +137,21 @@ export function useFileActions(options: FileActionsOptions) {
         const content=shared?(shared.view?.state||shared.state)!.doc:data.text;
         const nextState=makeState(content,bindings(targetId).onUpdate,undefined,session.displayMode);
         session.imagePath=undefined;session.landing=false;session.disk=nextDisk;session.state=nextState;session.dirty=!documentMatchesText(nextState.doc,nextDisk.text);session.context=undefined;session.contentVersion=(session.contentVersion||0)+1;
-        session.view?.setState(nextState);
+        // Set the new viewport before CodeMirror measures and anchors the replacement document.
+        session.restoreScroll=undefined;session.restoreScrollLeft=undefined;session.restoreScrollTarget=undefined;
+        if(session.view){
+            session.view.scrollDOM.scrollTop=0;
+            session.view.scrollDOM.scrollLeft=0;
+            session.view.setState(nextState);
+        }
         if(targetId!==activeSession.current){if(!workspace.isOpen?.(targetId))workspace.open(targetId);redraw();return;}
         if(writing())stop();
         proposal.current=null;undo.current=[];
         workspace.open(targetId);annotations.syncEditor('document',session.view,data.path);
         setWritingNodeId(null);setInlineRequest(null);setOutline(headings(nextState));
-        setSelection({from:0,to:0,text:''});activeTextSource.current='document';setError('');redraw();
+        setSelection({from:0,to:0,text:''});activeTextSource.current='document';setError('');
+        // CodeMirror replaces the body synchronously. Commit its active file label in the same frame.
+        if(session.view)flushSync(redraw);else redraw();
     }
     async function readFile(path:string,targetId:string,ticket:ReturnType<typeof beginRead>){
         if(!requireRead(ticket))return;
@@ -394,7 +403,7 @@ export function useFileActions(options: FileActionsOptions) {
         let path=dialog.value.trim().replace(/\\/g,'/');if(!path)return;
         const targetId=activeSession.current,target=sessions.current.get(targetId),source=target?.disk;
         const dialogUnchanged=()=>!options.dialogRef||options.dialogRef.current===dialog;
-        const ticket=dialog.kind==='folder'?null:beginRead(targetId),release=ticket?()=>ticket.cancel():beginFileActivity(sessions,loading);
+        const ticket=dialog.kind==='folder'?null:beginRead(targetId,false),release=ticket?()=>ticket.cancel():beginFileActivity(sessions,loading);
         const allowed=()=>dialogUnchanged()&&requireRead(ticket!);
         let completed = dialog.kind === 'folder' ? '文件夹已建立。' : '已完成。';
         setError('');
@@ -432,7 +441,7 @@ export function useFileActions(options: FileActionsOptions) {
     async function importFile(source:File){
         if(!/\.md$/i.test(source.name)){setError('请选择 Markdown（.md）文件。');return;}
         if(source.size>2000000){setError('文件超过 2 MB。');return;}
-        const targetId=activeSession.current,ticket=beginRead(targetId);
+        const targetId=activeSession.current,ticket=beginRead(targetId,false);
         try{
             const raw=await source.text();if(!requireRead(ticket))return;
             const saved=await writeDocument(api,{path:source.name,text:raw.replace(/^\uFEFF/,'').replace(/\r\n/g,'\n'),baseline:null,eol:raw.includes('\r\n')?'CRLF':'LF',bom:raw.startsWith('\uFEFF')});

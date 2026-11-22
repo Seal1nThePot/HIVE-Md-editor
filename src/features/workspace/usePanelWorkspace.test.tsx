@@ -45,7 +45,7 @@ vi.mock('./DockGuides',()=>({default:()=>null}));
 const rect:Rect={x:80,y:180,width:300,height:460};
 function fixture(enabled=true,implementation=usePanelWorkspace){
   Object.assign(hooks,{slots:[],cursor:0,dirty:true,effects:[]});
-  vi.stubGlobal('window',{innerWidth:1280,innerHeight:900,screenX:0,screenY:0,focus:vi.fn(),addEventListener:vi.fn(),removeEventListener:vi.fn(),hiveDesktop:{closePanel:vi.fn(),panelRect:()=>({...rect})}});
+  vi.stubGlobal('window',{innerWidth:1280,innerHeight:900,screenX:0,screenY:0,focus:vi.fn(),addEventListener:vi.fn(),removeEventListener:vi.fn(),hiveDesktop:{closePanel:vi.fn(),windowCommand:vi.fn(),panelRect:()=>({...rect})}});
   vi.stubGlobal('document',{addEventListener:vi.fn(),removeEventListener:vi.fn()});
   let measure=()=>{};
   vi.stubGlobal('ResizeObserver',class{constructor(callback:()=>void){measure=callback;}observe(){}disconnect(){}});
@@ -63,6 +63,7 @@ function fixture(enabled=true,implementation=usePanelWorkspace){
     members:(id:string)=>runtime.registry.get(id)?.members,owner:(id:string)=>runtime.registry.owner(id),panelForHost:(id:string)=>runtime.registry.get(id)?.active||id,
     attach:vi.fn((id:string)=>runtime.close(id)),removeMember:vi.fn((id:string)=>runtime.removeMember(id)),returnMembers:vi.fn((ids:readonly string[])=>runtime.returnMembers(ids)),
     detach:vi.fn((id:string,options?:NativeFloatOptions)=>connect(id,[id],options)),
+    reveal:vi.fn((id:string)=>runtime.open(id)),
     detachGroup:vi.fn((id:string,members:string[],_select:unknown,options?:NativeFloatOptions)=>connect(id,members,options,true)),
     isComposing:()=>runtime.composing([...runtime.handles.keys()]),
   };
@@ -109,6 +110,29 @@ if(process.env.HIVE_WORKSPACE_BENCHMARK){
   });
 }
 describe('unified native presentation transitions',()=>{
+  it('raises a docked conversation without changing its layout and focuses the main shell',()=>{
+    const f=fixture();
+    const before=f.workspace.capture();
+    f.act(w=>w.reveal('conversation'));
+    expect(f.workspace.capture()).toEqual(before);
+    expect(f.workspace.panel('conversation').style.zIndex).toBeGreaterThan(100);
+    expect(window.hiveDesktop?.windowCommand).toHaveBeenLastCalledWith('focus');
+    f.act(w=>w.reveal('conversation'));
+    expect(f.workspace.isOpen('conversation')).toBe(true);
+    f.act(w=>w.panel('files').raise());
+    expect(f.workspace.panel('conversation').style.zIndex).toBe(1);
+  });
+  it('focuses an existing native conversation host without detaching again',()=>{
+    const f=fixture();
+    f.act(w=>w.floatNativePanel('conversation'));
+    const host=f.runtime.registry.get('conversation')!;
+    const opened=f.desktop.detach.mock.calls.length;
+    f.act(w=>w.reveal('conversation'));
+    expect(f.runtime.registry.get('conversation')).toBe(host);
+    expect(f.desktop.detach.mock.calls.length).toBe(opened);
+    expect(f.desktop.reveal).toHaveBeenCalledWith('conversation');
+    expect(window.hiveDesktop?.windowCommand).toHaveBeenLastCalledWith('focus',host.id);
+  });
   it('opens repository management in a wide native host and preserves the standard shelf and return transitions',()=>{
     const f=fixture();f.act(w=>w.open('repositories'));
     expect(f.desktop.windows.has('repositories')).toBe(true);expect(f.workspace.isOpen('repositories')).toBe(true);

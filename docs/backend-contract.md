@@ -61,7 +61,7 @@
 | GET | `/api/templates` | — | `{directory,sourceDirectory,templates,warnings}`（olive-gold 置顶、zh-CN 名称排序；读取失败的目录记入 warnings） |
 | GET | `/api/templates/:id` | 可选 `?colorsOnly=1` 或 `?iconPackRevision=<hash>` | `{template,directory,colors,revision,defaults,defaultsRevision,iconPack}`。仅配色请求省略 `iconPack`。图标包摘要匹配时返回 `iconPackUnchanged:true` 并省略包。 |
 | POST | `/api/templates/:id` | `{revision,colors}` | 保存配色（version 1 全量校验；`colors.before-save.json` 备份；临时文件+rename；`revision` 过期 → 409 `模板配色文件已被外部修改，请重新读取后再保存。`） |
-| POST | `/api/templates/:id/open` | — | `{ok,directory}`（仅 Windows：`explorer.exe` 打开模板目录） |
+| POST | `/api/templates/:id/open` | — | `{ok,directory}`（仅 Windows。桌面端由 Electron 打开对应模板目录并确认系统调用结果，失败返回 503。独立后端调用 `explorer.exe`。） |
 | GET | `/api/templates/:id/icons` | — | `{version:1,icons,localIcons,revision,warning,packRevision}`，独立读取图标包。`icons` 为逐键合并结果，`localIcons` 为用户模板子目录的有效定义。`warning` 报告跳过的坏包或无效条目。 |
 | POST | `/api/templates/:id/icons` | `{version:1,revision,localIcons}` | 校验全部提交定义并原子替换用户模板子目录的图标文件，返回最新图标包。`revision` 为本地文件字节的 SHA-256，文件不存在时为 `null`。本地文件已有并发修改时返回 409。图标和配色文件各自限制 1 MiB。 |
 | GET | `/api/explorer/trash` | — | 回收站记录数组（按删除时间倒序） |

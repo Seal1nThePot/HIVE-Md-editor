@@ -24,7 +24,7 @@ export const typographyTheme=EditorView.theme({
   '.cm-line':{paddingLeft:'clamp(12px, 6.4%, 50px) !important',paddingRight:'clamp(12px, 6.4%, 50px) !important'},
   [`${rendered} .cm-line.cm-typography-paragraph-end`]:{paddingBottom:'calc(2px + var(--hive-paragraph-spacing, 0em))'},
   [`${rendered} .cm-line.cm-typography-indentable`]:{textIndent:'var(--hive-first-indent, 0em)'},
-  [`${rendered} .cm-line.cm-preview-list-line`]:{paddingLeft:'calc(clamp(12px, 6.4%, 50px) + var(--hive-list-depth, 0) * 1.8em + var(--hive-list-marker-width, 1.4em)) !important'},
+  [`${rendered} .cm-line.cm-preview-list-line`]:{paddingLeft:'calc(clamp(12px, 6.4%, 50px) + .85em + var(--hive-list-depth, 0) * 1.8em + var(--hive-list-marker-width, 1.4em)) !important'},
   [`${rendered} .cm-line.cm-preview-list-first`]:{textIndent:'calc(-1 * var(--hive-list-marker-width, 1.4em))'},
   [`${rendered} .cm-preview-bullet, ${rendered} .cm-preview-task`]:{display:'inline-block',width:'var(--hive-list-marker-width, 1.4em)',textIndent:'0',fontSize:'inherit'},
   // A wrapped inline token must not stretch the preceding CJK text.

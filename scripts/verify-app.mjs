@@ -130,12 +130,23 @@ async function worker(){
       const editorColorGroup=editorColors().closest('details');
       editorColorGroup.querySelector('summary').click();
       await wait(()=>editorColorGroup.open,'expanded editor colors');
-      check('editor page colors and alpha controls are integrated',get('.editor-color-settings').querySelectorAll('input[type=color]').length===16&&get('.editor-color-settings').querySelectorAll('input[type=range]').length===9);
+      check('editor page colors and alpha controls are integrated',get('.editor-color-settings').querySelectorAll('input[type=color]').length===17&&get('.editor-color-settings').querySelectorAll('input[type=range]').length===10);
       const highlight=get('[aria-label="正文高亮颜色值"]');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(highlight,'#bb6d3277');highlight.dispatchEvent(new Event('input',{bubbles:true}));
       await wait(()=>document.documentElement.style.getPropertyValue('--hive-editor-text-highlight-background')==='#bb6d3277','apply scheme-specific text highlight color');
       check('text highlighting has its own theme color',document.documentElement.style.getPropertyValue('--hive-editor-selection-background')!=='#bb6d3277');
-      const field=get('[aria-label="选中文字高亮颜色值"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,'#b374d977');field.dispatchEvent(new Event('input',{bubbles:true}));await pause();check('editor highlight changes independently',document.documentElement.style.getPropertyValue('--hive-editor-selection-background')==='#b374d977');
+      const inputThemeColor=(label,value)=>{
+        const field=get('[aria-label="'+label+'"]');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,value);
+        field.dispatchEvent(new Event('input',{bubbles:true}));
+      };
+      inputThemeColor('选区底色颜色值','#b374d977');
+      await wait(()=>document.documentElement.style.getPropertyValue('--hive-editor-selection-background')==='#b374d977','apply selection fill');
+      inputThemeColor('选区线框颜色值','#207f9bdd');
+      await wait(()=>document.documentElement.style.getPropertyValue('--hive-editor-selection-border')==='#207f9bdd','apply selection border');
+      check('editor selection fill and border are independently configurable',
+        document.documentElement.style.getPropertyValue('--hive-editor-selection-background')==='#b374d977'&&
+        document.documentElement.style.getPropertyValue('--hive-editor-text-highlight-background')==='#bb6d3277');
       get('[aria-label="关闭自定义配色"]').click();
       await wait(()=>!get('dialog.child-window-custom-color-settings'),'close custom color child');
       check('closing custom colors returns to the appearance settings',!!get('.theme-current-scheme'));

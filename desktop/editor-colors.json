@@ -1,7 +1,8 @@
 {
   "linkText": {"label":"链接文字颜色","alpha":false},
   "cursor": {"label":"输入光标","alpha":false},
-  "selectionBackground": {"label":"选中文字高亮","alpha":true},
+  "selectionBackground": {"label":"选区底色","alpha":true},
+  "selectionBorder": {"label":"选区线框","alpha":true},
   "selectionText": {"label":"选中文字颜色","alpha":false},
   "textHighlightBackground": {"label":"正文高亮","alpha":true},
   "inactiveSelectionBackground": {"label":"失去焦点的选区","alpha":true},

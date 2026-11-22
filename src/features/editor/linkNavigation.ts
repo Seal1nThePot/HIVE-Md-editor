@@ -7,8 +7,13 @@ function children(node:SyntaxNode){const result:SyntaxNode[]=[];for(let n=node.f
 /** Find the Markdown link under the pointer, including full and collapsed references. */
 export function linkAt(state:EditorState,pos:number):string|undefined{
   const tree=markdownTree(state),doc=state.doc;let node:SyntaxNode|null=tree.resolveInner(pos,1);
-  while(node&&node.name!=='Link'){if(node.name==='Image')return;node=node.parent;}
-  if(!node)return;
+  let bareUrl:SyntaxNode|null=null;
+  while(node&&node.name!=='Link'&&node.name!=='Autolink'){
+    if(node.name==='Image'||node.name==='LinkReference')return;
+    if(node.name==='URL')bareUrl=node;
+    node=node.parent;
+  }
+  if(!node)return bareUrl?doc.sliceString(bareUrl.from,bareUrl.to):undefined;
   const parts=children(node),url=parts.find(n=>n.name==='URL');
   if(url)return doc.sliceString(url.from,url.to);
   const marks=parts.filter(n=>n.name==='LinkMark'),label=parts.find(n=>n.name==='LinkLabel');

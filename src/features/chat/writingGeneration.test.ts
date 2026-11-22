@@ -44,7 +44,7 @@ describe('writing generation and review migration',()=>{
   it('does not install a late response after switching documents or stopping',async()=>{
     const f=fixture();let resolve!:(response:Response)=>void;f.context.request=vi.fn<typeof fetch>().mockImplementation(()=>new Promise<Response>(done=>{resolve=done;}));
     const pending=generateWriting(f.context);stopWritingGeneration(f.context.lifecycle,f.context.ui);f.context.document.activeSession.current='editor:other';f.context.document.disk.current={...f.context.document.disk.current!,path:'B.md'};resolve(response());await pending;
-    expect(f.context.lifecycle.proposal.current).toBeNull();expect(f.editor.state.doc.toString()).toBe(f.doc);expect(f.context.conversation.add).not.toHaveBeenCalledWith('assistant',expect.anything());
+    expect(f.context.lifecycle.proposal.current).toBeNull();expect(f.editor.state.doc.toString()).toBe(f.doc);expect(vi.mocked(f.context.conversation.add).mock.calls.some(([role])=>role==='assistant')).toBe(false);
   });
   it('finishes a discussion without a document after opening another editor',async()=>{
     const f=fixture(),{document,conversation,lifecycle}=f.context;
@@ -57,8 +57,31 @@ describe('writing generation and review migration',()=>{
     document.activeSession.current='editor:other';document.disk.current={...document.sessions.current.get('editor')!.disk!,path:'B.md'};
     resolve(response());await pending;
     expect(conversation.setLastRequest).toHaveBeenCalledWith(expect.objectContaining({file:'未打开文档',messages:expect.arrayContaining([expect.objectContaining({content:'Earlier in the conversation'})])}));
-    expect(conversation.add).toHaveBeenCalledWith('assistant',expect.any(String));
+    expect(conversation.add).toHaveBeenCalledWith('assistant',expect.any(String),{documentFile:undefined});
     expect(lifecycle.proposal.current).toBeNull();
+  });
+  it('preserves raw Markdown in a discussion stream and associates it with the original note',async()=>{
+    const {context}=fixture();
+    context.conversation.mode='discuss';
+    const source='~~~md\n**标注 1｜原文与备注**\n~~~';
+    vi.mocked(context.request).mockResolvedValue(new Response('event: chunk\ndata: '+JSON.stringify(source)+'\n\nevent: done\ndata: null\n\n'));
+    await generateWriting(context);
+    expect(context.ui.setStream).toHaveBeenCalledWith(source,'A.md');
+    expect(context.conversation.add).toHaveBeenCalledWith('assistant',source,{documentFile:'A.md'});
+  });
+  it('keeps annotation data for compact display and original text in the next model history',async()=>{
+    const {context}=fixture();
+    const submitted={id:'one',source:'document' as const,file:'A.md',from:0,to:3,original:'正文选区',note:'略长的原文备注'};
+    await generateWriting(context,{annotations:[submitted],instruction:'请解释'});
+    const add=vi.mocked(context.conversation.add);
+    const user=add.mock.calls.find(([role])=>role==='user')!;
+    expect(user[1]).toContain('正文选区');
+    expect(user[2]).toEqual({documentFile:'A.md',annotationBatch:{instruction:'请解释',items:[submitted]}});
+    context.conversation.mode='discuss';
+    context.conversation.messages=[{id:'prior',role:'user',content:user[1],...user[2]}];
+    vi.mocked(context.request).mockResolvedValue(response());
+    await generateWriting(context);
+    expect(context.conversation.setLastRequest).toHaveBeenLastCalledWith(expect.objectContaining({messages:expect.arrayContaining([{role:'user',content:user[1]}])}));
   });
   it('keeps a newer typed message when an in-flight request fails',async()=>{
     const f=fixture();let fail!:(error:Error)=>void;f.context.request=vi.fn<typeof fetch>().mockImplementation(()=>new Promise<Response>((_,reject)=>{fail=reject;}));

@@ -1,4 +1,16 @@
-export type Message = {
+import type { SubmittedAnnotation } from '../annotations/annotations';
+
+export type ChatAnnotationBatch = {
+    instruction: string;
+    items: readonly SubmittedAnnotation[];
+};
+
+export type ChatMessageDetails = {
+    documentFile?: string;
+    annotationBatch?: ChatAnnotationBatch;
+};
+
+export type Message = ChatMessageDetails & {
     id: string;
     role: "user" | "assistant" | "system";
     content: string;

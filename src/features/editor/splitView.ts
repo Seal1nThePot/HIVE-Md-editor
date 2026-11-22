@@ -84,7 +84,15 @@ export function synchronizeScroll(source:EditorView,live:EditorView){
       scroller.removeEventListener('keydown',prefer,true);
     };
   };
-  const removeSource=bind(source),removeLive=bind(live),frame=window.requestAnimationFrame(()=>sync(driver));
+  const removeSource=bind(source),removeLive=bind(live);
+  if(live.scrollDOM.scrollTop>0&&source.scrollDOM.clientHeight){
+    // A woken split tab already restored the live pane. Align its source before first paint.
+    source.lineBlockAtHeight(0);
+    sync(driver);
+    source.requestMeasure();
+    source.lineBlockAtHeight(source.scrollDOM.scrollTop);
+  }
+  const frame=window.requestAnimationFrame(()=>sync(driver));
   const dispose=()=>{window.cancelAnimationFrame(frame);window.cancelAnimationFrame(correctionFrame);removeSource();removeLive();};
   function correct(){
     const follower=destination(driver),top=viewportTop(driver),bottom=top+driver.scrollDOM.clientHeight*driver.scaleY;

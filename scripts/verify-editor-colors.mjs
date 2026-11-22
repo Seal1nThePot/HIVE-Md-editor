@@ -17,7 +17,7 @@ async function worker(){
       const css=(color)=>{const n=document.createElement('span');n.style.backgroundColor=color;document.body.append(n);const value=getComputedStyle(n).backgroundColor;n.remove();return value;};
       const eq=(label,node,property,color,pseudo)=>{if(!node)throw new Error(label+' element missing');const actual=getComputedStyle(node,pseudo)[property],expected=css(color);check(label,actual===expected,{actual,expected});};
       const controls=document.querySelector('.editor-color-settings');check('dedicated editor color section exists',controls.querySelector('h2').textContent==='文本编辑页面');
-      check('16 editable color fields and 9 alpha sliders',controls.querySelectorAll('input[type=color]').length===16&&controls.querySelectorAll('input[type=range]').length===9);
+      check('17 editable color fields and 10 alpha sliders',controls.querySelectorAll('input[type=color]').length===17&&controls.querySelectorAll('input[type=range]').length===10);
       check('document text has one settings control',document.querySelectorAll('[aria-label="正文文字颜色值"]').length===1);
       const palettes=[['black',{document:'#182634',documentText:'#dbeafe',selection:'#164a28'}],['white',{document:'#fff7ed',documentText:'#233344',selection:'#d5eacc'}]];
       for(const [base,surfaces] of palettes){
@@ -53,7 +53,7 @@ async function worker(){
         eq(base+' annotation text fragments have no individual fill',textMarks[0],'backgroundColor','#00000000');
         check(base+' annotation text fragments have no underline',getComputedStyle(textMarks[0]).borderBottomWidth==='0px');
       }
-      const color=document.querySelector('[aria-label="选中文字高亮颜色值"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(color,'#ef339977');color.dispatchEvent(new Event('input',{bubbles:true}));await pause();
+      const color=document.querySelector('[aria-label="选区底色颜色值"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(color,'#ef339977');color.dispatchEvent(new Event('input',{bubbles:true}));await pause();
       check('changing settings updates live preference',t.snapshot().preferences.editorProfiles.white.selectionBackground==='#ef339977');
       t.main().focus();await pause();t.main().dom.classList.add('cm-focused');eq('changing settings updates selection paint',t.main().dom.querySelector('.cm-selectionBackground'),'backgroundColor','#ef339977');
       t.flush();check('alpha color persisted',JSON.parse(localStorage.getItem('hive.theme.v1')).editorProfiles.white.selectionBackground==='#ef339977');

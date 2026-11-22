@@ -20,6 +20,7 @@ declare global {
     startupThemeReady?:(background:string)=>void;
     chooseRepositoryDirectory:()=>Promise<string|null>;
     getAboutInfo:()=>Promise<AboutInfo>;openAppDataDirectory:()=>Promise<void>;
+    openExternalHttpLink?:(target:string)=>Promise<boolean>;
     getUpdateMode?:()=>Promise<'unsupported'|'directory'|'picker'|'internet'>;
     setUpdateSource?:(source:'local'|'internet')=>Promise<'unsupported'|'directory'|'picker'|'internet'>;
     installUpdate?:()=>Promise<{status:'cancelled'|'restarting'|'current'|'empty'}|{status:'error';message:string}>;
@@ -43,7 +44,7 @@ type DesktopPanels={
   returnMembers:(ids:readonly string[])=>boolean;
   detach:(id:string,options?:NativeFloatOptions)=>void;detachGroup:(id:string,members:string[],select:(id:string)=>void,options?:NativeFloatOptions)=>void;
   extract:(id:string)=>{restore:()=>boolean}|null;attach:(id:string)=>boolean;isComposing:()=>boolean;
-  focus:(id:string)=>void;returnAll:()=>void;report:(message:string)=>void;toggleVisibility:(id:string)=>void;
+  focus:(id:string)=>void;reveal:(id:string)=>void;returnAll:()=>void;report:(message:string)=>void;toggleVisibility:(id:string)=>void;
 };
 import {useWindowAnnotations} from '../annotations/windowAnnotations';
 
@@ -125,6 +126,17 @@ export function DesktopPanelsProvider({children}:{children:ReactNode}){
     detach:(id,options)=>runtime.open(id,options),detachGroup:(id,members,select,options)=>runtime.open(id,options,members,select),extract:id=>runtime.extract(id),
     isComposing:()=>composition.current||runtime.composing([...runtime.handles.keys()]),
     focus:id=>{const host=runtime.registry.get(id);if(host)window.hiveDesktop?.windowCommand('focus',host.id);else runtime.handles.get(id)?.focus();},
+    reveal:id=>{
+      const host=runtime.registry.get(id);
+      if(!host||host.resource.child.closed)return;
+      runtime.open(id);
+      setHiddenWindows(old=>{
+        if(!host.members.some(member=>old.has(member)))return old;
+        const next=new Set(old);
+        for(const member of host.members)next.delete(member);
+        return next;
+      });
+    },
     toggleVisibility:id=>{const host=runtime.registry.get(id);if(!host)return;const hidden=host.members.every(member=>hiddenWindows.has(member));window.hiveDesktop?.windowCommand(hidden?'focus':'hide',host.id);setHiddenWindows(old=>{const next=new Set(old);for(const member of host.members){if(hidden)next.delete(member);else next.add(member);}return next;});}
   }}>{children}{hosts.map(host=>createPortal(<NativeGroupLayout host={host} runtime={runtime} onDrag={beginDrag}/>,host.resource.child.document.body,'native-group-'+host.id))}
     {error&&docs.map((doc,index)=>createPortal(<div className="desktop-window-error" role="alert">{error}<button onClick={()=>report('')}>关闭</button></div>,doc.body,'window-error-'+index))}

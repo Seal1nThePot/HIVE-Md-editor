@@ -1,4 +1,4 @@
-import type { EditorState } from '@codemirror/state';
+import type { EditorState, StateEffect, Text } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import type { DiskFile } from '../../shared/fileTypes';
 import type { Proposal, UndoEdit } from '../../shared/core';
@@ -13,6 +13,7 @@ export type EditorSession = {
     contentVersion?:number;
     restoreScroll?: number;
     restoreScrollLeft?: number;
+    restoreScrollTarget?: { doc: Text; effect: StateEffect<unknown> };
     typewriter?: boolean;
     displayMode?: EditorDisplayMode;
     landing?: boolean;

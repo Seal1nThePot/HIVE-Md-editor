@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import localUpdate from './localUpdate.cjs';
 
-const { createLocalUpdate } = localUpdate;
+const { createLocalUpdate, isNewer } = localUpdate;
 const event = {};
 const runtime = { electron: '45.3.3', platform: 'win32', arch: 'x64' };
 const current = { appName: 'HIVE markdown editor', version: '0.1.7', buildNumber: 'old', buildTime: '2026-11-20T00:00:00.000Z', channel: 'stable' };
@@ -45,6 +45,21 @@ afterEach(async () => {
 function candidate(build) {
   return { manifest: { format: 1, appId: 'local.hive.writing', bytes: 4, sha256: '0'.repeat(64), ...runtime, build } };
 }
+
+describe('application update version order', () => {
+  it.each([
+    ['0.1.7-r3', '0.1.7-r4', true],
+    ['0.1.7-r3', '0.1.7-r10', true],
+    ['0.1.7-r3', '0.1.7-r2', false],
+    ['0.1.7-r3', '0.1.7', true],
+    ['0.1.7-r3', '0.1.8', true],
+    ['0.1.7-r3', '0.1.7r4', false],
+    ['0.1.7', '0.1.7-r3', false],
+    ['0.1.8-r1', '0.1.7', false],
+  ])('compares %s to %s as newer=%s', (from, to, newer) => {
+    expect(isNewer({version:from}, {version:to})).toBe(newer);
+  });
+});
 
 describe('application update sources', () => {
   it('preserves the local directory and picker and remembers the chosen source in a new handler', async () => {

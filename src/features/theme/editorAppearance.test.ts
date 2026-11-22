@@ -8,15 +8,17 @@ import blue from '../../../templates/claude-mediterranean-blue/colors.json';
 describe('independent text editor colors',()=>{
   it('keeps old templates valid and derives editor defaults from their own base',()=>{
     const binding=createTemplateBinding({id:'claude-mediterranean-blue',name:'blue',bases:['black','white']},blue);
-    for(const base of binding.bases){const theme=templateBaseDefaults(binding,base),s=themeTokens(theme).surfaces,c=editorColors(theme);expect(c.selectionBackground).toBe(s.selection);expect(c.selectionText).toBe(s.documentText);expect(c.annotationUnderline).toBe(theme.colors.accent);}
+    for(const base of binding.bases){const theme=templateBaseDefaults(binding,base),s=themeTokens(theme).surfaces,c=editorColors(theme);expect(c.selectionBackground).toBe(theme.colors.accent+'2a');expect(c.selectionBorder).toBe(theme.colors.accent+'b3');expect(c.selectionText).toBe(s.documentText);expect(c.annotationUnderline).toBe(theme.colors.accent);}
   });
   it('validates alpha backgrounds separately from text and rejects unknown or injected fields',()=>{
     expect(normalizeEditorProfiles({black:{selectionBackground:'#ABCDEF66',selectionText:'#12345699',cursor:'#ABCDEF',searchMatchBackground:'url(x)',unknown:'#123456'},white:[]})).toEqual({black:{selectionBackground:'#abcdef66',cursor:'#abcdef'}});
   });
   it('persists edits without changing interface selection and scopes them to each base',()=>{
-    const theme=normalizeTheme({...defaultTheme,editorProfiles:{black:{selectionBackground:'#aa337788',selectionText:'#ffffff',textHighlightBackground:'#ab773399'},white:{selectionBackground:'#44556677',textHighlightBackground:'#ffe18866'}}});
+    const theme=normalizeTheme({...defaultTheme,editorProfiles:{black:{selectionBackground:'#aa337788',selectionBorder:'#996633',selectionText:'#ffffff',textHighlightBackground:'#ab773399'},white:{selectionBackground:'#44556677',textHighlightBackground:'#ffe18866'}}});
     expect(readTheme(JSON.stringify(theme))).toEqual(theme);expect(readDefaultTheme(JSON.stringify({defaultScheme:theme}))).toEqual(theme);
     expect(themeTokens(theme).surfaces.selection).toBe(themeTokens(defaultTheme).surfaces.selection);
+    expect(editorColors(theme).selectionBorder).toBe('#996633');
+    expect(editorColors(switchThemeBase(theme,'white')).selectionBorder).toBe(editorColors(switchThemeBase(defaultTheme,'white')).selectionBorder);
     expect(editorColors(switchThemeBase(theme,'white')).selectionBackground).toBe('#44556677');expect(editorColors(switchThemeBase(switchThemeBase(theme,'white'),'black')).selectionBackground).toBe('#aa337788');
     const reloaded=readTheme(JSON.stringify(theme));
     expect(editorColors(reloaded).textHighlightBackground).toBe('#ab773399');

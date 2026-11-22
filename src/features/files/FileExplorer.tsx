@@ -35,7 +35,8 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
   const [searchResult,setSearchResult]=useState<{scope:string;query:string;matches:{path:string;line:number|null;excerpt:string}[];truncated:boolean}|null>(null),[searching,setSearching]=useState(false);
 
   const [order,setOrder]=useState<ExplorerOrder>(()=>{try{return readOrder(localStorage.getItem(storage));}catch{return readOrder(null);}});
-  const [selected,setSelected]=useState(''),[scope,setScope]=useState(''),[menu,setMenu]=useState<Menu|null>(null),[rename,setRename]=useState<{path:string;value:string}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[warning,setWarning]=useState('');
+  const [selected,setSelected]=useState(''),[scope,setScope]=useState(''),[menu,setMenu]=useState<Menu|null>(null),[rename,setRename]=useState<{path:string;value:string}|null>(null),[pendingOperation,setOperation]=useState<'open'|'manage'|null>(null),[error,setError]=useState(''),[warning,setWarning]=useState('');
+  const busy=pendingOperation!==null;
   const [selection,setSelection]=useState<Set<string>>(new Set()),anchor=useRef(''),[batch,setBatch]=useState<{kind:'move'|'trash';entries:Entry[]}|null>(null),[batchResult,setBatchResult]=useState<string[]>([]);
   const foldersSeen=useRef<{workspace:string;paths:Set<string>}>({workspace:workspaceId,paths:new Set()});
   const [move,setMove]=useState<Entry|null>(null),[moveParent,setMoveParent]=useState(''),[deleting,setDeleting]=useState<Entry|null>(null),[drop,setDrop]=useState<Drop|null>(null);
@@ -47,7 +48,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
   },[scope,filter,space.request,entries]);
   const importInput=useRef<HTMLInputElement>(null),importLease=useRef<AbortController|null>(null),currentWorkspace=useRef(workspaceId);
   const workspaceEpoch=useRef(0);if(currentWorkspace.current!==workspaceId){currentWorkspace.current=workspaceId;workspaceEpoch.current++;}
-  useEffect(()=>{setBusy(false);setSelected('');setSelection(new Set());anchor.current='';setBatch(null);setMove(null);setDeleting(null);setBatchResult([]);setError('');setWarning('');setImagesOpen(false);setMenu(null);return()=>{importLease.current?.abort();importLease.current=null;};},[workspaceId]);
+  useEffect(()=>{setOperation(null);setSelected('');setSelection(new Set());anchor.current='';setBatch(null);setMove(null);setDeleting(null);setBatchResult([]);setError('');setWarning('');setImagesOpen(false);setMenu(null);return()=>{importLease.current?.abort();importLease.current=null;};},[workspaceId]);
   useEffect(()=>{
     const prevent=(event:DragEvent)=>{if(Array.from(event.dataTransfer?.types||[]).includes('Files'))event.preventDefault();};
     const clear=()=>setExternalDrop(false);
@@ -59,7 +60,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
     if(!sources.length){setImportStatus('未取得文件，请拖入文件而不是文件夹。');return;}
     const lease=new AbortController();importLease.current=lease;
     const valid=()=>importLease.current===lease&&!lease.signal.aborted&&currentWorkspace.current===workspaceId;
-    setBusy(true);setImportStatus('正在导入…');const ok:string[]=[],failed:string[]=[];
+    setOperation('manage');setImportStatus('正在导入…');const ok:string[]=[],failed:string[]=[];
     try{
       for(const source of sources){
         if(!valid())return;
@@ -73,7 +74,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       let refreshError='';try{await onRefresh?.();if(valid())setImageRevision(value=>value+1);}catch(error){refreshError='列表刷新失败：'+(error as Error).message;}
       if(!valid())return;
       setFilter('');setScope('');setImportStatus([ok.length?'已导入 '+ok.length+' 个：'+ok.join('、'):'',failed.length?'未导入 '+failed.length+' 个：'+failed.join('；'):'',refreshError].filter(Boolean).join('。'));
-    }finally{if(valid()){importLease.current=null;setBusy(false);}}
+    }finally{if(valid()){importLease.current=null;setOperation(null);}}
   }
   const container=useRef<HTMLDivElement>(null),menuRef=useRef<HTMLDivElement>(null),search=useRef<HTMLInputElement>(null),drag=useRef<string|null>(null),renaming=useRef(false),cancelRename=useRef(false);
   const skipClick=useRef(false),dragCleanup=useRef<(()=>void)|null>(null);
@@ -86,7 +87,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
   useEffect(()=>{const pending=newFolders.filter(path=>!foldersSeen.current.paths.has(path));if(!pending.length)return;pending.forEach(path=>foldersSeen.current.paths.add(path));setCollapsed(old=>new Set([...old,...pending]));},[entries,workspaceId,setCollapsed]);
   function store(next:ExplorerOrder){setOrder(next);try{localStorage.setItem(storage,JSON.stringify(next));}catch{setError('排序已生效，但无法保存在此浏览器中。');}}
   function expand(path:string){const parts=path.split('/');for(let i=1;i<=parts.length;i++)foldersSeen.current.paths.add(parts.slice(0,i).join('/'));setCollapsed(old=>new Set([...old].filter(value=>path!==value&&!path.startsWith(value+'/'))));}
-  async function run<T>(fn:()=>Promise<T>):Promise<T|undefined>{if(busy)return;const owner=workspaceId,epoch=workspaceEpoch.current;setBusy(true);setError('');try{const result=await fn();if(currentWorkspace.current!==owner||workspaceEpoch.current!==epoch)return undefined;if(result&&typeof result==='object'&&'warning' in result&&typeof result.warning==='string')setWarning(result.warning);return result;}catch(error){if(currentWorkspace.current===owner&&workspaceEpoch.current===epoch)setError((error as Error).message);}finally{if(currentWorkspace.current===owner&&workspaceEpoch.current===epoch)setBusy(false);}}
+  async function run<T>(fn:()=>Promise<T>,kind:'open'|'manage'='manage'):Promise<T|undefined>{if(busy)return;const owner=workspaceId,epoch=workspaceEpoch.current;setOperation(kind);setError('');try{const result=await fn();if(currentWorkspace.current!==owner||workspaceEpoch.current!==epoch)return undefined;if(result&&typeof result==='object'&&'warning' in result&&typeof result.warning==='string')setWarning(result.warning);return result;}catch(error){if(currentWorkspace.current===owner&&workspaceEpoch.current===epoch)setError((error as Error).message);}finally{if(currentWorkspace.current===owner&&workspaceEpoch.current===epoch)setOperation(null);}}
   function beginRename(entry:Entry){cancelRename.current=false;setRename({path:entry.path,value:entry.name});setSelected(entry.path);expand(entry.path);}
   useEffect(()=>{if(!renameRequest)return;setFilter('');setScope('');beginRename({path:renameRequest.path,name:renameRequest.path.split('/').at(-1)!,type:'file'});},[renameRequest?.key]);
   async function commitRename(){if(!rename||renaming.current||cancelRename.current)return;const current=rename;renaming.current=true;
@@ -99,7 +100,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
   async function create(type:'file'|'folder',parent=focused?.type==='folder'?focused.path:focused?parentPath(focused.path):scope){
     const result=await run(()=>onAction({action:'create',parent,type}));if(!result)return;
     expand(result.path);setFilter('');setScope('');
-    if(type==='file')await run(()=>onOpen(result.path,true));
+    if(type==='file')await run(()=>onOpen(result.path,true),'open');
     beginRename({name:result.path.split('/').at(-1)!,path:result.path,type});
   }
   async function operation(action:string,entry:Entry){setMenu(null);
@@ -109,7 +110,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
     if(action==='search'){setScope(entry.path);setFilter('');expand(entry.path);search.current?.focus();return;}
     if(action==='ai'){if(isImagePath(entry.path)){setError('图片用于查看或插入正文，文字依据请选择 Markdown。');return;}if(selection.size>1&&selection.has(entry.path))void referenceBatch();else onAI(entry.path);return;}
     if(action==='copy'){await run(()=>navigator.clipboard.writeText(root.replace(/[\\/]$/,'')+'\\'+entry.path.replace(/\//g,'\\')));return;}
-    if(action==='tab'){await run(()=>onOpen(entry.path,true));return;}
+    if(action==='tab'){await run(()=>onOpen(entry.path,true),'open');return;}
     const result=await run(()=>onAction({action,path:entry.path}));if(result&&action==='duplicate')beginRename({name:result.path.split('/').at(-1)!,path:result.path,type:result.type});
   }
   useEffect(()=>{
@@ -131,21 +132,21 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
   function startBatch(kind:'move'|'trash'){if(!chosen.length)return;setBatch({kind,entries:chosen});setMoveParent('');setBatchResult([]);}
   async function executeBatch(){if(!batch||busy)return;const owner=workspaceId,epoch=workspaceEpoch.current,valid=()=>currentWorkspace.current===owner&&workspaceEpoch.current===epoch,items=planned(batch.entries);
     const acts:FileAction[]=items.map(item=>({action:batch.kind,path:item.path,...(batch.kind==='move'?{parent:moveParent}:{})}));
-    setBusy(true);setError('');setBatchResult([]);
+    setOperation('manage');setError('');setBatchResult([]);
     try{
       try{if(!onPreflight)throw new Error('批量操作检查不可用。');await onPreflight(acts);}catch(error){if(valid())setBatchResult(describePreflightFailure(batch.entries,(error as Error).message));return;}
       if(!valid())return;
       const results:BatchItemResult[]=[],succeeded:string[]=[];let nextOrder=order;
       for(let i=0;i<acts.length;i++){if(!valid())return;try{const result=await onAction(acts[i],{quiet:true});if(!valid())return;succeeded.push(items[i].path);if(batch.kind==='move')nextOrder=remapOrder(nextOrder,items[i].path,result.path);results.push({path:items[i].path,ok:true,warning:result.warning});}catch(error){if(!valid())return;results.push({path:items[i].path,ok:false,error:(error as Error).message});}}
       if(batch.kind==='move')store(nextOrder);if(batch.kind==='trash'&&succeeded.some(path=>scope===path||scope.startsWith(path+'/')))setScope('');setBatchResult(describeBatchResults(batch.entries,results));setSelection(new Set());
-    }finally{if(valid())setBusy(false);}
+    }finally{if(valid())setOperation(null);}
   }
-  async function referenceBatch(){if(!chosen.length||busy)return;const owner=workspaceId,epoch=workspaceEpoch.current,entries=chosen,items=planned(entries),valid=()=>currentWorkspace.current===owner&&workspaceEpoch.current===epoch;setBusy(true);setError('');setBatchResult([]);
+  async function referenceBatch(){if(!chosen.length||busy)return;const owner=workspaceId,epoch=workspaceEpoch.current,entries=chosen,items=planned(entries),valid=()=>currentWorkspace.current===owner&&workspaceEpoch.current===epoch;setOperation('manage');setError('');setBatchResult([]);
     try{
       try{if(!onPreflight||!onReferenceBatch)throw new Error('批量添加依据不可用。');await onPreflight(items.map(item=>({action:'basis',path:item.path})));}catch(error){if(valid())setBatchResult(describePreflightFailure(entries,(error as Error).message));return;}
       if(!valid())return;
       try{const results=await onReferenceBatch!(items.map(item=>({path:item.path,type:item.type})));if(valid())setBatchResult(describeBatchResults(entries,results));}catch(error){if(valid())setBatchResult(entries.map(item=>item.path+'：未取得结果：'+(error as Error).message));}
-    }finally{if(valid())setBusy(false);}}
+    }finally{if(valid())setOperation(null);}}
   async function dropAt(target:Drop){const source=drag.current;drag.current=null;setDrop(null);if(!source||source===target.path)return;
     const destination=target.where==='inside'?target.path:parentPath(target.path),name=source.split('/').at(-1)!,nextPath=[destination,name].filter(Boolean).join('/');
     if(destination===source||destination.startsWith(source+'/')){setError('不能把文件夹拖入自身。');return;}
@@ -242,7 +243,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       onDrop={event=>{if(!Array.from(event.dataTransfer.types).includes(REFERENCE_DRAG_TYPE))return;event.preventDefault();event.stopPropagation();const source=readReferenceDrag(event.dataTransfer.getData(REFERENCE_DRAG_TYPE),workspaceId);if(!source||!byPath.has(source.path))return;drag.current=source.path;const rect=event.currentTarget.getBoundingClientRect(),ratio=(event.clientY-rect.y)/rect.height;void dropAt({path:entry.path,where:folder&&ratio>.25&&ratio<.75?'inside':ratio<.5?'before':'after'});}}
       onPointerDown={event=>beginDrag(entry.path,event)}
       style={{paddingLeft:8+depth*16}} onFocus={()=>{if(!busy)setSelected(entry.path);}}
-      onClick={event=>{if(busy||skipClick.current&&event.detail>0)return;setSelected(entry.path);if(editing)return;if(event.shiftKey){const start=visiblePaths.indexOf(anchor.current),end=visiblePaths.indexOf(entry.path);if(start>=0&&end>=0)setSelection(new Set(selectRange(visiblePaths,anchor.current,entry.path)));else{anchor.current=entry.path;setSelection(new Set([entry.path]));}return;}if(event.ctrlKey||event.metaKey){anchor.current=entry.path;setSelection(old=>{const next=new Set(old);if(next.has(entry.path))next.delete(entry.path);else next.add(entry.path);return next;});return;}anchor.current=entry.path;setSelection(new Set([entry.path]));if(folder)setCollapsed(old=>{const next=new Set(old);if(next.has(entry.path))next.delete(entry.path);else next.add(entry.path);return next;});else void run(()=>onOpen(entry.path));}}
+      onClick={event=>{if(busy||skipClick.current&&event.detail>0)return;setSelected(entry.path);if(editing)return;if(event.shiftKey){const start=visiblePaths.indexOf(anchor.current),end=visiblePaths.indexOf(entry.path);if(start>=0&&end>=0)setSelection(new Set(selectRange(visiblePaths,anchor.current,entry.path)));else{anchor.current=entry.path;setSelection(new Set([entry.path]));}return;}if(event.ctrlKey||event.metaKey){anchor.current=entry.path;setSelection(old=>{const next=new Set(old);if(next.has(entry.path))next.delete(entry.path);else next.add(entry.path);return next;});return;}anchor.current=entry.path;setSelection(new Set([entry.path]));if(folder)setCollapsed(old=>{const next=new Set(old);if(next.has(entry.path))next.delete(entry.path);else next.add(entry.path);return next;});else void run(()=>onOpen(entry.path),'open');}}
       onContextMenu={event=>{event.preventDefault();event.stopPropagation();if(busy)return;setSelected(entry.path);if(!selection.has(entry.path)){setSelection(new Set([entry.path]));anchor.current=entry.path;}setMenu({x:event.clientX,y:event.clientY,entry});}}
       onKeyDown={event=>{if(editing||busy||event.nativeEvent.isComposing)return;if(event.key==='Enter'&&!event.ctrlKey&&!event.metaKey){event.preventDefault();event.currentTarget.click();}if(folder&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();setCollapsed(old=>{const next=new Set(old);if(event.key==='ArrowLeft')next.add(entry.path);else next.delete(entry.path);return next;});}if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();const nodes=Array.from(container.current?.querySelectorAll<HTMLElement>('[role="treeitem"]')||[]),index=nodes.indexOf(event.currentTarget),next=event.key==='Home'?0:event.key==='End'?nodes.length-1:Math.max(0,Math.min(nodes.length-1,index+(event.key==='ArrowDown'?1:-1)));if(event.shiftKey&&nodes[next]){if(!anchor.current||!visiblePaths.includes(anchor.current))anchor.current=entry.path;setSelection(new Set(selectRange(visiblePaths,anchor.current,nodes[next].dataset.path!)));}nodes[next]?.focus();}if(matchesShortcut(bindings,'fileMenu',event.nativeEvent)){event.preventDefault();event.stopPropagation();const rect=event.currentTarget.getBoundingClientRect();setMenu({entry,x:rect.x+30,y:rect.bottom});}}}>
       {folder?(open?<ChevronDown size={12}/>:<ChevronRight size={12}/>):<span className="explorer-spacer"/>}{folder?<Folder size={15}/>:isImagePath(entry.path)?<FileImage size={15}/>:<Icon name="file.text" size={15}/>}
@@ -307,7 +308,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
   }}>
     {externalDrop&&<div className="explorer-external-drop" aria-hidden="true">松开以导入 Markdown 或图片<br/><small>复制到当前文件库</small></div>}
     <div className="explorer-search"><Search size={13}/><input ref={search} disabled={busy} aria-label="筛选文件" placeholder={scope?'在文件夹中查找…':'查找文件…'} value={filter} onChange={event=>setFilter(event.target.value)}/></div>
-    <div className="explorer-tools"><span className="explorer-heading" title={scope}><span>{scope?scope.split('/').at(-1):'全部文档'}</span>{chosen.length>1&&<small role="status" aria-label={`已选择 ${chosen.length} 项`}>已选 {chosen.length} 项</small>}</span>{scope&&<button type="button" disabled={busy} onClick={()=>{setScope('');setFilter('');}}>全部</button>}<div>
+    <div className="explorer-tools" data-opening-file={pendingOperation==='open'||undefined}><span className="explorer-heading" title={scope}><span>{scope?scope.split('/').at(-1):'全部文档'}</span>{chosen.length>1&&<small role="status" aria-label={`已选择 ${chosen.length} 项`}>已选 {chosen.length} 项</small>}</span>{scope&&<button type="button" disabled={busy} onClick={()=>{setScope('');setFilter('');}}>全部</button>}<div>
       <input ref={importInput} type="file" hidden multiple accept=".md,.png,.jpg,.jpeg,.gif,.webp" onChange={event=>{const files=Array.from(event.currentTarget.files||[]);event.currentTarget.value='';if(files.length)void importDropped(files);}}/>
       <button type="button" aria-label="导入文件" title="导入文件" disabled={busy} onClick={()=>importInput.current?.click()}><Upload size={14}/></button>
       <button type="button" disabled={busy} aria-label="文件排序" title="排序" aria-haspopup="menu" onClick={event=>{const rect=event.currentTarget.getBoundingClientRect();setMenu({x:rect.x,y:rect.bottom,sort:true});}}><ArrowDownWideNarrow size={14}/></button>

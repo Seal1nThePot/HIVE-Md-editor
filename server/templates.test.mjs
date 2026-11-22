@@ -67,7 +67,7 @@ describe('local template folders',()=>{
     expect(read.defaults).toMatchObject({reasoningTrackProfiles:sourceTracks,reasoningEffects});
   });
   it('persists optional editor highlights on explicit save and reconstructs the saved baseline',async()=>{
-    const colors={...fixture,editorProfiles:{black:{selectionBackground:'#aabbcc66',selectionText:'#123456'},white:{annotationBackground:'#11223344'}}};
+    const colors={...fixture,editorProfiles:{black:{selectionBackground:'#aabbcc66',selectionBorder:'#2387abbb',selectionText:'#123456'},white:{annotationBackground:'#11223344'}}};
     const saved=await store.save('claude-olive-gold',{revision:initialRevision,colors});expect(saved.defaults.editorProfiles).toEqual(colors.editorProfiles);
     await fs.unlink(path.join(directory,'claude-olive-gold','colors.json'));expect((await store.read('claude-olive-gold')).colors.editorProfiles).toEqual(colors.editorProfiles);
     for(const profile of [{cursor:'#12345677'},{selectionBackground:'url(x)'}])expect(()=>validateTemplateColors({...colors,editorProfiles:{black:profile}})).toThrow('文本编辑页面颜色');
@@ -130,11 +130,31 @@ describe('local template folders',()=>{
     const catalog=await store.list();expect(catalog.templates.map(item=>item.id)).toEqual(expect.arrayContaining(['claude-olive-gold','my-olive']));expect(catalog.warnings).toHaveLength(1);
     expect(catalog.templates.find(item=>item.id==='my-olive').directory).toBe(copy);
   });
-  it('opens only the resolved current folder without invoking a shell',async()=>{
+  it('opens the validated runtime template directory and propagates native failures',async()=>{
+    const openDirectory=vi.fn(async()=>{});
+    const windows=await templateStore(directory,bundled,{platform:'win32',openDirectory});
+    try{
+      const selected=path.join(directory,templateId),outside=path.join(temporary,'outside');
+      await fs.mkdir(outside);
+      await fs.symlink(outside,path.join(directory,'linked'),process.platform==='win32'?'junction':'dir');
+      for(const id of ['..','linked','missing'])await expect(windows.open(id)).rejects.toThrow();
+      expect(openDirectory).not.toHaveBeenCalled();
+      await expect(windows.open(templateId)).resolves.toEqual({ok:true,directory:selected});
+      expect(openDirectory).toHaveBeenCalledExactlyOnceWith(selected);
+      const failure=Object.assign(new Error('无法打开系统资源管理器，请重试。'),{status:503});
+      openDirectory.mockRejectedValueOnce(failure);
+      await expect(windows.open(templateId)).rejects.toBe(failure);
+    }finally{await windows.close();}
+  });
+  it('opens Explorer visibly without shell syntax in the standalone Windows server',async()=>{
     const launch=vi.fn(()=>{const child=new EventEmitter();child.unref=vi.fn();queueMicrotask(()=>child.emit('spawn'));return child;});
-    const windows=await templateStore(directory,bundled,{platform:'win32',launch});await windows.save('claude-olive-gold',{revision:initialRevision,colors:fixture});
-    await windows.open('claude-olive-gold');expect(launch).toHaveBeenCalledWith('explorer.exe',[path.join(directory,'claude-olive-gold')],expect.objectContaining({shell:false,windowsHide:true}));
-    await expect(windows.open('..')).rejects.toMatchObject({status:400});expect(launch).toHaveBeenCalledTimes(1);
+    const windows=await templateStore(directory,bundled,{platform:'win32',launch});
+    try{
+      await windows.open(templateId);
+      expect(launch).toHaveBeenCalledExactlyOnceWith('explorer.exe',[path.join(directory,templateId)],expect.objectContaining({shell:false,windowsHide:false}));
+      launch.mockImplementationOnce(()=>{const child=new EventEmitter();queueMicrotask(()=>child.emit('error',Error('private path')));return child;});
+      await expect(windows.open(templateId)).rejects.toMatchObject({status:503,message:'无法打开系统资源管理器，请重试。'});
+    }finally{await windows.close();}
   });
   it('imports new source folders automatically and preserves user colors on the first link',async()=>{
     const local={...fixture,customBase:'#334455'};await store.save('claude-olive-gold',{revision:initialRevision,colors:local});await store.close();

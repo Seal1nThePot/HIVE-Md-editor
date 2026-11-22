@@ -8,7 +8,7 @@ import { annotationMessages, annotationSummary, type SubmittedAnnotation } from 
 import { targetForNode, type WritingNode } from '../outline/writingNodes';
 import { activeModelLabel, type Config } from '../settings/modelConfig';
 import { referenceOverrides, fitReferenceMessages, type ReferenceSource, type ResolvedReferences } from './referenceSources';
-import type { Message } from './chatTypes';
+import type { ChatMessageDetails, Message } from './chatTypes';
 import type { InputBasisRequest } from './InputBasisPanel';
 import type { ReasoningEffort } from './modelReasoning';
 import { generateDemoText, streamModelText } from './generationTransport';
@@ -41,7 +41,7 @@ export type GenerationContext = {
         messages: Message[];
         setPrompt: Dispatch<SetStateAction<string>>;
         setLastRequest: (request: InputBasisRequest) => void;
-        add: (role: Message['role'], content: string) => void;
+        add: (role: Message['role'], content: string, details?: ChatMessageDetails) => void;
     };
     lifecycle: {
         running: RefObject<boolean>;
@@ -63,7 +63,7 @@ export type GenerationContext = {
     ui: {
         setError: (message: string) => void;
         setBusy: (busy: boolean) => void;
-        setStream: (text: string) => void;
+        setStream: (text: string, documentFile?: string) => void;
         openPanel: (id: string) => void;
         inform: (message: string) => void;
         redraw: () => void;
@@ -250,7 +250,11 @@ export async function generateWriting(context: GenerationContext, options?: Gene
         file: requestDisk?.path || (v ? "自由草稿" : "未打开文档"),
     };
     setLastRequest(requestInfo);
-    add("user", submitted ? annotationSummary(submitted, userPrompt) : userPrompt);
+    const documentFile = requestDisk?.path;
+    add("user", submitted ? annotationSummary(submitted, userPrompt) : userPrompt, {
+        documentFile,
+        ...(submitted ? { annotationBatch: { instruction: userPrompt, items: submitted } } : {}),
+    });
     if (!submitted)
         setPrompt(old => old === userPrompt ? "" : old);
     if (resolvedReferences.warnings.length) {
@@ -261,11 +265,11 @@ export async function generateWriting(context: GenerationContext, options?: Gene
         const raw = config.demo
             ? await generateDemoText({ requestMode, requestLimit, node, target, userPrompt, submitted, signal: abort.signal })
             : await streamModelText(request, { messages: requestMessages, selection: config.selection, reasoningEffort, signal: abort.signal }, text => { if (generation.current === id)
-                setStream(streamPreview(text)); });
+                setStream(requestMode === "discuss" ? text : streamPreview(text), documentFile); });
         if (generation.current !== id || abort.signal.aborted)
             return;
         if (requestMode === "discuss") {
-            add("assistant", raw);
+            add("assistant", raw, { documentFile });
             if (submitted)
                 annotationResponded(submitted);
             return;

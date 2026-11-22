@@ -17,12 +17,12 @@ function deferred<T=any>(){let resolve!:(value:T)=>void,reject!:(reason:Error)=>
 const data=(path:string,text='original',hash='hash-'+path):DiskFile=>({path,text,hash,eol:'LF',bom:false});
 async function tick(){await Promise.resolve();await Promise.resolve();}
 function setup(){
-  const callbacks=new Map<string,ReturnType<typeof vi.fn>>(),open=new Set(['editor']),busy:boolean[]=[],errors:string[]=[];
+  const callbacks=new Map<string,ReturnType<typeof vi.fn>>(),open=new Set(['editor']),busy:boolean[]=[],openingFile:boolean[]=[],errors:string[]=[];
   let confirm:any,dialog:any=null;
   const noop=()=>{};
   const opts:any={sessions:{current:new Map<string,EditorSession>([['editor',{id:'editor',disk:null,state:null,view:null,dirty:false}]])},activeSession:{current:'editor'},activeTextSource:{current:'document'},proposal:{current:null},undo:{current:[]},appAlive:{current:true},promptRef:{current:{value:''}},dialogRef:{current:null},prompt:'',dialog:null,
     running:{current:false},requestAnchor:{current:null},structuring:{current:false},switching:{current:false},viewApplying:{current:false},creatingNote:{current:false},savingPaths:{current:new Set()},fileWorkspace:{info:{id:'space',root:'synthetic'},flush:async()=>{},update:async()=>{}},annotations:{syncEditor:noop},references:{remap:noop},uid:(()=>{let value=0;return()=>String(++value);})(),stop:noop,redraw:noop,inform:noop,
-    setFileBusy:(value:boolean)=>busy.push(value),setError:(value:string)=>errors.push(value),setConfirm:(value:any)=>{confirm=value;},setDialog:(value:any)=>{dialog=value;opts.dialogRef.current=value;},bindings:(id:string)=>{if(!callbacks.has(id))callbacks.set(id,vi.fn());return {onUpdate:callbacks.get(id)!};}};
+    setFileBusy:(value:boolean,opening:boolean)=>{busy.push(value);openingFile.push(opening);},setError:(value:string)=>errors.push(value),setConfirm:(value:any)=>{confirm=value;},setDialog:(value:any)=>{dialog=value;opts.dialogRef.current=value;},bindings:(id:string)=>{if(!callbacks.has(id))callbacks.set(id,vi.fn());return {onUpdate:callbacks.get(id)!};}};
   for(const name of ['setNewNoteBusy','setEntries','setRoot','setFilter','setRenameRequest','setCollapsed','setTrashRevision','setInlineRequest','setOutline','setSelection','setWritingNodeId'])opts[name]=noop;
   const active=activeEditor(opts.sessions,opts.activeSession);
   const activate=(id:string)=>{opts.activeSession.current=id;};
@@ -38,7 +38,7 @@ function setup(){
     const state=makeState(text,opts.bindings(id).onUpdate),session:EditorSession={id,disk:data(path,text),state,view:null,dirty:false};opts.sessions.current.set(id,session);open.add(id);return session;
   }
   function edit(session:EditorSession,text=' UNSAVED'){session.state=session.state!.update({changes:{from:session.state!.doc.length,insert:text},userEvent:'input.type'}).state;session.dirty=true;session.contentVersion=(session.contentVersion||0)+1;}
-  return {opts,actions,add,edit,activate,active,open,busy,errors,persistence,callbacks,setHandler:(value:typeof handler)=>{handler=value;},file:()=>active.session?.imagePath||active.disk.current?.path||'',confirm:()=>confirm,setDialog:(value:any)=>{dialog=value;opts.dialog=value;opts.dialogRef.current=value;},dialog:()=>dialog};
+  return {opts,actions,add,edit,activate,active,open,busy,openingFile,errors,persistence,callbacks,setHandler:(value:typeof handler)=>{handler=value;},file:()=>active.session?.imagePath||active.disk.current?.path||'',confirm:()=>confirm,setDialog:(value:any)=>{dialog=value;opts.dialog=value;opts.dialogRef.current=value;},dialog:()=>dialog};
 }
 
 describe('forced tree refresh lifecycle',()=>{
@@ -229,6 +229,20 @@ describe('file read authority and local history',()=>{
     t.setHandler(async()=>data('same.md','different remote','external'));await t.actions().openExplorerFile('same.md',true);
     expect(session.state).toBe(prior);expect(t.opts.sessions.current.size).toBe(count);expect(t.errors.at(-1)).toContain('磁盘和本地都有修改');
   });
+  it('resets the old viewport before installing a different file in the same tab',()=>{
+    const t=setup(),session=t.add('editor','old.md');
+    session.restoreScroll=380;session.restoreScrollLeft=70;
+    const scrollDOM={scrollTop:380,scrollLeft:70};
+    const setState=vi.fn(()=>expect(scrollDOM).toEqual({scrollTop:0,scrollLeft:0}));
+    session.view={state:session.state,scrollDOM,setState} as unknown as EditorView;
+    t.actions().showFile(data('old.md'));
+    expect(setState).not.toHaveBeenCalled();
+    expect([session.restoreScroll,session.restoreScrollLeft]).toEqual([380,70]);
+    t.actions().showFile(data('next.md','next note'));
+    expect(setState).toHaveBeenCalledExactlyOnceWith(session.state);
+    expect([session.restoreScroll,session.restoreScrollLeft]).toEqual([undefined,undefined]);
+    expect(session.state!.doc.toString()).toBe('next note');
+  });
   it('shares Text in a new view while keeping independent history and the new callback',async()=>{
     const t=setup(),source=t.add('editor','same.md');t.edit(source);const doc=source.state!.doc,read=vi.spyOn(doc,'toString');
     t.setHandler(async()=>source.disk);await t.actions().openExplorerFile('same.md',true);
@@ -261,7 +275,9 @@ describe('file read authority and local history',()=>{
   it('does not let an old save clear the loading indicator of a pending open',async()=>{
     const t=setup(),session=t.add('editor','old.md'),write=deferred(),read=deferred();t.edit(session);
     t.setHandler(url=>url==='/file'?write.promise:read.promise);const saving=t.persistence.saveSession('editor'),opening=t.actions().openFile('next.md');
+    expect(t.openingFile.at(-1)).toBe(false);
     write.resolve({hash:'saved'});await saving;expect(t.busy.at(-1)).toBe(true);read.resolve(data('next.md'));await opening;expect(t.busy.at(-1)).toBe(false);
+    expect(t.openingFile.slice(-2)).toEqual([true,false]);
   });
   it('maps inactive pending AI anchors through disk changes instead of discarding them',()=>{
     const t=setup(),session=t.add('editor','same.md','one target three');session.context={proposal:{id:'proposal',from:4,to:10,original:'target',file:'same.md',stale:false,text:'new',reason:'reason',mode:'edit',count:3,node:'node'},undo:[],writingNodeId:null};

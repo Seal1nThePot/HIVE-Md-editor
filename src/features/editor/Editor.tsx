@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import {usePanelDocument} from '../../shared/panelDocument';
 import { EditorState, EditorSelection, StateEffect, Compartment, Prec, type Text } from "@codemirror/state";
 import {linkAt} from './linkNavigation';
+import {openExternalHttpLink,parseExternalHttpLink} from '../../shared/externalLinks';
 import EditorContextMenu, {type AnnotationContext} from './EditorContextMenu';
 import {previewAnnotationHint,textAnnotationHit} from '../annotations/annotationGesture';
 import {useAnnotationSelectionGesture} from '../annotations/useAnnotationSelectionGesture';
@@ -59,7 +60,7 @@ const colors = HighlightStyle.define([
   { tag: tags.processingInstruction, color: "var(--hive-document-text, var(--text))" },
   { tag: tags.emphasis, fontStyle: "italic", color: "var(--hive-document-text, var(--text))" },
   { tag: tags.strong, fontWeight: "700", color: "var(--hive-document-text, var(--text))" },
-  { tag: tags.link, color: "var(--hive-editor-link-text)", textDecoration: "underline" },
+  { tag: tags.link, class: 'cm-source-link' },
   { tag: tags.monospace, color: "var(--hive-document-text, var(--text))", backgroundColor: "color-mix(in srgb, var(--hive-document-text) 5%, transparent)" },
   { tag: tags.quote, color: "var(--hive-document-text, var(--text))" },
 ]);
@@ -87,14 +88,24 @@ function withDisplayMode(state:EditorState,mode:EditorDisplayMode){
   ]}).state;
 }
 
-function fileLinkAt(editor:EditorView,target:HTMLElement,point:{x:number;y:number},sourceShortcut:boolean){
-  const rendered=target.closest<HTMLElement>('.cm-preview-link,[data-hive-link]');
+function editorLinkAt(editor:EditorView,target:HTMLElement,point:{x:number;y:number},sourceShortcut:boolean){
+  const rendered=target.closest<HTMLElement>('[data-hive-link]');
   if(!rendered&&!sourceShortcut)return;
-  const explicit=rendered?.dataset.hiveLink||rendered?.title;
-  const pos=explicit?null:editor.posAtCoords(point);
-  const link=explicit||(pos!==null?linkAt(editor.state,pos):undefined);
-  if(link&&!/^(?:https?:|mailto:|\/\/)/i.test(link))return link;
+  const pos=rendered?null:editor.posAtCoords(point);
+  const raw=rendered?.dataset.hiveLink||(pos!==null?linkAt(editor.state,pos):undefined);
+  if(!raw)return;
+  const link=raw.trim().replace(/^<([^<>]+)>$/,'$1');
+  return parseExternalHttpLink(link)||(!/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(link)?link:undefined);
 }
+
+const preventRepeatedIndent = Prec.highest(EditorView.domEventHandlers({
+  keydown(event, view) {
+    if (event.key !== 'Tab' || !event.repeat || event.altKey || event.ctrlKey || event.metaKey ||
+        event.isComposing || view.composing || view.state.readOnly) return false;
+    const target = event.target as HTMLElement | null;
+    return !!target && view.contentDOM.contains(target) && !target.closest('input,textarea,button,[contenteditable=false]');
+  },
+}));
 
 export function rebindDocumentUpdates(state: EditorState, onUpdate: (update: ViewUpdate) => void) {
   return state.update({effects: documentUpdateListener.reconfigure(EditorView.updateListener.of(onUpdate))}).state;
@@ -132,6 +143,7 @@ export function makeState(
       highlightActiveLine(),
       bracketMatching(),
       highlightSelectionMatches(),
+      preventRepeatedIndent,
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap.filter(binding=>binding.run!==undo&&binding.run!==redo),
@@ -349,7 +361,12 @@ export default function Editor({
       }
     }});
     sourceRef.current=source;
-    resetSource.current=state=>{source.setState(makeSourceState(state));source.requestMeasure();alignmentRef.current?.schedule();};
+    resetSource.current=state=>{
+      source.scrollDOM.scrollTop=0;
+      source.scrollDOM.scrollLeft=0;
+      source.setState(makeSourceState(state));
+      source.requestMeasure();alignmentRef.current?.schedule();
+    };
     if(!main.state.field(splitPadding,false)||!main.state.field(splitTopPadding,false)||!main.state.field(splitBlockPadding,false))main.dispatch({effects:StateEffect.appendConfig.of([...(main.state.field(splitPadding,false)?[]:[splitPadding]),...(main.state.field(splitTopPadding,false)?[]:[splitTopPadding]),...(main.state.field(splitBlockPadding,false)?[]:[splitBlockPadding])])});
     const detach=synchronizeScroll(source,main),alignment=alignSplitViews(source,main,detach.correct);alignmentRef.current=alignment;
     return()=>{alignmentRef.current=null;alignment.dispose();detach();if(main.state.field(splitPadding,false)?.size||main.state.field(splitTopPadding,false)?.size||main.state.field(splitBlockPadding,false)?.size)main.dispatch({effects:[setSplitPadding.of(new Map()),setSplitTopPadding.of(new Map()),setSplitBlockPadding.of(new Map())]});resetSource.current=null;sourceRef.current=null;source.destroy();};
@@ -413,6 +430,11 @@ export default function Editor({
   }
   const minimumSplitRatio=Math.min(140/Math.max(1,splitWidth-8),.25);
   const valueNow=Math.max(minimumSplitRatio,Math.min(1-minimumSplitRatio,splitRatio));
+  function openEditorLink(link:string){
+    if(parseExternalHttpLink(link)){
+      void openExternalHttpLink(link).then(opened=>{if(!opened)onError?.('无法在系统默认浏览器中打开此链接。');});
+    }else onOpenLink?.(link);
+  }
   const annotationToolActive=annotationTool&&displayMode!=='preview';
   return <><div className={'editor-host'+(split?' split-view':'')+(annotationToolActive?' annotation-tool-active':'')} ref={host} onFocusCapture={onFocus}
     data-annotation-tool-active={annotationToolActive?'':undefined}
@@ -430,9 +452,9 @@ export default function Editor({
         onShowAnnotations?.(press.annotation);
         return;
       }
-      const link=press?press.link:fileLinkAt(editor,target,point,event.ctrlKey||event.metaKey);
-      if(!link||!onOpenLink)return;
-      event.preventDefault();event.stopPropagation();onOpenLink(link);
+      const link=press?press.link:editorLinkAt(editor,target,point,event.ctrlKey||event.metaKey);
+      if(!link||(!onOpenLink&&!parseExternalHttpLink(link)))return;
+      event.preventDefault();event.stopPropagation();openEditorLink(link);
     }}
     onPointerDownCapture={event=>{
       const target=event.target as HTMLElement,editor=target.closest('.split-source')?sourceRef.current:editorRef.current;
@@ -440,7 +462,7 @@ export default function Editor({
       linkPress.current=null;
       if(event.button!==0||event.altKey||!editor||target.closest('textarea,button,[role=separator]'))return;
       const x=event.clientX,y=event.clientY;
-      const link=onOpenLink?fileLinkAt(editor,target,{x,y},event.ctrlKey||event.metaKey):undefined;
+      const link=editorLinkAt(editor,target,{x,y},event.ctrlKey||event.metaKey);
       if(displayMode==='preview'&&editor.state.readOnly&&onMarkSelection&&!link&&
         (event.ctrlKey||annotationTool)&&!event.metaKey&&!event.shiftKey&&target.closest('.cm-content')){
         onError?.(previewAnnotationHint);
@@ -465,7 +487,8 @@ export default function Editor({
       event.preventDefault();event.stopPropagation();const target=event.target as HTMLElement,input=target.tagName==='TEXTAREA'&&target.closest('[data-table-widget]')?target as HTMLTextAreaElement:undefined;const snapshot=rightSelection.current;rightSelection.current=null;
       if(!input&&snapshot&&snapshot.selection.ranges.some(range=>!range.empty)&&snapshot.doc===editor.state.doc)editor.dispatch({selection:snapshot.selection});
       const hitEditor=target.closest('.split-source')?sourceRef.current:editor;
-      const link=!input&&hitEditor?fileLinkAt(hitEditor,target,{x:event.clientX,y:event.clientY},true):undefined;
+      const targetLink=!input&&hitEditor?editorLinkAt(hitEditor,target,{x:event.clientX,y:event.clientY},true):undefined;
+      const link=targetLink&&(onOpenLink||parseExternalHttpLink(targetLink))?targetLink:undefined;
       setContext({x:event.clientX,y:event.clientY,input,link,position:hitEditor?.posAtCoords({x:event.clientX,y:event.clientY}),annotationId:input?undefined:(event.target as Element).closest<HTMLElement>('[data-annotation-id]')?.dataset.annotationId});
     }}
     onKeyDownCapture={event=>{
@@ -512,5 +535,5 @@ export default function Editor({
       }}/>}
     <div className="split-main" ref={mainHost}/>
   </div>
-    {awake&&context&&editorRef.current&&onMarkSelection&&<EditorContextMenu editor={editorRef.current} point={context} input={context.input} link={context.link} onOpenLink={onOpenLink} onClose={()=>setContext(null)} onDraftSelection={onDraftSelection} onMark={onMarkSelection} onUnmark={onUnmarkSelection} annotationId={context.annotationId} onShowAnnotations={onShowAnnotations} onError={onError}/>}</>;
+    {awake&&context&&editorRef.current&&onMarkSelection&&<EditorContextMenu editor={editorRef.current} point={context} input={context.input} link={context.link} onOpenLink={openEditorLink} onClose={()=>setContext(null)} onDraftSelection={onDraftSelection} onMark={onMarkSelection} onUnmark={onUnmarkSelection} annotationId={context.annotationId} onShowAnnotations={onShowAnnotations} onError={onError}/>}</>;
 }

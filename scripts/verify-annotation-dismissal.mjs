@@ -201,7 +201,8 @@ async function worker(port, profile) {
       check('Returning to the previous document keeps its popup dismissed', !(await call('popup')));
       await click(await call('point', secondBubble));
       await click(await call('point', '.inline-annotation-editor .gold-button'));
-      check('Send closes the popup and submits the edited note to demo chat', await until(() => evaluate('!annotationTest.popup() && [...document.querySelectorAll(".messages .message.user")].some(el=>el.textContent.includes("requirement for Ctrl outside blank"))')));
+      check('Send closes the popup and shows the submitted annotation as a compact chip', await until(() => evaluate('!annotationTest.popup() && [...document.querySelectorAll(".messages .message.user .chat-annotation-entries > button")].some(button=>button.textContent.includes("Ctrl outside blank"))')));
+      check('The submitted note still reaches the demo reply', await until(() => evaluate('[...document.querySelectorAll(".messages .message.assistant")].some(el=>el.textContent.includes("requirement for Ctrl outside blank"))')));
     }
   } catch (error) {
     check('Test harness', false, error.stack);

@@ -3687,20 +3687,37 @@
       "viewBox": "0 0 24 24",
       "fill": "none",
       "stroke": "currentColor",
-      "stroke-width": "1.75",
+      "stroke-width": "2",
       "stroke-linecap": "round",
       "stroke-linejoin": "round",
       "shapes": [
         {
-          "tag": "path",
+          "tag": "rect",
           "attrs": {
-            "d": "M4 15.8V7.2h2l1.7-2h2.9a1 1 0 0 1 1 1v10H5a1 1 0 0 1-1-1Zm9.3-.8V7.2h1.8l1.7-2h2.7a1 1 0 0 1 1 1V12M2 15.9v2.7A1.4 1.4 0 0 0 3.4 20H13"
+            "x": "2",
+            "y": "2",
+            "width": "20",
+            "height": "8",
+            "rx": "2",
+            "ry": "2"
           }
         },
         {
           "tag": "path",
           "attrs": {
-            "d": "M15.4 18.3h6.2M18.5 15.200000000000001v6.2",
+            "d": "M13 22H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h9"
+          }
+        },
+        {
+          "tag": "path",
+          "attrs": {
+            "d": "M6 6h.01M6 18h.01"
+          }
+        },
+        {
+          "tag": "path",
+          "attrs": {
+            "d": "M16 18h6m-3-3v6",
             "stroke": "var(--icon-accent,currentColor)",
             "stroke-width": "2.3"
           }
@@ -3711,20 +3728,37 @@
       "viewBox": "0 0 24 24",
       "fill": "none",
       "stroke": "currentColor",
-      "stroke-width": "1.75",
+      "stroke-width": "2",
       "stroke-linecap": "round",
       "stroke-linejoin": "round",
       "shapes": [
         {
-          "tag": "path",
+          "tag": "rect",
           "attrs": {
-            "d": "M4 15.8V7.2h2l1.7-2h2.9a1 1 0 0 1 1 1v10H5a1 1 0 0 1-1-1Zm9.3-.8V7.2h1.8l1.7-2h2.7a1 1 0 0 1 1 1V12M2 15.9v2.7A1.4 1.4 0 0 0 3.4 20H13"
+            "x": "2",
+            "y": "2",
+            "width": "20",
+            "height": "8",
+            "rx": "2",
+            "ry": "2"
           }
         },
         {
           "tag": "path",
           "attrs": {
-            "d": "M15.95 15.75l5.1 5.1m0 -5.1l-5.1 5.1",
+            "d": "M13 22H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h9"
+          }
+        },
+        {
+          "tag": "path",
+          "attrs": {
+            "d": "M6 6h.01M6 18h.01"
+          }
+        },
+        {
+          "tag": "path",
+          "attrs": {
+            "d": "M16 18h6",
             "stroke-width": "2.3"
           }
         }
@@ -4311,35 +4345,22 @@
       "viewBox": "0 0 24 24",
       "fill": "none",
       "stroke": "currentColor",
-      "stroke-width": "1.75",
+      "stroke-width": "2",
       "stroke-linecap": "round",
       "stroke-linejoin": "round",
       "shapes": [
         {
           "tag": "path",
           "attrs": {
-            "d": "M4.3 4.2v4.4h4.4"
-          }
-        },
-        {
-          "tag": "path",
-          "attrs": {
-            "d": "M3.5 13.8a8.7 8.7 0 0 0 12.2 6m4.4-12a8.7 8.7 0 0 0-15.4.3"
-          }
-        },
-        {
-          "tag": "path",
-          "attrs": {
-            "d": "M12.6 9.5h2l1.1-1.7h3.2l1 1.7h1.8a1.3 1.3 0 0 1 1.3 1.3v5.4a1.3 1.3 0 0 1-1.3 1.3h-9.1a1.3 1.3 0 0 1-1.3-1.3v-5.4a1.3 1.3 0 0 1 1.3-1.3Z"
+            "d": "M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"
           }
         },
         {
           "tag": "circle",
           "attrs": {
-            "cx": "17.1",
-            "cy": "13.3",
-            "r": "2.05",
-            "stroke": "currentColor"
+            "cx": "12",
+            "cy": "13.5",
+            "r": "3.25"
           }
         }
       ]
@@ -4348,26 +4369,14 @@
       "viewBox": "0 0 24 24",
       "fill": "none",
       "stroke": "currentColor",
-      "stroke-width": "1.75",
+      "stroke-width": "2",
       "stroke-linecap": "round",
       "stroke-linejoin": "round",
       "shapes": [
         {
           "tag": "path",
           "attrs": {
-            "d": "M4.3 4.2v4.4h4.4"
-          }
-        },
-        {
-          "tag": "path",
-          "attrs": {
-            "d": "M3.5 13.8a8.7 8.7 0 0 0 16.8-4.1m-3.2-4.6a8.7 8.7 0 0 0-12.4 3"
-          }
-        },
-        {
-          "tag": "path",
-          "attrs": {
-            "d": "m10.1 16 7.8-9.6a1.8 1.8 0 0 1 2.5-.2l.7.6a1.8 1.8 0 0 1 .2 2.5l-7.8 9.4-4.9 1.9zM10.3 16.1l3.3 2.7"
+            "d": "m3 21 1-5 12.3-12.3a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L8 20zM14.5 5.5l4 4"
           }
         }
       ]
@@ -4376,45 +4385,24 @@
       "viewBox": "0 0 24 24",
       "fill": "none",
       "stroke": "currentColor",
-      "stroke-width": "1.75",
+      "stroke-width": "2",
       "stroke-linecap": "round",
       "stroke-linejoin": "round",
       "shapes": [
         {
-          "tag": "path",
-          "attrs": {
-            "d": "M4.3 4.2v4.4h4.4"
-          }
-        },
-        {
-          "tag": "path",
-          "attrs": {
-            "d": "M3.5 13.8a8.7 8.7 0 0 0 12.2 6m4.4-12a8.7 8.7 0 0 0-15.4.3"
-          }
-        },
-        {
           "tag": "rect",
           "attrs": {
-            "x": "12.7",
-            "y": "9",
-            "width": "8.4",
-            "height": "8.4",
-            "rx": "1.15"
+            "x": "4",
+            "y": "8",
+            "width": "16",
+            "height": "12",
+            "rx": "3"
           }
         },
         {
           "tag": "path",
           "attrs": {
-            "d": "M14.8 7.3V9m3.6-1.7V9m-3.6 8.4v1.7m3.6-1.7v1.7m-7.4-7.7h1.7m-1.7 3.6h1.7m8.4-3.6h1.7m-1.7 3.6h1.7",
-            "stroke-width": "1.45"
-          }
-        },
-        {
-          "tag": "path",
-          "attrs": {
-            "d": "M15.7 11.7h2.5v2.7h-2.5z",
-            "fill": "currentColor",
-            "stroke": "none"
+            "d": "M12 8V4m-2 0h4M2 14h2m16 0h2m-13-1v2m6-2v2"
           }
         }
       ]

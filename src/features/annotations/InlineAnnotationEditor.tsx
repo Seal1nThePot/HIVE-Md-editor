@@ -38,6 +38,21 @@ export type InlineAnnotationRequest = {
   nonce: string;
   focus?: boolean;
 };
+type AnnotationBubble={id:string;ids:string[];candidateIds:string[];source:AnnotationSource;file:string;x:number;y:number;target:ScreenRect;scroller:HTMLElement;scaleX:number;scaleY:number};
+
+function sameAnnotationBubble(a:AnnotationBubble,b:AnnotationBubble){
+  return a.id===b.id&&a.file===b.file&&a.source===b.source&&a.scroller===b.scroller&&a.scaleX===b.scaleX&&a.scaleY===b.scaleY&&
+    a.x===b.x&&a.y===b.y&&a.target.left===b.target.left&&a.target.top===b.target.top&&a.target.right===b.target.right&&a.target.bottom===b.target.bottom&&
+    a.ids.join('\0')===b.ids.join('\0')&&a.candidateIds.join('\0')===b.candidateIds.join('\0');
+}
+
+function screenAnnotationBubble(bubble:AnnotationBubble){
+  const {scroller,scaleX,scaleY,target}=bubble,rect=scroller.getBoundingClientRect();
+  const x=(value:number)=>rect.left+(value-scroller.scrollLeft+scroller.clientLeft)*scaleX;
+  const y=(value:number)=>rect.top+(value-scroller.scrollTop+scroller.clientTop)*scaleY;
+  return {x:x(bubble.x),y:y(bubble.y),target:{left:x(target.left),top:y(target.top),right:x(target.right),bottom:y(target.bottom)}};
+}
+
 export default function InlineAnnotationEditor({
   ownerDocument = document,
   items,
@@ -129,7 +144,7 @@ export default function InlineAnnotationEditor({
       window.removeEventListener('blur', dismiss);
     };
   }, [open, close, document, window]);
-  const [bubbles,setBubbles]=useState<{id:string;ids:string[];candidateIds:string[];source:AnnotationSource;file:string;x:number;y:number;target:ScreenRect}[]>([]);
+  const [bubbles,setBubbles]=useState<AnnotationBubble[]>([]);
   function measureAllBubbles(){
     const result:typeof bubbles=[],seen=new Set<string>();
     for(const item of items){
@@ -138,19 +153,37 @@ export default function InlineAnnotationEditor({
       const ids=ownCell?tableBatchIds(item,items,editor,groups.current):[item.id],key=ids.slice().sort().join('\0');if(!ids.length||seen.has(key))continue;seen.add(key);
       const table=ownCell?.closest('[data-table-widget]');
       const rects=ownCell?cells.filter(cell=>sameSourceTable(cell.closest('[data-table-widget]'),table)&&tableAnnotationIds(cell).some(id=>ids.includes(id))).flatMap(cell=>[...cell.getClientRects()]):[...editor.dom.querySelectorAll<HTMLElement>('[data-annotation-id]')].filter(mark=>mark.dataset.annotationId===item.id).flatMap(mark=>[...mark.getClientRects()]);
-      const clip=editor.scrollDOM.getBoundingClientRect();const visible=rects.filter(r=>r.width>0&&r.height>0&&r.right>Math.max(0,clip.left)&&r.left<Math.min(window.innerWidth,clip.right)&&r.bottom>Math.max(0,clip.top)&&r.top<Math.min(window.innerHeight,clip.bottom));if(!visible.length)continue;
-      const target={left:Math.min(...visible.map(r=>r.left)),top:Math.min(...visible.map(r=>r.top)),right:Math.max(...visible.map(r=>r.right)),bottom:Math.max(...visible.map(r=>r.bottom))};
+      const scroller=editor.scrollDOM,clip=scroller.getBoundingClientRect();
+      const fragments=rects.filter(r=>r.width>0&&r.height>0);
+      if(!fragments.some(r=>r.right>Math.max(0,clip.left)&&r.left<Math.min(window.innerWidth,clip.right)&&r.bottom>Math.max(0,clip.top)&&r.top<Math.min(window.innerHeight,clip.bottom)))continue;
+      const scaleX=editor.scaleX||1,scaleY=editor.scaleY||1;
+      const localX=(x:number)=>(x-clip.left)/scaleX+scroller.scrollLeft-scroller.clientLeft;
+      const localY=(y:number)=>(y-clip.top)/scaleY+scroller.scrollTop-scroller.clientTop;
+      const target={left:localX(Math.min(...fragments.map(r=>r.left))),top:localY(Math.min(...fragments.map(r=>r.top))),right:localX(Math.max(...fragments.map(r=>r.right))),bottom:localY(Math.max(...fragments.map(r=>r.bottom)))};
       let x=target.right+4,y=(target.top+target.bottom-24)/2;if(bubblePlacement==='left')x=target.left-28;if(bubblePlacement==='above'){x=(target.left+target.right-24)/2;y=target.top-28;}if(bubblePlacement==='below'){x=(target.left+target.right-24)/2;y=target.bottom+4;}
+      // Keep the anchor in scroll-content coordinates so text and pencil advance in the same paint.
+      const visibleLeft=scroller.scrollLeft;
+      x=Math.max(visibleLeft+2,Math.min(visibleLeft+scroller.clientWidth-26,x));
+      y=Math.max(0,y);
       const same=!ownCell&&result.find(b=>b.source===item.source&&b.file===item.file&&b.target.left===target.left&&b.target.top===target.top&&b.target.right===target.right&&b.target.bottom===target.bottom);
       if(same)same.candidateIds.push(item.id);
-      else result.push({id:item.id,ids,candidateIds:[item.id],source:item.source,file:item.file,x:Math.max(2,Math.min(window.innerWidth-26,x)),y:Math.max(2,Math.min(window.innerHeight-26,y)),target});
+      else result.push({id:item.id,ids,candidateIds:[item.id],source:item.source,file:item.file,x,y,target,scroller,scaleX,scaleY});
     }
-    setBubbles(old=>JSON.stringify(old)===JSON.stringify(result)?old:result);
+    setBubbles(old=>old.length===result.length&&old.every((item,index)=>sameAnnotationBubble(item,result[index]))?old:result);
   }
   useLayoutEffect(()=>{measureAllBubbles();});
-  useEffect(()=>{let frame=0;const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(measureAllBubbles);};
-    const observer=new MutationObserver(schedule);for(const source of ['document','scratch'] as const){const editor=editorFor(source);if(editor)observer.observe(editor.dom,{subtree:true,childList:true,attributes:true,attributeFilter:['data-annotation-id','data-table-annotation-ids']});}
-    window.addEventListener('scroll',measureAllBubbles,true);window.addEventListener('resize',measureAllBubbles);return()=>{observer.disconnect();cancelAnimationFrame(frame);window.removeEventListener('scroll',measureAllBubbles,true);window.removeEventListener('resize',measureAllBubbles);};},[items,bubblePlacement]);
+  useEffect(()=>{
+    let frame=0;
+    const schedule=()=>{if(!frame)frame=window.requestAnimationFrame(()=>{frame=0;measureAllBubbles();});};
+    const mutations=new MutationObserver(schedule),resizes=new ResizeObserver(schedule);
+    for(const source of ['document','scratch'] as const){
+      const editor=editorFor(source);if(!editor)continue;
+      mutations.observe(editor.dom,{subtree:true,childList:true,attributes:true,attributeFilter:['data-annotation-id','data-table-annotation-ids']});
+      resizes.observe(editor.scrollDOM);
+    }
+    window.addEventListener('scroll',schedule,true);window.addEventListener('resize',schedule);
+    return()=>{mutations.disconnect();resizes.disconnect();window.cancelAnimationFrame(frame);window.removeEventListener('scroll',schedule,true);window.removeEventListener('resize',schedule);};
+  },[document,items,bubblePlacement]);
   useEffect(()=>{setChoices([]);},[hovered]);
   function measureBubble(){
     if(!bubbleItem){clearOutline();return;}
@@ -186,7 +219,7 @@ export default function InlineAnnotationEditor({
   function openBubble(id:string){
     const bubbleItem=items.find(item=>item.id===id);if(!bubbleItem)return;
     onFocusGlobal?.(id);
-    const clicked=bubbles.find(b=>b.id===id);if(clicked){setBubblePosition({x:clicked.x,y:clicked.y});}
+    const clicked=bubbles.find(b=>b.id===id);if(clicked){const {x,y}=screenAnnotationBubble(clicked);setBubblePosition({x,y});}
     const editor=editorFor(bubbleItem.source);
     const cells=editor?[...editor.dom.querySelectorAll<HTMLElement>('[data-table-annotation-ids]')]:[];
     const cell=cells.find(el=>el===hoveredCell.current&&tableAnnotationIds(el).includes(bubbleItem.id))||cells.find(el=>el.contains(document.activeElement)&&tableAnnotationIds(el).includes(bubbleItem.id))||cells.find(el=>tableAnnotationIds(el).includes(bubbleItem.id));
@@ -218,7 +251,7 @@ export default function InlineAnnotationEditor({
     if(moved.current){setPosition(old=>{const next=clampPosition(old);return old.x===next.x&&old.y===next.y?old:next;});return;}
     const editor=editorFor(item.source);if(!editor||!editor.dom.isConnected)return;
     const active=bubbles.find(b=>b.ids.some(id=>shown.ids.includes(id))||b.candidateIds.some(id=>shown.ids.includes(id)));
-    if(active){const rect=box.current?.getBoundingClientRect(),placed=placeAnnotationWindow(active,active.target,rect?.width||360,rect?.height||180,window.innerWidth,window.innerHeight);setWindowLimit({width:placed.width,height:placed.height});setPosition(old=>old.x===placed.x&&old.y===placed.y?old:{x:placed.x,y:placed.y});return;}
+    if(active){const anchor=screenAnnotationBubble(active),rect=box.current?.getBoundingClientRect(),placed=placeAnnotationWindow(anchor,anchor.target,rect?.width||360,rect?.height||180,window.innerWidth,window.innerHeight);setWindowLimit({width:placed.width,height:placed.height});setPosition(old=>old.x===placed.x&&old.y===placed.y?old:{x:placed.x,y:placed.y});return;}
     const point=editor.coordsAtPos(Math.min(item.from,editor.state.doc.length)),content=editor.contentDOM.getBoundingClientRect();
     const target=point?{left:point.left,right:point.right,top:point.top,bottom:point.bottom}:content;
     const rect=box.current?.getBoundingClientRect(),placed=placeAnnotationWindow({x:target.right+4,y:target.top},target,rect?.width||360,rect?.height||180,window.innerWidth,window.innerHeight);
@@ -232,7 +265,7 @@ export default function InlineAnnotationEditor({
   function dragMove(event:ReactPointerEvent<HTMLElement>){const current=drag.current;if(!current||event.pointerId!==current.pointer)return;movePosition({x:current.origin.x+event.clientX-current.startX,y:current.origin.y+event.clientY-current.startY});}
   return createPortal(
     <>
-    {bubbles.map(bubble=><button key={bubble.id} type="button" className="annotation-bubble" data-annotation-key={bubble.id} title={`标注：${items.find(item=>item.id===bubble.id)?.original.slice(0,30)||''}`} aria-label="打开标注要求" aria-expanded={!!shown&&shown.ids.some(id=>bubble.ids.includes(id)||bubble.candidateIds.includes(id))} style={{left:bubble.x,top:bubble.y}} onPointerEnter={()=>{setHovered(bubble.id);if(hoverTimer.current)clearTimeout(hoverTimer.current);}} onClick={()=>openBubble(bubble.id)}>✎</button>)}
+    {bubbles.map(bubble=>createPortal(<button key={bubble.id} type="button" className="annotation-bubble" data-annotation-key={bubble.id} title={`标注：${items.find(item=>item.id===bubble.id)?.original.slice(0,30)||''}`} aria-label="打开标注要求" aria-expanded={!!shown&&shown.ids.some(id=>bubble.ids.includes(id)||bubble.candidateIds.includes(id))} style={{left:bubble.x,top:bubble.y}} onPointerEnter={()=>{setHovered(bubble.id);if(hoverTimer.current)clearTimeout(hoverTimer.current);}} onClick={()=>openBubble(bubble.id)}>✎</button>,bubble.scroller,bubble.id))}
     {choices.length>0 && <div className="annotation-bubble-choices" role="menu" style={{left:Math.max(2,Math.min(window.innerWidth-130,bubblePosition.x)),top:Math.max(2,Math.min(window.innerHeight-Math.min(choices.length*34+8,window.innerHeight-4)-2,bubblePosition.y+28)),maxHeight:"calc(100vh - 8px)",overflowY:"auto"}}>{choices.map((id,index)=><button type="button" role="menuitem" key={id} onClick={()=>{const selected=items.find(value=>value.id===id);if(selected)setShown({id,ids:tableBatchIds(selected,items,editorFor(selected.source),groups.current),pinned:true,focus:false});setChoices([]);}}>标注 {index+1}</button>)}</div>}
     {shown && item && <div
       ref={box}

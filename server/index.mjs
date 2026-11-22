@@ -36,7 +36,10 @@ const spaces = await workspaceStore(local, root, {
   }
   throw error;
 });
-const templates = await templateStore(process.env.HIVE_TEMPLATES_DIR || path.join(local,'templates'),path.join(project,'templates'),{sourceDirectory:process.env.HIVE_TEMPLATES_SOURCE || (!project.includes('.asar')?path.join(project,'templates'):undefined)});
+const templates = await templateStore(process.env.HIVE_TEMPLATES_DIR || path.join(local,'templates'),path.join(project,'templates'),{
+  sourceDirectory:process.env.HIVE_TEMPLATES_SOURCE || (!project.includes('.asar')?path.join(project,'templates'):undefined),
+  openDirectory:desktopFiles?.openDirectory,
+});
 const app = express();
 app.disable("x-powered-by");
 app.use("/api", (req, res, next) => {

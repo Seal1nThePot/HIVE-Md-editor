@@ -78,7 +78,8 @@ async function validateUI(window,manifest){
     const values=Object.fromEntries([...metadata.querySelectorAll('dl div')].map(row=>[row.querySelector('dt').textContent,row.querySelector('dd').textContent]));
     const manifest=${JSON.stringify(manifest)};
     check('browser fallback identifies production browser build',metadata.textContent.includes('浏览器本地构建'));
-    check('visible build metadata matches manifest',metadata.querySelector('h2').textContent===manifest.appName&&values['版本']===manifest.version&&values['构建编号']===manifest.buildNumber&&values['构建时间（UTC）']===manifest.buildTime&&values['发行渠道']===manifest.channel);
+    const displayVersion=${JSON.stringify(manifest.version.replace(/^(\d+\.\d+\.\d+)-r(\d+)$/, '$1r$2'))};
+    check('visible build metadata matches manifest',metadata.querySelector('h2').textContent===manifest.appName&&values['版本']===displayVersion&&values['构建编号']===manifest.buildNumber&&values['构建时间（UTC）']===manifest.buildTime&&values['发行渠道']===manifest.channel);
     check('no update check button',[...get('.about-settings').querySelectorAll('button')].every(el=>!el.textContent.includes('检查更新')));
     const docs=[...get('.about-documents').querySelectorAll('details')];
     check('three local documents available',docs.length===3&&docs.every(el=>el.querySelector('pre')?.textContent.trim().length>100));

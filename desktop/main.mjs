@@ -13,6 +13,7 @@ import {createAboutHandlers} from './about.cjs';
 import {createFileRevealHandler} from './fileReveal.cjs';
 import {createLocalUpdate,markUpdateReady} from './localUpdate.cjs';
 import {dockIconPayload} from '../shared/iconPack.mjs';
+import {createExternalHttpLinkHandler} from './externalLinks.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appIcon = path.join(root, 'assets', 'brand', 'hive.png');
@@ -24,7 +25,7 @@ app.setPath('userData', process.env.HIVE_DESKTOP_USER_DATA
   ? path.resolve(process.env.HIVE_DESKTOP_USER_DATA)
   : path.join(app.getPath('appData'), 'HIVE'));
 const preload = path.join(root, 'desktop', 'preload.cjs');
-const revealFile=createFileRevealHandler({shell});
+const handleExplorerRequest=createFileRevealHandler({shell});
 let service, mainWindow, origin, rendererReady = false, closePending = false, exiting = false, stoppingService = false;
 const childWindowSizes = new Map([
   ['outline-node-editor', {width:540,height:480,minWidth:350,minHeight:300}],
@@ -191,7 +192,10 @@ function startService() {
     });
     const shellService=service;
     service.on('message', message => {
-      if(message?.type==='hive-reveal-file'){void revealFile(message).then(reply=>{if(shellService.connected)shellService.send(reply,()=>{});});return;}
+      if(message?.type==='hive-reveal-file'||message?.type==='hive-open-directory'){
+        void handleExplorerRequest(message).then(reply=>{if(shellService.connected)shellService.send(reply,()=>{});});
+        return;
+      }
       if (message?.type === 'hive-startup-error' && typeof message.message === 'string') { fail(new Error(message.message)); return; }
       if (message?.type !== 'hive-ready' || settled) return; settled = true; clearTimeout(timeout); resolve(message.port);
     });
@@ -202,6 +206,7 @@ const isMainOrigin = event => isMainSender(event) && sameOrigin(event.senderFram
 const isMainFrame = event => isMainOrigin(event) && event.senderFrame === mainWindow.webContents.mainFrame;
 const about = createAboutHandlers({isMainOrigin:isMainFrame, app, shell, root, versions:process.versions, platform:process.platform, arch:process.arch, development:process.env.HIVE_DESKTOP_DEV === '1' && !app.isPackaged});
 ipcMain.handle('hive:about-info', about.getAboutInfo);
+ipcMain.handle('hive:open-external-http-link', createExternalHttpLinkHandler({isMainFrame, shell}));
 ipcMain.handle('hive:open-app-data-directory', about.openAppDataDirectory);
 const localUpdate = createLocalUpdate({
   app, dialog, isMainOrigin: isMainFrame, resources: process.resourcesPath,

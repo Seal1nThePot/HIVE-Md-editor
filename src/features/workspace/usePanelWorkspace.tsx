@@ -22,6 +22,8 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
   const desktop=useDesktopPanels();
   const [rawLayout,setLayout]=useState<WorkspaceLayout>(defaultWorkspace),[bounds,setBounds]=useState<Rect>({x:0,y:160,width:window.innerWidth,height:window.innerHeight-185}),
     [dragging,setDragging]=useState<string|null>(null),[dockFeedback,setDockFeedback]=useState<DockFeedback|null>(null);
+  const [raisedDocked,setRaisedDocked]=useState<string|null>(null);
+  const raisedDockedLayer=Math.max(panelLayers.floating,...Object.values(rawLayout.layers))+2;
   const normalize=(value:WorkspaceLayout,area:Rect)=>{const next=retainPrimaryEditor(withAutoHideMetadata(completeWorkspace(value),area));return {...next,layers:rankedFloatingLayers(next.layers)};};
   const layout=useMemo(()=>normalize(rawLayout,bounds),[rawLayout,bounds]);
   const refs=useRef(new Map<string,RefObject<HTMLElement|null>>()),latest=useRef(layout),cleanup=useRef<(()=>void)|null>(null);
@@ -100,8 +102,12 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
     const rect=measurements.panels[id];if(rect)return {x:rect.x+bounds.x,y:rect.y+bounds.y,width:rect.width,height:rect.height};
     if(group)return group.rect;return fit(latest.current.rects[id]||suggestedRect(id),id);
   }
-  function raise(id:string){if(dockedPanels(latest.current.tree).includes(id)&&!latest.current.autoHide?.[id])return;const group=latest.current.floatingGroups.find(value=>value.panels.includes(id));const key=group?.id||id;update(old=>({...old,layers:rankedFloatingLayers(old.layers,key)}));}
-  function open(id:string){const rect=fit(latest.current.rects[id]||suggestedRect(id),id);
+  function raise(id:string){setRaisedDocked(current=>current===id?current:null);if(dockedPanels(latest.current.tree).includes(id)&&!latest.current.autoHide?.[id])return;const group=latest.current.floatingGroups.find(value=>value.panels.includes(id));const key=group?.id||id;update(old=>({...old,layers:rankedFloatingLayers(old.layers,key)}));}
+  function open(id:string){
+    setRaisedDocked(current=>current===id?current:null);
+    openPanel(id);
+  }
+  function openPanel(id:string, reveal=false){const rect=fit(latest.current.rects[id]||suggestedRect(id),id);
     const placement=latest.current.autoHide?.[id];if(desktop.enabled&&placement&&autoHideIsNative(latest.current,id)&&!lifecycle.homes.has(id))lifecycle.homes.set(id,{rect:autoHidePanelRect(placement,boundsRef.current,iconAnchors.current.get(id)),placement});
     update(old=>{
     let next:WorkspaceLayout;
@@ -112,7 +118,24 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
     else next=openWorkspacePanel(old,id,rect);
     if(!dockedPanels(next.tree).includes(id)||next.autoHide?.[id]){const key=next.floatingGroups.find(group=>group.panels.includes(id))?.id||id;next={...next,layers:rankedFloatingLayers(next.layers,key)};}
     return next;
-  });if(desktop.enabled&&lifecycle.homes.has(id)){for(const [owner,group] of lifecycle.groups)if(group.panels.includes(id))lifecycle.groups.set(owner,{...group,active:id});if(!desktop.windows.has(id))lifecycle.queue(id);else desktop.detach(id);}onActivate?.(id);}
+  });
+    if(desktop.enabled&&lifecycle.homes.has(id)){
+      for(const [owner,group] of lifecycle.groups)if(group.panels.includes(id))lifecycle.groups.set(owner,{...group,active:id});
+      if(!desktop.windows.has(id))lifecycle.queue(id);
+      else if(reveal)desktop.reveal(id);
+      else desktop.detach(id);
+    }
+    onActivate?.(id);
+  }
+  function reveal(id:string){
+    openPanel(id,true);
+    const next=latest.current,placement=next.autoHide?.[id];
+    const localDocked=!desktop.windows.has(id)&&dockedPanels(next.tree).includes(id)&&!placement;
+    setRaisedDocked(localDocked?id:null);
+    // The command may originate in the independent Windows toolbar.
+    if(desktop.enabled&&(localDocked||placement&&!autoHideIsNative(next,id)))
+      window.hiveDesktop?.windowCommand('focus');
+  }
   useEffect(()=>{
     if(!desktop.enabled)return;
     // Every desktop floating state, including restored views and newly opened tools,
@@ -197,6 +220,7 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
     const rect=nativeRect||currentRect(id,true),group=groupFor(id),next=group?.panels.find(value=>value!==id);
     const placement={...(latest.current.autoHide?.[id]||home?.placement||panelAutoHidePlacement(rect,boundsRef.current,!nativeRect&&dockedPanels(latest.current.tree).includes(id))),host:nativeRect||home?'native' as const:'main' as const};
     return transition(minimize?'minimize':'close',[id],()=>{
+      setRaisedDocked(current=>current===id?null:current);
       if(minimize&&(nativeRect||home))lifecycle.homes.set(id,{rect,placement:{...placement,rect}});
       update(old=>{const result=minimize&&(nativeRect||home)?minimizeNativePanel(old,id,rect,placement):hideWorkspacePanel(old,id,rect,minimize,minimize?placement:undefined);return id===PRIMARY_EDITOR?{...result,nativePrimaryHidden:true}:result;});if(next)onActivate?.(next);
     });
@@ -456,7 +480,7 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
     const autoHide=layout.autoHide?.[id],peek=!!autoHide&&isExpandedAutoHidePanel(layout,id);
     const group=groupFor(id),floating=!measurements.panels[id]&&!autoHide,frame=peek?autoHidePanelRect(autoHide!,bounds,iconAnchors.current.get(id)):group?.rect||measurements.panels[id]||fit(layout.rects[id]||suggestedRect(id),id);
     const rect=group?{...frame,y:frame.y+headerHeight,height:Math.max(0,frame.height-headerHeight)}:frame;
-    const style:CSSProperties={position:floating||peek?'fixed':'absolute',left:rect.x,top:rect.y,width:rect.width,height:rect.height,minWidth:0,minHeight:0,flex:'none',display:layout.open.includes(id)&&(!group||group.active===id)&&!detachedIds.has(id)?undefined:'none',zIndex:peek||floating?layout.layers[group?.id||id]||panelLayers.floating:panelLayers.docked,boxShadow:peek?'var(--hive-popup-shadow)':undefined,borderTopLeftRadius:group?0:undefined,borderTopRightRadius:group?0:undefined};
+    const style:CSSProperties={position:floating||peek?'fixed':'absolute',left:rect.x,top:rect.y,width:rect.width,height:rect.height,minWidth:0,minHeight:0,flex:'none',display:layout.open.includes(id)&&(!group||group.active===id)&&!detachedIds.has(id)?undefined:'none',zIndex:peek||floating?layout.layers[group?.id||id]||panelLayers.floating:raisedDocked===id?raisedDockedLayer:panelLayers.docked,boxShadow:peek?'var(--hive-popup-shadow)':undefined,borderTopLeftRadius:group?0:undefined,borderTopRightRadius:group?0:undefined};
     return {ref:refFor(id),visible:style.display!=='none',floating,movable:canMovePanel(layout,id),primary:id===PRIMARY_EDITOR,positionLocked:isPanelPositionLocked(layout,id),lockHint:isPanelPositionLocked(layout,id)?((isFreelyMovableTool(layout,id)?"停靠位置已锁定，浮窗可移动和缩放 · ":"位置已锁定 · ")+(lockGesture==="longPress"?"长按":"双击")+"标题栏解锁"):(lockGesture==="longPress"?"长按标题栏锁定位置":"双击标题栏锁定位置"),canDock:!layout.locked&&!isPanelPositionLocked(layout,id)&&id!==PRIMARY_EDITOR,autoHidden:!!autoHide,collapseEdge:autoHide?.edge||nearestPanelEdge({...frame,x:frame.x+(floating?0:bounds.x),y:frame.y+(floating?0:bounds.y)},bounds,!floating),grouped:!!group,style,raise:()=>raise(id),beginDrag:(event:PointerEvent<HTMLElement>,control?:DragControl)=>beginDrag(id,event,control),toggleFloat:()=>toggleFloat(id),floatAt:(rect:Rect)=>floatAt(id,rect),openDocked:()=>openDocked(id),openFloating:()=>floatAt(id,fit(latest.current.rects[id]||suggestedRect(id),id)),dock:()=>dock(id),dockAtEdge:(edge:DockEdge)=>dockAtEdge(id,edge),close:()=>hide(id,false),minimize:()=>hide(id,true),handles:group?null:handles(id),groupHandles:group?handles(id):null};
   }
   const chrome=<>
@@ -468,7 +492,7 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
       draggedLabel={refFor(dragging).current?.getAttribute('aria-label')||'面板'}
       tabs={(tabGroups.find(group=>group.panels.includes(dockFeedback?.target?.id||''))?.panels.filter(id=>id!==dragging)||[dockFeedback?.target?.id||'']).map(id=>refFor(id).current?.getAttribute('aria-label')||'目标面板')}/>,document.body)}
   </>;
-  return {panel,beginTabDrag,beginGroupDrag,groupFloat,groupDock,prepareNativeFloat,floatNativePanel,returnNativePanel,canPullRail:(edge:'left'|'right')=>canDockAutoHideRail(layout,edge),dockAutoHideRail:pullAutoHideRail,closePreservingAutoHide,open,splitEditor,openDocumentTab,isPositionLocked:(id:string)=>isPanelPositionLocked(layout,id),togglePositionLock,locked:!!layout.locked,toggleLocked:()=>{cleanup.current?.();stopDocking();update(old=>({...old,locked:!old.locked}));},close:(id:string)=>hide(id,false),minimize:(id:string)=>hide(id,true),toggle:(id:string)=>layout.open.includes(id)?hide(id,false):open(id),isOpen:(id:string)=>layout.open.includes(id),chrome,
+  return {panel,beginTabDrag,beginGroupDrag,groupFloat,groupDock,prepareNativeFloat,floatNativePanel,returnNativePanel,canPullRail:(edge:'left'|'right')=>canDockAutoHideRail(layout,edge),dockAutoHideRail:pullAutoHideRail,closePreservingAutoHide,open,reveal,splitEditor,openDocumentTab,isPositionLocked:(id:string)=>isPanelPositionLocked(layout,id),togglePositionLock,locked:!!layout.locked,toggleLocked:()=>{cleanup.current?.();stopDocking();update(old=>({...old,locked:!old.locked}));},close:(id:string)=>hide(id,false),minimize:(id:string)=>hide(id,true),toggle:(id:string)=>layout.open.includes(id)?hide(id,false):open(id),isOpen:(id:string)=>layout.open.includes(id),chrome,
     capture:()=>{
       const snapshot=structuredClone(latest.current);
       for(const group of snapshot.floatingGroups){
@@ -485,5 +509,5 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
       const result=transition('restore',ids,()=>{lifecycle.reset();previousNativeWindows.current.clear();const normalized=normalize(next,boundsRef.current);latest.current=normalized;setLayout(normalized);});
       if(result!=='succeeded')throw new Error('请先完成当前窗口操作或输入法组词，再应用视图。');
     },
-    reset:()=>{if(latest.current.locked)return;cleanup.current?.();return transition('restore',[...new Set([...latest.current.open,...desktop.windows.keys(),...lifecycle.homes.keys()])],()=>{lifecycle.reset();previousNativeWindows.current.clear();update(()=>defaultWorkspace());});},openIds:layout.open,minimizedIds:layout.minimized,toggleAutoHide,repositionAutoHide,openDocked,autoHideItems:Object.entries(layout.autoHide||{}).map(([id,placement])=>({id,edge:placement.edge,offset:placement.offset,active:isExpandedAutoHidePanel(layout,id)||desktop.enabled&&(desktop.windows.has(id)||lifecycle.opening(id))&&layout.open.includes(id)})),tabGroups:tabGroups.map(group=>({...group,style:{position:group.floating?'fixed':'absolute',left:group.rect.x,top:group.rect.y,width:group.rect.width,height:group.rect.height,zIndex:group.floating?(layout.layers[group.id]||panelLayers.floating)+1:panelLayers.tabs} as CSSProperties}))};
+    reset:()=>{if(latest.current.locked)return;cleanup.current?.();return transition('restore',[...new Set([...latest.current.open,...desktop.windows.keys(),...lifecycle.homes.keys()])],()=>{lifecycle.reset();previousNativeWindows.current.clear();update(()=>defaultWorkspace());});},openIds:layout.open,minimizedIds:layout.minimized,toggleAutoHide,repositionAutoHide,openDocked,autoHideItems:Object.entries(layout.autoHide||{}).map(([id,placement])=>({id,edge:placement.edge,offset:placement.offset,active:isExpandedAutoHidePanel(layout,id)||desktop.enabled&&(desktop.windows.has(id)||lifecycle.opening(id))&&layout.open.includes(id)})),tabGroups:tabGroups.map(group=>({...group,style:{position:group.floating?'fixed':'absolute',left:group.rect.x,top:group.rect.y,width:group.rect.width,height:group.rect.height,zIndex:group.floating?(layout.layers[group.id]||panelLayers.floating)+1:raisedDocked===group.active?raisedDockedLayer+1:panelLayers.tabs} as CSSProperties}))};
 }

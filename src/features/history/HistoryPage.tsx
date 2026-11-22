@@ -21,7 +21,16 @@ const tabIcons:Record<HistoryTab,IconName>={snapshot:'history.tab.snapshot',huma
 const labels:Record<HistoryTab,string>={snapshot:'文件快照',human:'人工操作',ai:'AI 操作'};
 const empty:Record<HistoryTab,string>={snapshot:'这篇文稿还没有快照。',human:'暂无人工操作记录。',ai:'暂无 AI 操作记录。'};
 const dateFormat=new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+const rowDateFormat=new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit'});
+const rowTimeFormat=new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 function displayTime(value:string){const stamp=Date.parse(value);return Number.isFinite(stamp)?dateFormat.format(stamp):value;}
+
+function RowTime({value}:{value:string}){
+  const stamp=Date.parse(value);
+  return <time dateTime={value} title={displayTime(value)}>{Number.isFinite(stamp)?<>
+    <span className="history-row-date">{rowDateFormat.format(stamp)} </span>{rowTimeFormat.format(stamp)}
+  </>:value}</time>;
+}
 
 function Sections({sections,conflict=false}:{sections:HistorySection[];conflict?:boolean}){
   return <>{sections.map((section,index)=><section className="history-section" key={index}>
@@ -73,13 +82,22 @@ function HistoryContent({activeFile,entries,busy=false,error,onCreate,onRestore,
     <div className="history-navigation"><div role="tablist" aria-label="历史类型">{tabs.map((value,index)=><button key={value} id={id+'-'+value} type="button" role="tab" aria-selected={tab===value} aria-controls={id+'-panel'} tabIndex={tab===value?0:-1} onKeyDown={event=>tabKey(event,index)} onClick={()=>selectTab(value)}><Icon name={tabIcons[value]} size={15}/>{labels[value]}</button>)}</div>
       {tab==='snapshot'&&<button type="button" className="history-create" disabled={busy||!activeFile} onClick={onCreate}><Camera size={15}/>创建快照</button>}</div>
     {error&&<p role="alert" className="history-error">{error}</p>}
-    <div role="tabpanel" aria-labelledby={id+'-'+tab} id={id+'-panel'} className="history-panel" data-detail={drillDown&&!!selected} aria-busy={busy}>
+    <div role="tabpanel" aria-labelledby={id+'-'+tab} id={id+'-panel'} className="history-panel" data-history-tab={tab} data-detail={drillDown&&!!selected} aria-busy={busy}>
       {!selected?<p className="history-empty">{busy?'正在读取历史记录…':empty[tab]}</p>:<>
-        <ul ref={list} aria-label={labels[tab]+'记录'} className="history-list">{items.map(entry=><li key={entry.id}>
-          <button type="button" aria-current={entry.id===selected.id?'true':undefined} onClick={()=>inspect(entry)}>
-            <strong>{entry.label}</strong><time dateTime={entry.createdAt}>{displayTime(entry.createdAt)}</time>
-            {entry.file&&entry.file!==activeFile&&<small title={entry.file}>{entry.file}</small>}
-          </button></li>)}</ul>
+        <ul ref={list} aria-label={labels[tab]+'记录'} className="history-list">{items.map(entry=>{
+          const row=tab==='human',fileName=entry.file?.split(/[\\/]/).at(-1);
+          return <li key={entry.id} className={row?'history-human-row':undefined}>
+            <button type="button" className="history-list-entry" aria-current={entry.id===selected.id?'true':undefined} onClick={()=>inspect(entry)}>
+              <strong title={row?entry.label:undefined}>{entry.label}</strong>
+              {row?<RowTime value={entry.createdAt}/>:<time dateTime={entry.createdAt}>{displayTime(entry.createdAt)}</time>}
+              {row?<small title={entry.file}>{fileName||'—'}</small>:entry.file&&entry.file!==activeFile&&<small title={entry.file}>{entry.file}</small>}
+            </button>
+            {row&&<div className="history-row-actions">
+              <button type="button" title="撤销这条人工操作" disabled={busy||!entry.undoable} onClick={()=>onUndo('human',entry.id)}>恢复</button>
+              <button type="button" disabled={busy||!entry.redoable} onClick={()=>onRedo('human',entry.id)}>重做</button>
+            </div>}
+          </li>;
+        })}</ul>
         <article ref={detail} tabIndex={-1} className="history-detail" aria-label="记录详情" key={tab+selected.id}>
           <button type="button" className="history-back" onClick={back}><ArrowLeft size={14}/>返回列表</button>
           <h3>{selected.label}</h3><div className="history-meta"><time dateTime={selected.createdAt}>{displayTime(selected.createdAt)}</time>

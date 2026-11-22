@@ -1,5 +1,5 @@
 /* Editor highlights are independent of selection colors used by the rest of the UI. */
-html .cm-editor .cm-selectionBackground {background:var(--hive-editor-inactive-selection-background) !important;}
+html .cm-editor .cm-selectionBackground {background:var(--hive-editor-inactive-selection-background) !important;box-shadow:inset 0 0 0 1px var(--hive-editor-selection-border);}
 html .cm-editor.cm-focused .cm-selectionBackground {background:var(--hive-editor-selection-background) !important;}
 /* CodeMirror draws its own selection layer. Keep native backgrounds transparent so alpha is applied once. */
 html .cm-editor .cm-content .cm-line::selection,
@@ -26,11 +26,11 @@ html .cm-editor .cm-table-select-left {border-left-color:var(--hive-editor-table
 html .cm-editor .cm-table-select-right {border-right-color:var(--hive-editor-table-selection-border) !important;}
 .editor-color-settings > p {color:var(--muted);font-size:12px;line-height:1.7;}
 
-html body .cm-editor .cm-preview-link, html body .cm-editor [data-hive-link] {color:var(--hive-editor-link-text) !important;text-decoration:underline;}
-html body .cm-editor [data-hive-link]:not([data-hive-link^="http:" i], [data-hive-link^="https:" i], [data-hive-link^="mailto:" i], [data-hive-link^="//"]) {
+html body .cm-editor :is(.cm-preview-link,.cm-source-link,[data-hive-link]) {color:var(--hive-editor-link-text) !important;text-decoration:underline;text-underline-offset:2px;}
+html body .cm-editor [data-hive-link] {
   cursor:pointer;
 }
-html body .cm-editor [data-hive-link]:not([data-hive-link^="http:" i], [data-hive-link^="https:" i], [data-hive-link^="mailto:" i], [data-hive-link^="//"]):is(:hover, :focus-visible) {
+html body .cm-editor [data-hive-link]:is(:hover, :focus-visible) {
   color:color-mix(in srgb,var(--hive-editor-link-text) 78%,var(--hive-document-text,var(--text))) !important;
   text-decoration-thickness:2px;
   text-underline-offset:2px;

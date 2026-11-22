@@ -10,8 +10,8 @@ type Span={from:number;to:number};
 type Node=SyntaxNode;
 export type PreviewCell=Span&{text:string;virtual?:number;trailing?:boolean};
 export type PreviewReplacement=Span&{reveal:Span;block?:boolean;kind?:'bullet'|'task'|'image'|'rule'|'table'|'properties'|'math'|'mermaid';text?:string;src?:string;rows?:PreviewCell[][];columns?:number;rowEnds?:{to:number;trailing:boolean}[];tableOrdinal?:number;list?:boolean};
-export type PreviewStyle=Span&{className?:string;line?:boolean;align?:'left'|'center'|'right';title?:string;link?:string;list?:{depth:number;width:string}};
-export type PreviewPlan={replacements:PreviewReplacement[];styles:PreviewStyle[]};
+export type PreviewStyle=Span&{className?:string;line?:boolean;align?:'left'|'center'|'right';title?:string;link?:string;linkReveal?:Span;list?:{depth:number;width:string}};
+export type PreviewPlan={replacements:PreviewReplacement[];styles:PreviewStyle[];punctuation:Span[]};
 const cache=new WeakMap<Text,PreviewPlan>();
 function children(node:Node,name?:string){const items:Node[]=[];for(let item=node.firstChild;item;item=item.nextSibling)if(!name||item.name===name)items.push(item);return items;}
 
@@ -59,13 +59,14 @@ function patchTableCell(tr:Transaction){
     const rowEnds=item.rowEnds?.map(end=>{const to=position(end.to,1);return to===end.to?end:{...end,to};});
     return {...mapped,reveal,rows,rowEnds};
   });
-  cache.set(tr.state.doc,{replacements,styles:old.styles.map(span)});return true;
+  const styles=old.styles.map(item=>item.linkReveal?{...span(item),linkReveal:span(item.linkReveal)}:span(item));
+  cache.set(tr.state.doc,{replacements,styles,punctuation:old.punctuation.map(span)});return true;
 }
 
 export function previewPlan(state:EditorState):PreviewPlan{
   const existing=cache.get(state.doc);if(existing)return existing;
   let tableOrdinal=0;
-  const doc=state.doc,text=doc.toString(),hasMath=text.includes('$'),replacements:PreviewReplacement[]=[],styles:PreviewStyle[]=[],mathExcluded:SourceSpan[]=[];
+  const doc=state.doc,text=doc.toString(),hasMath=text.includes('$'),replacements:PreviewReplacement[]=[],styles:PreviewStyle[]=[],mathExcluded:SourceSpan[]=[],punctuation:Span[]=[];
   // Reference definitions can occur after their use and are scoped to this document.
   const references=new Map<string,string>();
   const referenceKey=(value:string)=>value.replace(/\\([\\[\]])/g,'$1').trim().replace(/\s+/g,' ').toLowerCase();
@@ -101,6 +102,19 @@ export function previewPlan(state:EditorState):PreviewPlan{
     hide(to-spaces,to,reveal,{list:true});
   };
   const listWidth=(mark:Node)=>/^\d/.test(text[mark.from])?`max(1.4em, ${mark.to-mark.from+1}ch)`:'1.4em';
+  function joinClosingPunctuation(from:number,to:number,after:number){
+    const line=doc.lineAt(after);
+    if(to<=from||to<line.from||after===line.to)return;
+    const suffix=/^[，。！？、；：）》」』】〕］〉”’％…]+/.exec(text.slice(after,line.to));
+    if(!suffix)return;
+    const start=Math.max(from,line.from);
+    const last=/\P{Mark}\p{Mark}*$/u.exec(text.slice(start,to).trimEnd());
+    if(last)punctuation.push({from:start+last.index,to:after+suffix[0].length});
+  }
+  function linkStyle(from:number,to:number,link?:string,reveal?:Span){
+    styles.push({from,to,className:'cm-preview-link',title:link,link,linkReveal:reveal});
+    if(reveal)joinClosingPunctuation(from,to,reveal.to);
+  }
   function walk(node:Node){
     const parts=children(node),span={from:node.from,to:node.to};
     if(node.name==='Paragraph')styles.push(...paragraphTypographyStyles(node,doc));
@@ -145,6 +159,7 @@ export function previewPlan(state:EditorState):PreviewPlan{
     if(node.name==='InlineCode'){
       const marks=children(node,'CodeMark');if(marks.length===2){
         styles.push({from:marks[0].to,to:marks[1].from,className:'cm-preview-inline-code'});
+        joinClosingPunctuation(marks[0].to,marks[1].from,node.to);
         for(const mark of marks)hide(mark.from,mark.to,span);
       }return;
     }
@@ -210,15 +225,19 @@ export function previewPlan(state:EditorState):PreviewPlan{
         const label=parts.find(item=>item.name==='LinkLabel');
         const fallback=text.slice(first.to,end.from),reference=label?text.slice(label.from+1,label.to-1)||fallback:fallback;
         const link=url?text.slice(url.from,url.to):references.get(referenceKey(reference));
-        styles.push({from:first.to,to:end.from,className:'cm-preview-link',title:link,link:link&&!/^[a-z][a-z\d+.-]*:/i.test(link)?link:undefined});
+        linkStyle(first.to,end.from,link,span);
         hide(node.from,first.to,span);hide(end.from,node.to,span);
         for(const part of parts)if(part.from>=first.to&&part.to<=end.from)walk(part);
         return;
       }
     }
     if(node.name==='Autolink'){
-      styles.push({...span,className:'cm-preview-link'});for(const mark of children(node,'LinkMark'))hide(mark.from,mark.to,span);return;
+      const url=node.getChild('URL');
+      if(url)linkStyle(url.from,url.to,text.slice(url.from,url.to),span);
+      for(const mark of children(node,'LinkMark'))hide(mark.from,mark.to,span);
+      return;
     }
+    if(node.name==='URL'&&/^https?:\/\//i.test(text.slice(node.from,node.to)))linkStyle(node.from,node.to,text.slice(node.from,node.to),span);
     if(node.name==='HTMLTag'){hide(node.from,node.to,span);return;}
     if(node.name==='HTMLBlock'){
       for(const match of text.slice(node.from,node.to).matchAll(/<\/?[a-zA-Z][^>\n]*>|<!--[\s\S]*?-->/g))hide(node.from+match.index,node.from+match.index+match[0].length,span);
@@ -251,6 +270,7 @@ export function previewPlan(state:EditorState):PreviewPlan{
       const pieces=outsideMath(item,protectedSpans);return pieces.length===1&&pieces[0].from===item.from&&pieces[0].to===item.to;
     }),...mathReplacements],
     styles:styles.filter(item=>(!metadata||item.from>=metadata.to)&&(!item.className?.startsWith('cm-typography-')||outsideMath({from:item.from,to:item.from+1},blockMathLines).length>0)).flatMap(item=>item.line?[item]:outsideMath(item,protectedSpans)),
+    punctuation:punctuation.filter(item=>outsideMath(item,protectedSpans).some(piece=>piece.from===item.from&&piece.to===item.to)),
   };cache.set(doc,plan);return plan;
 }
 

@@ -1149,7 +1149,7 @@ p {
   overflow: auto;
 }
 .thinking > .chat-reply-status { display: block; }
-.thinking:has(> pre) > .chat-reply-status { display: none; }
+.thinking:has(> .chat-markdown) > .chat-reply-status { display: none; }
 .modal-backdrop {
   position: fixed;
   inset: 0;

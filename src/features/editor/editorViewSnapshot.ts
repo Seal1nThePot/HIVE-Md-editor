@@ -4,5 +4,9 @@ import type {EditorSession} from './editorSessionTypes';
 export function captureEditorView(session:EditorSession){
   const view=session.view;if(!view)return;
   session.state=view.state;
-  if(view.dom.getClientRects().length){session.restoreScroll=view.scrollDOM.scrollTop;session.restoreScrollLeft=view.scrollDOM.scrollLeft;}
+  if(view.dom.getClientRects().length){
+    const {scrollTop,scrollLeft}=view.scrollDOM;
+    session.restoreScroll=scrollTop;session.restoreScrollLeft=scrollLeft;
+    session.restoreScrollTarget=scrollTop||scrollLeft?{doc:view.state.doc,effect:view.scrollSnapshot()}:undefined;
+  }
 }

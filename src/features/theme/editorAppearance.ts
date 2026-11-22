@@ -24,7 +24,7 @@ export function editorColors(theme:ThemePreferences):EditorColors{
   const s=themeTokens(theme).surfaces,accent=theme.colors.accent;
   const rgb=[1,3,5].map(i=>parseInt(s.document.slice(i,i+2),16));
   const linkText=(rgb[0]*0.299+rgb[1]*0.587+rgb[2]*0.114)>150?'#175cb8':'#8ab4ff';
-  const colors:EditorColors={linkText,cursor:s.documentText,selectionBackground:s.selection,selectionText:s.documentText,textHighlightBackground:theme.colors.warning+'47',inactiveSelectionBackground:s.selection+'99',activeLineBackground:s.documentText+'18',selectionMatchBackground:accent+'30',searchMatchBackground:accent+'3b',searchCurrentBackground:accent+'70',annotationBackground:accent+'24',annotationUnderline:accent,tableSelectionBackground:accent+'30',tableSelectionBorder:accent,...theme.editorProfiles?.[theme.base]};
+  const colors:EditorColors={linkText,cursor:s.documentText,selectionBackground:accent+'2a',selectionBorder:accent+'b3',selectionText:s.documentText,textHighlightBackground:theme.colors.warning+'47',inactiveSelectionBackground:accent+'18',activeLineBackground:s.documentText+'18',selectionMatchBackground:accent+'30',searchMatchBackground:accent+'3b',searchCurrentBackground:accent+'70',annotationBackground:accent+'24',annotationUnderline:accent,tableSelectionBackground:accent+'30',tableSelectionBorder:accent,...theme.editorProfiles?.[theme.base]};
   cache.set(theme,colors);return colors;
 }
 export function editorTokens(theme:ThemePreferences){return Object.fromEntries((Object.entries(editorColors(theme)) as [EditorColorRole,string][]).map(([key,color])=>[editorVariable(key),color]));}

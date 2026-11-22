@@ -8,7 +8,7 @@ import type { Entry } from './explorerState';
 import type { WorkspaceInfo } from './WorkspaceContext';
 import { diskSyncDecision } from './fileSync';
 import {documentMatchesText} from '../editor/documentText';
-import {beginFileActivity} from './fileOperations';
+import {beginFileActivity,type FileActivityUpdate} from './fileOperations';
 import type {Transaction} from '@codemirror/state';
 import {documentSyncBaselines,pollAfterCompletion,workspaceTreeSync} from './workspaceSync';
 import { writeDocument } from './writeDocument';
@@ -24,7 +24,7 @@ type PersistenceOptions = {
     autoSave: boolean;
     /** 这个会话里还有没被用户确认的 AI 建议（预览已在正文里），此时不允许写盘。 */
     pendingProposal?: (id: string) => boolean;
-    setFileBusy: (busy: boolean) => void;
+    setFileBusy: FileActivityUpdate;
     setEntries: Dispatch<SetStateAction<Entry[]>>;
     setError: (message: string) => void;
     inform: (message: string) => void;
@@ -78,7 +78,7 @@ export function useDocumentPersistence({
             .filter(other => other.disk?.path === source.path)
             .map(other => [other.id, { session: other, disk: other.disk }]));
         savingPaths.current.add(source.path);
-        const release=quiet?()=>{}:beginFileActivity(sessions,value=>{if(appAlive?.current!==false)setFileBusy(value);});
+        const release=quiet?()=>{}:beginFileActivity(sessions,(busy,openingFile)=>{if(appAlive?.current!==false)setFileBusy(busy,openingFile);});
         try {
             const result = await writeDocument(api, {
                 path: source.path, text: snapshot, baseline: source.hash, eol: source.eol, bom: source.bom,

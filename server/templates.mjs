@@ -347,9 +347,18 @@ export async function templateStore(directory,bundledDirectory,options={}){
     });
   }
   async function open(id){
-    const current=await read(id),target=await folder(id);
+    const {directory:target}=await read(id);
     if((options.platform??process.platform)!=='win32')throw fail('当前系统不支持 Windows 资源管理器。');
-    await new Promise((resolve,reject)=>{const child=(options.launch||spawn)('explorer.exe',[target],{shell:false,windowsHide:true,detached:true,stdio:'ignore'});child.once('error',reject);child.once('spawn',()=>{child.unref();resolve();});});
+    if(options.openDirectory)await options.openDirectory(target);
+    else{
+      // The standalone Windows server does not have an Electron main process.
+      await folder(id);
+      await new Promise((resolve,reject)=>{
+        const child=(options.launch||spawn)('explorer.exe',[target],{shell:false,windowsHide:false,detached:true,stdio:'ignore'});
+        child.once('error',()=>reject(fail('无法打开系统资源管理器，请重试。',503)));
+        child.once('spawn',()=>{child.unref();resolve();});
+      });
+    }
     return {ok:true,directory:target};
   }
   function close(){

@@ -405,6 +405,16 @@ export function useTextAnnotations(
     });
     editor.focus();
   }
+  function findSubmitted(snapshot: SubmittedAnnotation): TextAnnotation | 'loading' | 'unavailable' {
+    const record = data.current[snapshot.source];
+    if (record?.file !== snapshot.file) return 'loading';
+    if (record.error && !record.ready) return 'unavailable';
+    if (!record.ready) return 'loading';
+    const editor = snapshot.source === 'scratch' ? scratch.current : main.current;
+    if (!editor) return 'loading';
+    const item = record.items.find(item => item.id === snapshot.id);
+    return item && canApply(item, editor.state.doc.toString(), snapshot.file) ? item : 'unavailable';
+  }
   function submission(ids: string[]) {
     const wanted = new Set(ids),
       result: SubmittedAnnotation[] = [];
@@ -448,6 +458,7 @@ export function useTextAnnotations(
     unmark,
     map,
     locate,
+    findSubmitted,
     submission,
     reanchor,
     edit: (id: string, note: string) =>

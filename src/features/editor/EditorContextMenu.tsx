@@ -10,6 +10,7 @@ import {cellContent} from './tableWidget';
 import {tableCell} from './tableViewport';
 import './editor-context-menu.css';
 import {usePanelDocument} from '../../shared/panelDocument';
+import {parseExternalHttpLink} from '../../shared/externalLinks';
 
 export type AnnotationContext={ranges:{from:number;to:number}[];ids:string[]};
 export function decodedOffsets(raw:string){const offsets=[0];let pos=0;while(pos<raw.length){const br=/^<br\s*\/?\s*>/i.exec(raw.slice(pos));if(br)pos+=br[0].length;else if(raw[pos]==='\\'&&(raw[pos+1]==='\\'||raw[pos+1]==='|'))pos+=2;else pos++;offsets.push(pos);}return offsets;}
@@ -83,7 +84,7 @@ export default function EditorContextMenu({editor,point,input,onClose,onMark,onU
       <button type="button" role="menuitem" title="纯文本粘贴" aria-label="纯文本粘贴" disabled={readOnly} onClick={()=>void clipboard('plain')}><Clipboard size={16}/><span>纯文本</span></button>
     </div>
     <hr/>
-    {link&&onOpenLink&&<button type="button" role="menuitem" onClick={()=>run(()=>onOpenLink(link))}><FileInput size={15}/><span>跳转至文件</span></button>}
+    {link&&onOpenLink&&<button type="button" role="menuitem" onClick={()=>run(()=>onOpenLink(link))}><FileInput size={15}/><span>{parseExternalHttpLink(link)?'在浏览器中打开':'跳转至文件'}</span></button>}
     {!!draftSelection.trim()&&<button type="button" role="menuitem" onClick={()=>run(()=>{if(!valid()){onError?.('正文或选区已变化，请再次打开右键菜单。');return;}onDraftSelection?.(draftSelection);})}><Sparkles size={15}/><span>添加到 AI 输入框</span></button>}
     {!input&&<button type="button" role="menuitem" disabled={!hasSelection} onClick={()=>run(onMark)}><Icon name="annotation.markSelection" size={15}/><span>标注选区</span><kbd>Ctrl + 单击</kbd></button>}
     {!input&&onUnmark&&<button type="button" role="menuitem" disabled={!hasSelection&&!annotationId} onClick={()=>run(()=>onUnmark(annotationId))}><Icon name="annotation.unmarkSelection" size={15}/><span>取消标注</span></button>}

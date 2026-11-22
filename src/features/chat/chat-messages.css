@@ -1,0 +1,91 @@
+.chat-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.chat-markdown p, .chat-markdown blockquote {
+  margin: 0;
+  white-space: pre-line;
+}
+.chat-markdown p + p, .chat-markdown blockquote + p { margin-top: .65em; }
+.chat-markdown :is(h1,h2,h3,h4,h5,h6) {
+  margin: .45em 0 .2em;
+  line-height: 1.4;
+}
+.chat-markdown h1 { font-size: 1.45em; }
+.chat-markdown h2 { font-size: 1.25em; }
+.chat-markdown :is(h3,h4,h5,h6) { font-size: 1.1em; }
+.chat-markdown :is(ol,ul) { margin: .35em 0; padding-inline-start: 1.7em; }
+.chat-markdown blockquote {
+  border-inline-start: 2px solid var(--line);
+  padding-inline-start: .8em;
+}
+.chat-markdown pre {
+  margin: .4em 0;
+  padding: .5em .7em;
+  overflow: auto;
+  white-space: pre;
+}
+.chat-markdown :is(code,pre) {
+  border-radius: .3em;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.chat-markdown code {
+  padding: .05em .25em;
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: pre-wrap;
+}
+.chat-markdown pre code { padding: 0; background: none; white-space: inherit; }
+.chat-markdown :is(a,.chat-document-link) {
+  color: var(--hive-editor-link-text, var(--text));
+  text-decoration: underline;
+}
+.chat-document-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.chat-markdown hr { border: 0; border-top: 1px solid var(--line); }
+.chat-markdown-table { overflow: auto; margin: .45em 0; }
+.chat-markdown-table table { width: 100%; border-collapse: collapse; }
+.chat-markdown-table :is(th,td) { border: 1px solid var(--line); padding: .12em .4em; text-align: start; }
+.chat-annotation-entries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: .65em;
+}
+.chat-annotation-entries > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 7px;
+  background: var(--hive-panel-bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.chat-annotation-entries > button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-annotation-batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  padding: 4px 8px;
+}
+.chat-annotation-batch .annotation-title-list { padding: 0; }
+.chat-annotation-batch article { min-width: 0; padding: 8px; }
+.chat-annotation-batch blockquote, .chat-annotation-batch p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

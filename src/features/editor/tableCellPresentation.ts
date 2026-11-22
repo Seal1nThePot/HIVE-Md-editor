@@ -65,7 +65,7 @@ export function renderTableCell(target:HTMLElement,source:string){
     }
     const tag=name==='StrongEmphasis'?'strong':name==='Emphasis'?'em':name==='Strikethrough'?'del':null;
     if(tag){const first=node.firstChild,last=node.lastChild;if(first&&last){const el=doc.createElement(tag);renderRange(el,first.to,last.from,first.nextSibling);parent.appendChild(el);return;}}
-    if(name==='Link'){const children:SyntaxNode[]=[];for(let child=node.firstChild;child;child=child.nextSibling)children.push(child);const close=children.find((n,i)=>i>0&&n.name==='LinkMark'),url=children.find(n=>n.name==='URL');if(close){const el=doc.createElement('a'),destination=url?source.slice(url.from,url.to):'';if(destination)el.dataset.hiveLink=destination;if(/^(https?:|mailto:)/i.test(destination)){el.href=destination;el.target='_blank';el.rel='noopener noreferrer';}renderRange(el,children[0].to,close.from,children[0].nextSibling);parent.appendChild(el);return;}}
+    if(name==='Link'){const children:SyntaxNode[]=[];for(let child=node.firstChild;child;child=child.nextSibling)children.push(child);const close=children.find((n,i)=>i>0&&n.name==='LinkMark'),url=children.find(n=>n.name==='URL');if(close){const el=doc.createElement('a'),destination=url?source.slice(url.from,url.to):'';if(destination)el.dataset.hiveLink=destination;renderRange(el,children[0].to,close.from,children[0].nextSibling);parent.appendChild(el);return;}}
     text(parent,raw,node.from,node.to);
   };
   if(paragraph?.name==='Paragraph')renderRange(target,2,source.length,paragraph.firstChild);else text(target,source.slice(2),2,source.length);

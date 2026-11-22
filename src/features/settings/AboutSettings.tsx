@@ -11,6 +11,7 @@ const modeLabels: Record<AboutInfo['runtime']['mode'], string> = {
   'browser-development': '浏览器开发运行', 'browser-build': '浏览器本地构建',
 };
 const displayBuildValue = (value: string) => !value || value === 'unavailable' ? '未记录' : value;
+const displayReleaseVersion = (version: string) => version.replace(/^(\d+\.\d+\.\d+)-r(\d+)$/, '$1r$2');
 
 export default function AboutSettings() {
   const bridge = window.hiveDesktop?.isDesktop ? window.hiveDesktop : undefined;
@@ -94,7 +95,7 @@ export default function AboutSettings() {
       {!loading && desktop && !info && <p role="alert">无法读取桌面信息。下方版本与构建来自当前页面的构建元数据，不能据此确认桌面应用包；诊断中的运行环境留空。</p>}
       {missingBuildRecord && <p role="status">构建记录缺失或与应用版本不一致，无法确认该构建。</p>}
       <dl>
-        <div><dt>版本</dt><dd>{metadata.version}</dd></div>
+        <div><dt>版本</dt><dd>{displayReleaseVersion(metadata.version)}</dd></div>
         <div><dt>构建编号</dt><dd>{displayBuildValue(metadata.buildNumber)}</dd></div>
         <div><dt>构建时间（UTC）</dt><dd>{displayBuildValue(metadata.buildTime)}</dd></div>
         <div><dt>发行渠道</dt><dd>{displayBuildValue(metadata.channel)}</dd></div>

@@ -19,6 +19,7 @@ type AppHeaderProps = {
     config: Config;
     file: string;
     fileBusy: boolean;
+    openingFile: boolean;
     chatOpen: boolean;
     leftOpen: boolean;
     setError: (message: string) => void;
@@ -26,7 +27,7 @@ type AppHeaderProps = {
 };
 
 /** 顶栏：写作空间、保存/自动保存、帮助、模型、面板切换器、锁定/设置。 */
-export function AppHeader({ workspace, openChat, openSettings, openHistory, save, fileWorkspace, config, file, fileBusy, chatOpen, leftOpen, setError, setHelp }: AppHeaderProps) {
+export function AppHeader({ workspace, openChat, openSettings, openHistory, save, fileWorkspace, config, file, fileBusy, openingFile, chatOpen, leftOpen, setError, setHelp }: AppHeaderProps) {
     const desktop=useDesktopPanels(),{bindings}=useShortcutPreferences();
     const modelLabel=activeModelLabel(config);
     return (
@@ -48,7 +49,7 @@ export function AppHeader({ workspace, openChat, openSettings, openHistory, save
         </button>
         <div className="quick-file-actions" aria-label="文档保存与帮助操作">
           <div className="save-with-autosave">
-            <button type="button" className="header-save-button" aria-label="保存正文" title={`保存 · ${shortcutLabel(bindings,'save')}`} disabled={!file||fileBusy} onClick={()=>void save()}><Save size={16}/></button>
+            <button type="button" className="header-save-button" aria-label="保存正文" title={`保存 · ${shortcutLabel(bindings,'save')}`} disabled={!file||fileBusy} data-opening-file={file&&openingFile||undefined} onClick={()=>void save()}><Save size={16}/></button>
             <label className="auto-save-toggle" data-no-drag title={fileWorkspace.info.autoSave?'自动保存已开启 · 点击关闭':'自动保存已关闭 · 点击开启'}><input type="checkbox" role="switch" aria-label="自动保存正文" checked={fileWorkspace.info.autoSave} onChange={event=>void fileWorkspace.update({autoSave:event.target.checked}).catch(error=>setError(error.message))}/></label>
           </div>
           <button type="button" className="header-help" aria-label="使用指南" title="使用指南" onClick={() => setHelp(true)}><CircleHelp size={17}/></button>

@@ -150,6 +150,15 @@ export const markdownPreview=StateField.define<DecorationSet>({
   },
   provide:field=>EditorView.decorations.from(field),
 });
+const punctuationJoin=Decoration.mark({class:'cm-preview-punctuation-join'});
+const punctuationJoins=EditorView.outerDecorations.compute([displayModeField,previewFocus,'doc'],state=>{
+  const mode=state.field(displayModeField);
+  if(mode==='source')return Decoration.none;
+  const active=mode==='preview'?[]:previewActiveLines(state,state.field(previewFocus).selection);
+  return Decoration.set(previewPlan(state).punctuation
+    .filter(item=>!active.some(line=>item.from<=line.to&&item.to>line.from))
+    .map(item=>punctuationJoin.range(item.from,item.to)),true);
+});
 function activeLines(state:EditorState,selection:EditorSelection|null){return previewActiveLines(state,selection).map(line=>`${line.from}:${line.to}`).join(',');}
 class WideTableNotice extends WidgetType{
   constructor(readonly readOnly:boolean){super();}
@@ -165,18 +174,18 @@ function build(state:EditorState){
   ranges.push(...details.ranges);
   const items=visibleReplacements(state,!!(selection||pointerMath),selection,pointerMath)
     .filter(item=>!details.hidden.some(span=>item.from<span.to&&item.to>span.from));
-  const rawListLines=new Set<number>();
+  const active=previewActiveLines(state,selection),rawListLines=new Set<number>();
   if(selection){
-    const active=previewActiveLines(state,selection);
     for(const item of plan.replacements)if(item.list&&active.some(line=>item.reveal.from<=line.to&&item.reveal.to>line.from))rawListLines.add(state.doc.lineAt(item.from).from);
   }
   for(const style of plan.styles){
     if(style.list&&rawListLines.has(style.from))continue;
     const attributes:Record<string,string>={};if(style.align)attributes.style=`text-align: ${style.align}`;if(style.title)attributes.title=style.title;
-    if(style.link)attributes['data-hive-link']=style.link;
+    const reveal=style.linkReveal,sourceLink=reveal&&active.some(line=>reveal.from<=line.to&&reveal.to>line.from);
+    if(style.link&&!sourceLink)attributes['data-hive-link']=style.link;
     if(style.list)attributes.style=`--hive-list-depth: ${style.list.depth}; --hive-list-marker-width: ${style.list.width}`;
     if(style.line)ranges.push(Decoration.line({class:style.className,attributes}).range(style.from));
-    else if(style.to>style.from)ranges.push(Decoration.mark({class:style.className,attributes}).range(style.from,style.to));
+    else if(style.to>style.from)ranges.push(Decoration.mark({class:sourceLink?'cm-source-link':style.className,attributes}).range(style.from,style.to));
   }
   const marks:TableMark[]=[];state.field(annotationHighlights,false)?.between(0,state.doc.length,(from,to,decoration)=>{const id=decoration.spec.attributes?.['data-annotation-id'];if(id)marks.push({from,to,id,note:decoration.spec.attributes?.['aria-label']||'文本标注'});});
   const showProperties=state.field(frontmatterVisibilityField,false)!==false;
@@ -230,6 +239,7 @@ export const markdownDisplayTheme=EditorView.baseTheme({
   '.cm-preview-code-closing, .cm-preview-code-last:not(:has(+ .cm-preview-code-closing))':{
     '--hive-code-block-bottom':'var(--hive-code-block-edge)',borderBottomLeftRadius:'5px',borderBottomRightRadius:'5px',
   },
+  '.cm-preview-punctuation-join':{whiteSpace:'pre'},
   '.cm-preview-inline-code':{fontFamily:'Consolas, monospace',backgroundColor:'color-mix(in srgb, var(--hive-document-text) 5%, transparent)',borderRadius:'3px',padding:'1px 3px'},
   '.cm-preview-quote':{backgroundImage:'linear-gradient(var(--hive-surface-border), var(--hive-surface-border))',backgroundSize:'2px 100%',backgroundRepeat:'no-repeat',backgroundPosition:'max(0px, calc(clamp(12px, 6.4%, 50px) - 10px)) 0',color:'var(--hive-document-text, var(--text))'},
   '.cm-preview-link':{color:'var(--hive-document-text, var(--text))',textDecoration:'underline',textUnderlineOffset:'3px'},
@@ -272,7 +282,7 @@ const frontmatterVisibilityPlugin=ViewPlugin.define(view=>{
   view.dom.addEventListener('compositionstart',start,true);view.dom.addEventListener('compositionend',end,true);
   return {update(){queue.released();},destroy(){unsubscribe();queue.dispose();clearTimeout(timer);view.dom.removeEventListener('compositionstart',start,true);view.dom.removeEventListener('compositionend',end,true);}};
 });
-export const markdownDisplayExtensions:Extension=[displayModeField,previewReadOnly,frontmatterVisibilityField,frontmatterVisibilityPlugin,previewFocus,previewPointerRelease,imageContext,markdownParseState,localPreviewUpdate,detailsOpenState,imageViewSizes,markdownPreview,markdownDisplayTheme,codeBlockViewport,tableSourceSelection,tableSourceSelectionView,tableSizeHistory,tableStickyHeaders,EditorView.focusChangeEffect.of((state,focused)=>focused&&state.field(previewFocus).pointer?null:setPreviewFocus.of(focused))];
+export const markdownDisplayExtensions:Extension=[displayModeField,previewReadOnly,frontmatterVisibilityField,frontmatterVisibilityPlugin,previewFocus,previewPointerRelease,imageContext,markdownParseState,localPreviewUpdate,detailsOpenState,imageViewSizes,markdownPreview,punctuationJoins,markdownDisplayTheme,codeBlockViewport,tableSourceSelection,tableSourceSelectionView,tableSizeHistory,tableStickyHeaders,EditorView.focusChangeEffect.of((state,focused)=>focused&&state.field(previewFocus).pointer?null:setPreviewFocus.of(focused))];
 export function configureImageContext(view:EditorView,context:ImageContext|null){
   if(view.state.field(imageContext,false)===undefined)view.dispatch({effects:StateEffect.appendConfig.of(imageContext)});
   const current=view.state.field(imageContext);if(current?.file!==context?.file||current?.workspace!==context?.workspace)view.dispatch({effects:setImageContext.of(context)});
