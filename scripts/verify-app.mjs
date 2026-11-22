@@ -227,6 +227,20 @@ async function worker(){
       await wait(()=>!comparison()&&activeTabText().includes('甲稿原句'),'reject restored primary proposal');
       check('review restores original text and keeps the unsent message',composer().value==='审阅期间保留的草稿'&&activeTabText().includes('手写尾句。'));
 
+      select('甲稿原句');
+      const markView=activeDocument(),{from:markFrom,to:markTo}=markView.state.selection.main;
+      markView.dom.dispatchEvent(new CustomEvent('hive:table-annotation',{detail:{action:'mark',ranges:[{from:markFrom,to:markTo}]}}));
+      const linkedPencil=()=>get('.active-editor .annotation-bubble[title*="甲稿原句"]');
+      await wait(linkedPencil,'source annotation for the linked comparison');
+      writePrompt('把“甲稿原句”改成“关联批注的建议”');
+      await send();
+      await wait(()=>candidate()?.value==='关联批注的建议','linked polish comparison');
+      get('[data-panel-tab="'+siblingTab.dataset.panelTab+'"]').click();
+      await wait(()=>reviewButton('对话甲.md')&&linkedPencil(),'linked comparison parked in the mirrored tab');
+      linkedPencil().dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
+      await wait(()=>!reviewButton('对话甲.md')&&!linkedPencil(),'right-click cancels the matching review parked in the other copy');
+      check('annotation cancellation clears the linked comparison across two tabs without changing the body',activeDocument().state.sliceDoc().includes('甲稿原句。手写尾句。'));
+
       await menuAction('对话乙.md','在新标签页中打开');
       await wait(()=>activeTabText().includes('乙稿原句'),'open second document for proposal');
       select('乙稿原句');
