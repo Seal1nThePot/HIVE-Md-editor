@@ -30,6 +30,11 @@ function browserSetup() {
     popup: () => !!visible(popup()),
     note: () => popup()?.querySelector('textarea').value,
     exists: text => [...editor().querySelectorAll('[data-annotation-id]')].some(el => el.textContent.includes(text)),
+    idsAt: text => [...new Set([...editor().querySelectorAll('[data-annotation-id]')].filter(el => el.textContent.includes(text)).map(el => el.dataset.annotationId))],
+    selection: () => ({
+      range: editor().querySelector('.cm-content').cmTile.root.view.state.selection.main.toJSON(),
+      hidden: editor().hasAttribute('data-annotation-selection-hidden'),
+    }),
     presentation: selector => {
       const pencil = document.querySelector(selector);
       const key = pencil?.dataset.annotationKey;
@@ -206,6 +211,26 @@ async function worker(port, profile) {
       const restored = await call('presentation', firstBubble);
       check('Returning restores the same pencil, frame and open annotation draft',
         restored.pencil && restored.frame && restored.popup && restored.note === hidden.note, restored);
+      const [firstId] = await call('idsAt', 'Ctrl outside body');
+      await click(await call('blank'));
+      await drag(await call('line', 'Ctrl outside body'), ctrl);
+      const colocated = await call('idsAt', 'Ctrl outside body');
+      assert.equal(colocated.length, 2, 'Two notes should share the same visible text range');
+      assert.ok(await call('popup'), 'New co-located note did not open');
+      const selection = await call('selection');
+      await mouse('mouseMoved', await call('blank'));
+      await pause(420);
+      const hiddenSelection = await call('selection');
+      check('Pointer exit hides the drawn selection without changing the editor selection',
+        hiddenSelection.hidden && JSON.stringify(selection.range) === JSON.stringify(hiddenSelection.range), {selection, hiddenSelection});
+      await hoverLine('Ctrl outside body');
+      check('Pointer return restores the drawn selection', !(await call('selection')).hidden);
+      await click(await call('point', firstBubble), 'right');
+      check('Right-click removes only the open note when another annotation shares the same range',
+        await until(async () => JSON.stringify(await call('idsAt', 'Ctrl outside body')) === JSON.stringify([firstId])));
+      await hoverLine('Ctrl outside body');
+      await click(await call('point', firstBubble));
+      check('The other note at the same range keeps its original text', await call('note') === hidden.note);
       await click(await call('point', firstBubble), 'right');
       check('Right-click removes the targeted mark and note, leaving a neighboring annotation intact',
         await until(async () => !(await call('popup')) && !(await call('exists', 'Ctrl outside body')) && await call('exists', 'Ctrl outside blank')));
