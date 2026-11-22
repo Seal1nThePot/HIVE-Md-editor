@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const initialPreferences = ipcRenderer.sendSync('hive:preferences-read');
 let collectPreferences = () => {};
 if (initialPreferences !== null) {
-  const exact = new Set(['hive.modelPicker.recent','hive.ai.references.v1','hive.editor-status.v1','hive.editor-status.v2','hive.editor-status.v3','hive.table.sizes.v1','hive.explorer.v1','hive.annotationPreferences.v1','hive.shortcuts.v1','hive.appearance.v1','hive.theme.v1','hive.frontmatter-visible.v1','hive.typography.v1','hive.panelIconDragPreferences.v1','hive.views.v1']);
+  const exact = new Set(['hive.modelPicker.recent','hive.ai.references.v1','hive.editor-status.v1','hive.editor-status.v2','hive.editor-status.v3','hive.table.sizes.v1','hive.explorer.v1','hive.annotationPreferences.v1','hive.shortcuts.v1','hive.appearance.v1','hive.theme.v1','hive.frontmatter-visible.v1','hive.typography.v1','hive.panelIconDragPreferences.v1','hive.views.v1','hive.aiButtonLayout.v1','hive.recentRepositories.v1','hive.aiResponsePreferences.v1']);
   const allowed = key => {
     if (exact.has(key)) return true;
     if (key.length <= 4096 && ['hive.explorer.v1:', 'hive.views.v1:', 'hive.ai.references.v1:', 'hive.recentDocuments.v1:'].some(prefix => key.startsWith(prefix) && key.length > prefix.length)) return true;

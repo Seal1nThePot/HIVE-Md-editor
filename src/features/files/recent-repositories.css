@@ -1,0 +1,33 @@
+.recent-repositories-menu {
+  position: fixed;
+  z-index: 1300;
+  width: min(calc(250px * var(--ui-scale,1)),calc(100vw - 12px));
+  max-height: calc(100dvh - 64px);
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 4px;
+  background: var(--hive-popup-bg,var(--panel));
+  color: var(--hive-popup-text,var(--text));
+  border: 1px solid var(--hive-popup-border,var(--line));
+  border-radius: 6px;
+  box-shadow: 0 4px 16px #0003;
+}
+.recent-repositories-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: calc(30px * var(--ui-scale,1));
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 4px;
+  text-align: start;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.recent-repositories-menu > button:is(:hover,:focus-visible) { background: var(--gold-bg); }
+.recent-repositories-menu > button[aria-current=true] { font-weight: 600; }
+.recent-repositories-menu > button > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-repositories-menu > button > svg { flex: none; }
+.recent-repositories-menu > .recent-repositories-manage { border-top: 1px solid var(--hive-popup-border,var(--line)); border-radius: 0 0 4px 4px; margin-top: 4px; }

@@ -18,11 +18,14 @@ import ShortcutSettings from './ShortcutSettings';
 import {useWindowAnnotations} from '../annotations/windowAnnotations';
 import HistoryRetentionSettings from '../history/HistoryRetentionSettings';
 import type {HistoryLimits} from '../history/historyTypes';
+import {AIButtonLayoutSettings} from './AIButtonLayoutSettings';
+import type {useAIButtonLayout} from '../chat/aiButtonLayout';
 import './settings.css';
 
 export type SettingsSection='appearance'|'appearance-reserved'|'features'|'writing'|'models'|'shortcuts'|'about';
 type Props={panelIconDragPreferences:ReturnType<typeof usePanelIconDragPreferences>;annotationPreferences:ReturnType<typeof useAnnotationPreferences>;statusPreferences:StatusPreferences;config:Config;initialSection:SettingsSection;restoreKey:number;appearance:ReturnType<typeof useAppearance>;busy:boolean;
   historyLimits?:HistoryLimits;onSaveHistoryLimits?:(limits:HistoryLimits)=>Promise<void>;
+  aiButtonLayout:ReturnType<typeof useAIButtonLayout>;
   onProbe:(body:ModelProbeRequest,signal?:AbortSignal)=>Promise<ModelProbeResult>;onRequest:(route:string,body:unknown)=>Promise<void>;onReload:()=>Promise<void>;onClose:()=>void};
 type ServiceDraft=Omit<ModelService,'id'|'hasKey'>&{id?:string;key:string;clearKey:boolean};
 const sections=[{id:'appearance' as const,label:'界面',description:'顶部编辑栏、文字、正文排版与底部栏',Icon:LayoutPanelTop},
@@ -39,7 +42,7 @@ export default function SettingsPage(props:Props){
   return <DesktopPanel id="settings" title="设置" open><SettingsContent {...props}/></DesktopPanel>;
 }
 
-function SettingsContent({panelIconDragPreferences,annotationPreferences,statusPreferences,config,initialSection,restoreKey,appearance,busy,historyLimits,onSaveHistoryLimits,onProbe,onRequest,onReload,onClose}:Props){
+function SettingsContent({panelIconDragPreferences,annotationPreferences,statusPreferences,config,initialSection,restoreKey,appearance,busy,historyLimits,onSaveHistoryLimits,aiButtonLayout,onProbe,onRequest,onReload,onClose}:Props){
   const [section,setSection]=useState(initialSection),[search,setSearch]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const [draft,setDraft]=useState<ServiceDraft|null>(null),[modelId,setModelId]=useState(''),[modelName,setModelName]=useState(''),[filter,setFilter]=useState(''),[removeId,setRemoveId]=useState<string|null>(null),[discard,setDiscard]=useState(false);
   const [catalog,setCatalog]=useState<ModelEntry[]>([]),[catalogOpen,setCatalogOpen]=useState(false),[catalogSearch,setCatalogSearch]=useState(''),[checked,setChecked]=useState<string[]>([]),[probing,setProbing]=useState(false),[modelSettings,setModelSettings]=useState<string|null>(null),[menu,setMenu]=useState<string|null>(null),[menuPosition,setMenuPosition]=useState({left:0,top:0});
@@ -164,7 +167,7 @@ function SettingsContent({panelIconDragPreferences,annotationPreferences,statusP
       {section==='appearance-reserved'&&<ThemeSettings/>}
       {section==='features'&&<><section className="settings-card feature-settings"><h2>悬浮工具</h2><SettingRow title="显示底部悬浮工具栏" description="显示标注工具、写作模式和 AI 开关。关闭后仍可通过右上角面板按钮打开 AI。"><input className="setting-switch" aria-label="显示底部悬浮工具栏" type="checkbox" checked={appearance.appearance.floatingToolbarVisible!==false} onChange={event=>appearance.setAppearance(old=>({...old,floatingToolbarVisible:event.target.checked}))}/></SettingRow></section>
       <section className="settings-card feature-settings"><h2>面板位置</h2><SettingRow title="锁定与解锁手势" description="在面板标题栏操作。锁定后仍可打开、关闭和收纳；标签组共享位置。"><select aria-label="面板锁定手势" value={appearance.appearance.panelLockGesture||'doubleClick'} onChange={event=>appearance.setAppearance(old=>({...old,panelLockGesture:event.target.value==='longPress'?'longPress':'doubleClick'}))}><option value="doubleClick">双击标题栏</option><option value="longPress">长按标题栏（0.6 秒）</option></select></SettingRow><SettingRow title="图标拖动标识" description="长按侧栏图标拖动时，选择跟随指针的标识样式。"><select aria-label="图标拖动标识" value={panelIconDragPreferences.preferences.holdStyle} onChange={event=>panelIconDragPreferences.setPreferences(old=>({...old,holdStyle:event.target.value==='bar'?'bar':'circle'}))}><option value="circle">圆形</option><option value="bar">长条</option></select></SettingRow><SettingRow title="图标长按时间" description="设置 0.05–3 秒；短按仍然展开或收起面板。"><PanelIconDelay label="图标长按时间" value={panelIconDragPreferences.preferences.holdDelayMs} onChange={holdDelayMs=>panelIconDragPreferences.setPreferences(old=>({...old,holdDelayMs}))}/></SettingRow><SettingRow title="最短触发时间" description="设置 0.05–3 秒；实际触发时间取长按时间与最短触发时间中较大的值。"><PanelIconDelay label="最短触发时间" value={panelIconDragPreferences.preferences.minimumTriggerMs} onChange={minimumTriggerMs=>panelIconDragPreferences.setPreferences(old=>({...old,minimumTriggerMs}))}/></SettingRow>{panelIconDragPreferences.saveError&&<p role="status">{panelIconDragPreferences.saveError}</p>}</section>{appearance.saveError&&<p role="status">{appearance.saveError}</p>}</>}
-      {section==='features'&&<><AnnotationSettings {...annotationPreferences}/>{historyLimits&&onSaveHistoryLimits&&<HistoryRetentionSettings limits={historyLimits} onSave={onSaveHistoryLimits}/>}</>}
+      {section==='features'&&<><AIButtonLayoutSettings {...aiButtonLayout}/><AnnotationSettings {...annotationPreferences}/>{historyLimits&&onSaveHistoryLimits&&<HistoryRetentionSettings limits={historyLimits} onSave={onSaveHistoryLimits}/>}</>}
       {section==='writing'&&<form className="settings-card writing-settings" onSubmit={async event=>{event.preventDefault();await run('/config',{revision:config.revision,continuationLimit:Number(limit)},'写作设置已保存。');}}><h2>续写长度</h2><p>每次续写生成一个完整段落，先审阅，再决定是否采纳。</p><SettingRow title={<label htmlFor="writing-limit">续写最大字数</label>} description="允许 1–10000 个可见字符，默认 100。"><div className="settings-inline-field"><input id="writing-limit" type="number" min={1} max={10000} step={1} required value={limit} onChange={event=>setLimit(event.target.value)}/><span>字</span></div></SettingRow><small>含标点，不计空白与 Markdown 标记；超限或多段输出会阻止应用。</small><button type="submit" className="settings-primary" disabled={busy}>{busy?'保存中…':'保存写作设置'}</button></form>}
       {section==='shortcuts'&&<ShortcutSettings longPress={appearance.appearance.panelLockGesture==='longPress'}/>}
       {section==='models'&&<>

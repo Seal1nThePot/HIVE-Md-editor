@@ -65,6 +65,12 @@ async function verify(port, profile, statusPort) {
     if (reply) await wait('[...document.querySelectorAll(".messages .assistant")].at(-1)?.textContent.includes(' + value(reply) + ')', reply);
   }
   const status = async () => (await fetch('http://127.0.0.1:' + statusPort + '/state')).json();
+  async function openRepositories(){
+    await wait(visible('[aria-label="切换仓库"]'));
+    await click('[aria-label="切换仓库"]');
+    await wait(visible('.recent-repositories-manage'));
+    await click('.recent-repositories-manage');
+  }
   async function dialogClose() {
     await js(element('dialog.trash-confirm') + '.dispatchEvent(new Event("cancel",{cancelable:true}))');
     await wait('!document.querySelector("dialog.trash-confirm")');
@@ -72,8 +78,7 @@ async function verify(port, profile, statusPort) {
   try {
     cdp.attach('1.3');
     await win.loadURL('http://127.0.0.1:' + port);
-    await wait(visible('[aria-label="仓库管理"]'));
-    await click('[aria-label="仓库管理"]');
+    await openRepositories();
     await mark('repositories');
     await send('列出仓库', 'beta-repository');
     const list = await js('[...document.querySelectorAll(".messages .assistant")].at(-1).textContent');
@@ -86,7 +91,7 @@ async function verify(port, profile, statusPort) {
     check('An absolute path alone resumes and registers the original named repository', (await status()).createdRepository && !(await js(visible(chip('仓库管理')))));
 
     if (!repositoriesOnly) {
-      await click('[aria-label="仓库管理"]');
+      await openRepositories();
       await mark('files');
       await send('列出根目录', 'alpha-only.md');
       const list = await js('[...document.querySelectorAll(".messages .assistant")].at(-1).textContent');
@@ -128,7 +133,7 @@ async function verify(port, profile, statusPort) {
       const final = await status();
       check('Explicit confirm deletes only the listed items', final.selectedTrash === 0 && final.keepTrash);
 
-      await click('[aria-label="仓库管理"]');
+      await openRepositories();
       await click('[aria-label="仓库：beta-repository"] .repository-card-actions > button');
       await wait(visible('[data-path="beta-only.md"]'), 'Beta becomes the active repository');
       await mark('files');

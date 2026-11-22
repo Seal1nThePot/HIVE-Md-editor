@@ -10,7 +10,7 @@ export type HistoryPageEntry={
 };
 type Conflict={title:string;sections:HistorySection[];onConfirm:()=>void;onCancel:()=>void};
 export type HistoryPageProps={
-  activeFile:string;entries:Record<HistoryTab,HistoryPageEntry[]>;busy?:boolean;error?:string;
+  activeFile:string;entries:Record<HistoryTab,HistoryPageEntry[]>;busy?:boolean;error?:string;initialTab?:HistoryTab;
   onCreate:()=>void;onRestore:(id:string)=>void;
   onUndo:(tab:'human'|'ai',id:string)=>void;onRedo:(tab:'human'|'ai',id:string)=>void;
   conflict?:Conflict;
@@ -54,8 +54,8 @@ function ConflictDialog({conflict,busy}:{conflict:Conflict;busy:boolean}){
   </dialog>;
 }
 
-function HistoryContent({activeFile,entries,busy=false,error,onCreate,onRestore,onUndo,onRedo,conflict}:HistoryPageProps){
-  const [tab,setTab]=useState<HistoryTab>('snapshot'),[chosen,setChosen]=useState<Partial<Record<HistoryTab,string>>>({});
+function HistoryContent({activeFile,entries,busy=false,error,onCreate,onRestore,onUndo,onRedo,conflict,initialTab='snapshot'}:HistoryPageProps){
+  const [tab,setTab]=useState<HistoryTab>(initialTab),[chosen,setChosen]=useState<Partial<Record<HistoryTab,string>>>({});
   const [drillDown,setDrillDown]=useState(false);
   const id=useId(),list=useRef<HTMLUListElement>(null),detail=useRef<HTMLElement>(null);
   const items=entries[tab],selected=items.find(item=>item.id===chosen[tab])??items[0];

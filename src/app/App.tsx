@@ -20,7 +20,7 @@ import {PanelFrame,PanelControls,emptyPanelFooter,type PanelChrome} from '../fea
 import {AppHeader} from './AppHeader';
 import {WindowAnnotationProvider,useWindowAnnotations,useWindowAnnotationGesture,type WindowMark} from '../features/annotations/windowAnnotations';
 import {useAnnotationActions} from '../features/annotations/useAnnotationActions';
-import HistoryPage,{type HistoryPageProps} from '../features/history/HistoryPage';
+import HistoryPage,{type HistoryPageProps,type HistoryTab} from '../features/history/HistoryPage';
 import {historyTextChanges,historyTextPatch,planHistoryText} from '../features/history/historyText';
 import type {HistoryActor,HistoryOutline,HistoryRecord,HistorySection} from '../features/history/historyTypes';
 import {useHistoryJournal} from '../features/history/useHistoryJournal';
@@ -104,6 +104,8 @@ import {CHAPTER_DRAG_TYPE,appendDraftContext,chapterForQuickAI,readChapterDrag,t
 import type {DragEvent as ReactDragEvent} from 'react';
 import {useModelReasoning} from '../features/chat/modelReasoning';
 import ChatComposer from "../features/chat/ChatComposer";
+import {ChatActionStrip} from '../features/chat/ChatActionStrip';
+import {useAIButtonLayout,type AIButtonId,type AIButtonRegion} from '../features/chat/aiButtonLayout';
 import {ChatAttachmentList} from '../features/chat/ChatAttachmentList';
 import {appendChatAttachments,type ChatAttachment} from '../features/chat/chatAttachments';
 import {chatPromptSetter,consumeChatDraft,forkChatReply,hasChatDraft,newConversation,recoverChatDraft,restoreParkedDraft,retractChatReply,withoutRetriedPrompt,type ChatDraft,type Conversation} from '../features/chat/chatConversations';
@@ -186,6 +188,7 @@ function WritingApp() {
   const appearanceSettings=useAppearance();
   const annotationPreferences=useAnnotationPreferences();
   const panelIconDragPreferences=usePanelIconDragPreferences();
+  const aiButtonLayout=useAIButtonLayout();
   const workspace = usePanelWorkspace(workbenchRef, id => {if(sessions.current.has(id))activateEditor(id);},28*appearanceSettings.appearance.uiScale/100,appearanceSettings.appearance.panelLockGesture);
   const sessions = useRef(new Map<string, EditorSession>([["editor", {id:"editor",disk:null,state:null,view:null,dirty:false,landing:true}]]));
   const [recentOpen,setRecentOpen]=useState(false),[newNoteBusy,setNewNoteBusy]=useState(false),[renameRequest,setRenameRequest]=useState<{path:string;key:string}>();
@@ -273,6 +276,7 @@ function WritingApp() {
   const annotationOwners=new Map<string,Document>([['',document]]);
   for(const [id,popup] of desktopPanels.windows)annotationOwners.set(desktopPanels.owner(id),popup.document);
   const [historyOpen,setHistoryOpen]=useState(false),[historyBusy,setHistoryBusy]=useState(false),[historyError,setHistoryError]=useState('');
+  const [historyLaunch,setHistoryLaunch]=useState<{tab:HistoryTab;version:number}>({tab:'snapshot',version:0});
   const [historyConflict,setHistoryConflict]=useState<HistoryPageProps['conflict']>();
   const historyRunning=useRef(false);
   const [trashDeleteRequest,setTrashDeleteRequest]=useState<import('../features/files/TrashPanel').TrashConfirmationRequest|null>(null);
@@ -281,10 +285,12 @@ function WritingApp() {
     setInlineRequest(current => current?.nonce === request.nonce ? null : current);
   }, []);
   const [conversationId,setConversationId]=useState<string>(uid);
+  const [chatManagerOpen,setChatManagerOpen]=useState(false);
   const [conversations,setConversations]=useState(()=>[newConversation(conversationId,'对话 1')]);
   const conversation=conversations.find(chat=>chat.id===conversationId)!;
   const {draft,messages,lastRequest}=conversation, prompt=draft.text;
   const hasUnsentDraft=conversations.some(chat=>hasChatDraft(chat.draft)||chat.parked.some(hasChatDraft));
+  const unsentDraft=useRef(hasUnsentDraft);unsentDraft.current=hasUnsentDraft;
   const updateChat=(id:string,update:(chat:Conversation)=>Conversation)=>setConversations(chats=>chats.map(chat=>chat.id===id?update(chat):chat));
   const updateConversation=(update:(chat:Conversation)=>Conversation)=>updateChat(conversationId,update);
   const setPrompt=chatPromptSetter(updateConversation);
@@ -540,9 +546,21 @@ function WritingApp() {
     setSelection(range&&next.state?{from:range.from,to:range.to,text:next.state.sliceDoc(range.from,range.to)}:{from:0,to:0,text:""});
     setInlineRequest(null);setScratchReady(value=>value+1);setError("");
   }
-  function showHistory(){
+  function showHistory(tab:HistoryTab='snapshot'){
+    if(historyRunning.current)return;
     humanHistory.flushAll();
+    setHistoryLaunch(previous=>({tab,version:previous.version+1}));
+    if(desktopPanels.enabled&&!document.hasFocus())window.hiveDesktop?.windowCommand('focus');
     setHistoryError('');setHistoryOpen(true);void history.read();
+  }
+  function runChatAction(id:AIButtonId){
+    if(id==='sessions')setChatManagerOpen(open=>!open);
+    else if(id==='references')workspace.reveal('basis');
+    else showHistory('ai');
+  }
+  function chatActions(region:AIButtonRegion){
+    return <ChatActionStrip region={region} items={aiButtonLayout.layout[region]}
+      sessionsOpen={chatManagerOpen} sessionLabel={conversation.label} onAction={runChatAction}/>;
   }
   function closeHistory(){if(!historyRunning.current){setHistoryConflict(undefined);setHistoryOpen(false);}}
   async function historyTask(run:()=>Promise<void>){
@@ -760,7 +778,7 @@ function WritingApp() {
   }
 
   const { refresh, openFile, safeSwitch, openSaveAs, save, openBlankTab, createQuickNote, openExplorerFile, manageFile, preflightFileActions, reloadFromDisk, switchWorkspace, submitDialog, importFile } = useFileActions({
-    api, appAlive, promptRef, dialogRef, uid, workspace, sessions, activeSession, activeTextSource,
+    api, appAlive, promptRef, hasUnsentChatDraft:()=>unsentDraft.current, dialogRef, uid, workspace, sessions, activeSession, activeTextSource,
     proposal, undo, prompt, dialog, running, requestAnchor, structuring, switching, viewApplying,
     creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,
     onApplied:(action,result,actor)=>{
@@ -1290,6 +1308,7 @@ function WritingApp() {
     if(!chat)return;
     setConversations(chats=>[...chats,chat]);
     setConversationId(chat.id);
+    setChatManagerOpen(true);
   }
 
   function retractReply(replyId:string) {
@@ -1492,7 +1511,7 @@ function WritingApp() {
   return (
     <div className="app-shell" data-revision={tick}>
       <AppHeader
-        workspace={workspace} openChat={openChat} openSettings={openSettings} openHistory={showHistory}
+        workspace={workspace} openChat={openChat} openSettings={openSettings} openHistory={showHistory} switchRepository={switchWorkspace}
         save={save} fileWorkspace={fileWorkspace} config={config}
         file={file} fileBusy={fileBusy} openingFile={fileActivity==='opening'} chatOpen={chatOpen} leftOpen={leftOpen} setError={setError} setHelp={setHelp}/>
       <Ribbon visible={appearanceSettings.appearance.ribbonVisible} collapsed={appearanceSettings.appearance.ribbonCollapsed}
@@ -1632,20 +1651,14 @@ function WritingApp() {
               {conversationHasNativeTabs&&<WritingModeControl mode={mode} onMode={chooseMode}/>}
               <Icon name="file.text" size={13}/>
               <span aria-label="AI 操作目标" title={displayedTarget.file}>{displayedTarget.label}</span>
-              <button
-                className="chat-basis-button"
-                aria-label="查看依据"
-                title="查看 AI 实际输入"
-                onClick={() => workspace.open('basis')}
-              >
-                <Icon name="conversation.viewBasis" size={16}/>
-              </button>
             </div>
-            {conversations.length>1&&<div className="chat-session-switcher">
+            {chatManagerOpen&&<div className="chat-session-switcher" role="region" aria-label="会话管理">
               <select aria-label="切换聊天" value={conversationId} onChange={event=>setConversationId(event.target.value)}>
                 {conversations.map(chat=><option key={chat.id} value={chat.id}>{chat.label}{activeRun?.chatId===chat.id?' · 回复中':''}</option>)}
               </select>
             </div>}
+            <div className="chat-action-layout">
+            {chatActions('left')}
             <div className="conversation-view">
               <div className="messages">
                 {messages.filter(message=>message.id!=="welcome"&&message.role!=="system").map((message) => (
@@ -1692,7 +1705,9 @@ function WritingApp() {
                   config={config} modelBusy={configBusy} reasoningEffort={reasoning.effort} onReasoningChange={reasoning.setEffort} onModelChange={choice=>void selectChatModel(choice)}/>{reasoning.saveError&&<p role="status">{reasoning.saveError}</p>}
               </div>
             </div>
-            {emptyPanelFooter("对话")}
+            {chatActions('right')}
+            </div>
+            {aiButtonLayout.layout.bottom.length?chatActions('bottom'):emptyPanelFooter("对话")}
             {rightPanel.handles}
           </aside></DesktopPanel>
         <PanelFrame chrome={chrome} id="repositories" title="仓库管理" className="repositories-workspace">{workspace.isOpen('repositories')&&<RepositoryPanel onSwitch={switchWorkspace} onReturn={()=>workspace.close('repositories')}/>}</PanelFrame>
@@ -1819,7 +1834,7 @@ function WritingApp() {
       {historyOpen&&<dialog className="history-host" aria-label="历史记录" ref={node=>{if(node&&!node.open)node.showModal();}}
         onCancel={event=>{if(event.target!==event.currentTarget)return;event.preventDefault();closeHistory();}}>
         <button type="button" className="icon-button history-close" aria-label="关闭历史记录" disabled={historyBusy} onClick={closeHistory}><X size={17}/></button>
-        <HistoryPage activeFile={currentSession?.disk?.path||''} busy={historyBusy} error={historyError||history.error}
+        <HistoryPage key={historyLaunch.version} initialTab={historyLaunch.tab} activeFile={currentSession?.disk?.path||''} busy={historyBusy} error={historyError||history.error}
           entries={{snapshot:history.summary.snapshots.filter(entry=>entry.file===currentSession?.disk?.path).map(entry=>({...entry,restorable:true})),
             human:history.summary.entries.filter(entry=>entry.actor==='human').map(entry=>({...entry,undoable:entry.reversible&&entry.status==='applied',redoable:entry.reversible&&entry.status==='reverted'})),
             ai:history.summary.entries.filter(entry=>entry.actor==='ai').map(entry=>({...entry,undoable:entry.reversible&&entry.status==='applied',redoable:entry.reversible&&entry.status==='reverted'}))}}
@@ -1828,7 +1843,7 @@ function WritingApp() {
           onUndo={(actor,id)=>void historyTask(()=>replayHistory(actor,id,true))}
           onRedo={(actor,id)=>void historyTask(()=>replayHistory(actor,id,false))} conflict={historyConflict}/>
       </dialog>}
-      {settings && <SettingsPage panelIconDragPreferences={panelIconDragPreferences} annotationPreferences={annotationPreferences} config={config} initialSection={settingsSection} restoreKey={settingsRestoreKey} appearance={appearanceSettings} statusPreferences={statusPreferences} busy={configBusy}
+      {settings && <SettingsPage panelIconDragPreferences={panelIconDragPreferences} annotationPreferences={annotationPreferences} aiButtonLayout={aiButtonLayout} config={config} initialSection={settingsSection} restoreKey={settingsRestoreKey} appearance={appearanceSettings} statusPreferences={statusPreferences} busy={configBusy}
         historyLimits={history.summary.limits} onSaveHistoryLimits={async limits=>{humanHistory.flushAll();await history.setLimits(limits);}}
         onRequest={updateSettings} onProbe={(body:ModelProbeRequest,signal?:AbortSignal)=>requestApi<ModelProbeResult>(request,'/model-services/probe',body,signal)}
         onReload={async()=>{const next=await api<Config>('/config');setConfig(current=>next.revision>=current.revision?next:current);}} onClose={()=>setSettings(false)}/>}

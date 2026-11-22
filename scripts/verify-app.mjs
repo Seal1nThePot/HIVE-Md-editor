@@ -151,7 +151,8 @@ async function worker(){
       await wait(()=>!get('dialog.child-window-custom-color-settings'),'close custom color child');
       check('closing custom colors returns to the appearance settings',!!get('.theme-current-scheme'));
       get('[aria-label="关闭设置"]').click();await pause();
-      get('[aria-label="仓库管理"]').click();await wait(()=>get('.repository-card'),'repository manager');check('shared repository manager is integrated',!!get('.repository-current')&&!!get('.repository-rename')&&!get('.repository-auto-save'));
+      get('[aria-label="切换仓库"]').click();await wait(()=>get('.recent-repositories-manage'),'recent repository menu');
+      get('.recent-repositories-manage').click();await wait(()=>get('.repository-card'),'repository manager');check('shared repository manager is integrated',!!get('.repository-current')&&!!get('.repository-rename')&&!get('.repository-auto-save'));
       [...get('.repository-card-actions').querySelectorAll('button')].find(b=>b.textContent.includes('返回写作')).click();await pause();
       const build=await(await fetch('/build-info.json')).json();check('current build metadata is present',build.version===${JSON.stringify(pkg.version)}&&!!build.buildNumber);
       const menuAction=async(path,text)=>{const row=get('.explorer-row[data-path="'+path+'"]');if(!row)throw Error('Missing file '+path);row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:110,clientY:240}));await wait(()=>get('.explorer-menu'),'file menu');const button=[...get('.explorer-menu').querySelectorAll('button')].find(b=>b.textContent.includes(text));if(!button)throw Error('Missing menu '+text);button.click();await pause();};

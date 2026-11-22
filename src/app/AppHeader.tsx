@@ -3,7 +3,7 @@ import {shortcutLabel} from '../features/settings/shortcuts';
 import { ChevronDown, CircleHelp, Icon, Lock, LockOpen, Save, Settings2, Minus, Square, X } from "../shared/icons";
 import type { PanelWorkspaceApi } from '../features/workspace/PanelFrame';
 import type { useFileWorkspace } from '../features/files/WorkspaceContext';
-import {repositoryLabel} from '../features/files/WorkspaceContext';
+import RecentRepositoryMenu from '../features/files/RecentRepositoryMenu';
 import PanelSwitcher, { type PanelCategory } from '../features/workspace/PanelSwitcher';
 import { activeModelLabel, type Config } from '../features/settings/modelConfig';
 import type { SettingsSection } from '../features/settings/SettingsPage';
@@ -14,6 +14,7 @@ type AppHeaderProps = {
     openChat: (tab?: 'conversation' | 'annotations') => void;
     openSettings: (section?: SettingsSection) => void;
     openHistory: () => void;
+    switchRepository:(root:string)=>Promise<void>;
     save: () => Promise<void>;
     fileWorkspace: ReturnType<typeof useFileWorkspace>;
     config: Config;
@@ -27,7 +28,7 @@ type AppHeaderProps = {
 };
 
 /** 顶栏：写作空间、保存/自动保存、帮助、模型、面板切换器、锁定/设置。 */
-export function AppHeader({ workspace, openChat, openSettings, openHistory, save, fileWorkspace, config, file, fileBusy, openingFile, chatOpen, leftOpen, setError, setHelp }: AppHeaderProps) {
+export function AppHeader({ workspace, openChat, openSettings, openHistory, switchRepository, save, fileWorkspace, config, file, fileBusy, openingFile, chatOpen, leftOpen, setError, setHelp }: AppHeaderProps) {
     const desktop=useDesktopPanels(),{bindings}=useShortcutPreferences();
     const modelLabel=activeModelLabel(config);
     return (
@@ -35,25 +36,14 @@ export function AppHeader({ workspace, openChat, openSettings, openHistory, save
           onDoubleClick={event=>{if(desktop.enabled&&!(event.target as Element).closest('button,input,label,a,select,[data-no-drag]'))window.hiveDesktop?.windowCommand('maximize');}}>
         <div className="header-workspace">
         <div className="user-avatar" aria-label="用户头像">我</div>
-        <button
-          className="workspace-switcher"
-          title={`仓库管理 · ${fileWorkspace.info.root}`}
-          aria-label="仓库管理"
-          onClick={() => {
-            workspace.open('repositories');
-          }}
-        >
-          <Icon name="panel.repositories" className="workspace-switcher-icon" />
-          <b>{repositoryLabel(fileWorkspace.info.repositories.find(item=>item.id===fileWorkspace.info.id)||fileWorkspace.info)}</b>
-          <ChevronDown className="workspace-switcher-chevron" aria-hidden="true" />
-        </button>
+        <RecentRepositoryMenu info={fileWorkspace.info} onSwitch={switchRepository} onManage={()=>workspace.reveal('repositories')} onError={setError}/>
         <div className="quick-file-actions" aria-label="文档保存与帮助操作">
           <div className="save-with-autosave">
             <button type="button" className="header-save-button" aria-label="保存正文" title={`保存 · ${shortcutLabel(bindings,'save')}`} disabled={!file||fileBusy} data-opening-file={file&&openingFile||undefined} onClick={()=>void save()}><Save size={16}/></button>
             <label className="auto-save-toggle" data-no-drag title={fileWorkspace.info.autoSave?'自动保存已开启 · 点击关闭':'自动保存已关闭 · 点击开启'}><input type="checkbox" role="switch" aria-label="自动保存正文" checked={fileWorkspace.info.autoSave} onChange={event=>void fileWorkspace.update({autoSave:event.target.checked}).catch(error=>setError(error.message))}/></label>
           </div>
           <button type="button" className="header-help" aria-label="使用指南" title="使用指南" onClick={() => setHelp(true)}><CircleHelp size={17}/></button>
-          <button type="button" className="header-help" aria-label="历史记录" title="历史记录" onClick={openHistory}><Icon name="history.open" size={17}/></button>
+          <button type="button" className="header-help" aria-label="历史记录" title="历史记录" onClick={()=>openHistory()}><Icon name="history.open" size={17}/></button>
         </div>
         </div>
         <div className="header-right"><div className="header-actions">

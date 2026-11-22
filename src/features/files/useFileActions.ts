@@ -25,6 +25,7 @@ type FileActionsOptions = {
     api: ApiClient;
     appAlive?:RefObject<boolean>;
     promptRef?:RefObject<HTMLTextAreaElement|null>;
+    hasUnsentChatDraft?:()=>boolean;
     dialogRef?:RefObject<Dialog|null>;
     uid: () => string;
     workspace: PanelWorkspaceApi;
@@ -376,8 +377,11 @@ export function useFileActions(options: FileActionsOptions) {
             return;
         switching.current = true;
         try {
-            if ((options.promptRef?.current?.value||prompt).trim()||[...sessions.current.values()].some(session=>proposalFor(session.id)))
-                throw new Error('请先处理未发送的消息和待审建议，再切换写作空间。');
+            const checkDrafts=()=>{
+                if (options.hasUnsentChatDraft?.()||(options.promptRef?.current?.value||prompt).trim()||[...sessions.current.values()].some(session=>proposalFor(session.id)))
+                    throw new Error('请先处理未发送的消息和待审建议，再切换写作空间。');
+            };
+            checkDrafts();
             if (running.current)
                 throw new Error('请先停止当前 AI 生成，再切换写作空间。');
             if (savingPaths.current.size)
@@ -386,6 +390,7 @@ export function useFileActions(options: FileActionsOptions) {
             for (const session of sessions.current.values())
                 if (session.dirty && !await saveSession(session.id, true))
                     throw new Error('有文件未能保存，请先处理冲突或另存副本，再切换文件夹。');
+            checkDrafts();
             await fileWorkspace.update({ root });
         }
         finally {

@@ -1,0 +1,30 @@
+.chat-panel .chat-action-layout { display: flex; min-width: 0; min-height: 140px; flex: 1 0 140px; }
+.chat-panel .chat-action-layout .conversation-view { flex: 1; min-width: 0; min-height: 0; }
+.chat-action-strip {
+  display: flex;
+  gap: 3px;
+  flex: none;
+  padding: 3px;
+}
+.chat-action-strip:is([data-chat-action-region=left],[data-chat-action-region=right]) {
+  flex-direction: column;
+  align-items: center;
+  padding-top: 5px;
+}
+.chat-action-strip[data-chat-action-region=left] { border-inline-end: 1px solid var(--line); }
+.chat-action-strip[data-chat-action-region=right] { border-inline-start: 1px solid var(--line); }
+.chat-action-strip[data-chat-action-region=bottom] { border-top: 1px solid var(--line); }
+.chat-action-strip > button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: calc(27px * var(--ui-scale,1));
+  height: calc(27px * var(--ui-scale,1));
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--hive-panel-text,var(--text));
+}
+.chat-action-strip > button:is(:hover,[aria-expanded=true]) { background: var(--gold-bg); }
+.chat-action-strip > button:focus-visible { outline: 2px solid var(--hive-accent); }

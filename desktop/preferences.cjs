@@ -1,7 +1,7 @@
 const { promises: fs } = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const exact = new Set(['hive.modelPicker.recent','hive.ai.references.v1','hive.editor-status.v1','hive.editor-status.v2','hive.editor-status.v3','hive.table.sizes.v1','hive.explorer.v1','hive.annotationPreferences.v1','hive.shortcuts.v1','hive.appearance.v1','hive.theme.v1','hive.frontmatter-visible.v1','hive.typography.v1','hive.panelIconDragPreferences.v1','hive.views.v1']);
+const exact = new Set(['hive.modelPicker.recent','hive.ai.references.v1','hive.editor-status.v1','hive.editor-status.v2','hive.editor-status.v3','hive.table.sizes.v1','hive.explorer.v1','hive.annotationPreferences.v1','hive.shortcuts.v1','hive.appearance.v1','hive.theme.v1','hive.frontmatter-visible.v1','hive.typography.v1','hive.panelIconDragPreferences.v1','hive.views.v1','hive.aiButtonLayout.v1','hive.recentRepositories.v1','hive.aiResponsePreferences.v1']);
 function allowed(key) {
   if (typeof key !== 'string') return false;
   if (exact.has(key)) return true;
