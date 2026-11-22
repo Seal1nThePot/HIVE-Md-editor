@@ -106,8 +106,8 @@ export default function InlineAnnotationEditor({
     setShown(null);
     if (request) onDismiss?.(request);
   }, [request, onDismiss]);
-  const [hovered, setHovered] = useState<string|null>(null);
   const [hoverIds,setHoverIds]=useState<string[]>([]);
+  const hovered=hoverIds[0]??null;
   const bubblesRef=useRef<AnnotationBubble[]>([]);
   const [bubblePosition, setBubblePosition] = useState({x:0,y:0});
   const hoverTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -116,10 +116,10 @@ export default function InlineAnnotationEditor({
   const outlined=useRef<HTMLElement[]>([]);
   const clearOutline=()=>{for(const cell of outlined.current)cell.classList.remove('cm-table-annotation-top','cm-table-annotation-right','cm-table-annotation-bottom','cm-table-annotation-left');outlined.current=[];};
   useEffect(()=>()=>clearOutline(),[]);
-  useEffect(()=>{setChoices([]);if(toolActive){setHovered(null);setShown(null);clearOutline();}},[toolActive]);
+  useEffect(()=>{setChoices([]);if(toolActive){setVisibleIds([]);setShown(null);clearOutline();}},[toolActive]);
   function setVisibleIds(ids:string[]){
+    if(ids.length&&hoverTimer.current){clearTimeout(hoverTimer.current);hoverTimer.current=null;}
     setHoverIds(current=>current.length===ids.length&&current.every((id,index)=>id===ids[index])?current:ids);
-    setHovered(ids[0]??null);
   }
   useEffect(()=>{if(request){const ids=request.ids?.length?request.ids:[request.id];if(ids.length>1)for(const id of ids)groups.current.set(id,ids);setVisibleIds(ids);setShown({id:request.id,ids,pinned:true,focus:request.focus !== false});}else setShown(null);},[request]);
   useEffect(()=>{
@@ -281,7 +281,10 @@ export default function InlineAnnotationEditor({
     else clearOutline();
   }
   useLayoutEffect(()=>{measureBubble();});
-  useEffect(()=>{if(hovered&&!items.some(value=>value.id===hovered))setHovered(null);if(shown&&!items.some(value=>value.id===shown.id))setShown(null);},[items,hovered,shown]);
+  useEffect(()=>{
+    if(hoverIds.some(id=>!items.some(item=>item.id===id)))setVisibleIds(hoverIds.filter(id=>items.some(item=>item.id===id)));
+    if(shown&&!items.some(value=>value.id===shown.id))setShown(null);
+  },[items,hoverIds,shown]);
   useEffect(()=>{window.addEventListener('scroll',measureBubble,true);window.addEventListener('resize',measureBubble);return()=>{window.removeEventListener('scroll',measureBubble,true);window.removeEventListener('resize',measureBubble);};},[bubbleItem,bubblePlacement]);
   function openBubble(id:string){
     const bubbleItem=items.find(item=>item.id===id);if(!bubbleItem)return;

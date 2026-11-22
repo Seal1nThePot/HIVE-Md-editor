@@ -88,7 +88,11 @@ async function worker(port, profile) {
     webPreferences: {offscreen: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false},
   });
   const cdp = win.webContents.debugger;
-  const evaluate = expression => win.webContents.executeJavaScript(expression);
+  const evaluate = async expression => {
+    const result = await win.webContents.executeJavaScript(`Promise.resolve().then(() => (${expression})).then(value => ({ value }), error => ({ error: String(error.stack || error) }))`);
+    if (result.error) throw new Error(result.error);
+    return result.value;
+  };
   const call = (name, ...args) => evaluate('annotationTest.' + name + '(' + args.map(arg => JSON.stringify(arg)).join(',') + ')');
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const evidence = [];
