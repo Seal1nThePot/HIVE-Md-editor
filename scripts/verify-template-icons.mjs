@@ -14,7 +14,13 @@ const packaged=process.argv.includes('--package');
 const bundle=path.resolve(process.env.HIVE_VERIFY_BUNDLE||path.join(project,'release'));
 const runtime=packaged?path.join(bundle,'win-unpacked/resources/app.asar'):project;
 const mode=packaged?'packaged':'source';
+const upgrade=process.argv.includes('--upgrade');
+const restart=process.argv.includes('--restart-check');
+const report=mode+(upgrade?'-upgrade':'')+(restart?'-restart':'');
 const olive='claude-olive-gold',blue='hive-mediterranean-blue-study';
+const retired='claude-mediterranean-blue',personal='my-template';
+const retiredIds=['olive-gold','mediterranean-blue',retired,'hive-moss-gold-study'];
+const themeKey='hive.theme.v1';
 const historyButton='button[aria-label="历史记录"]';
 const historyIcon=historyButton+' svg[data-hive-icon="history.open"]';
 const annotationButton='.global-toolbar-native .dock-annotation-button';
@@ -30,6 +36,8 @@ const override=n=>({viewBox:'0 0 24 24',shapes:[{tag:'path',attrs:{d:trace(n),st
 const firstPath=icon=>icon.shapes.find(shape=>shape.tag==='path').attrs.d;
 const writePack=(file,icons)=>fs.writeFile(file,JSON.stringify({version:1,icons}));
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const storedPalette=async fixture=>JSON.parse(await fs.readFile(path.join(fixture,'ui-preferences.json'),'utf8'))[themeKey];
+const archivedPalette = value=>value.legacyTemplateSettings?.[retired];
 
 async function waitFor(check,label){
   const until=Date.now()+8000;
@@ -44,7 +52,7 @@ async function worker(fixture){
   process.env.HIVE_API_KEY='';
   app.setPath('userData',fixture);
   app.disableHardwareAcceleration();
-  const evidence={mode,checkedAt:new Date().toISOString(),checks:[]};
+  const evidence={mode,fixture:upgrade?'known historic templates':'fresh desktop profile',checkedAt:new Date().toISOString(),checks:[]};
   const held=[];
   let main,attemptedPresentation=false,allowIcons=false;
   const releaseIcons=()=>{allowIcons=true;for(const callback of held.splice(0))callback({});};
@@ -68,6 +76,22 @@ async function worker(fixture){
   try{
     await import(pathToFileURL(path.join(runtime,'desktop/main.mjs')).href);
     const run=(window,expression)=>window.webContents.executeJavaScript(expression);
+    const readSelection=()=>run(main,`JSON.parse(localStorage.getItem(${JSON.stringify(themeKey)})||'{}')`);
+    if(restart){
+      const value=await waitFor(async()=>{
+        if(!main?.webContents.getURL().startsWith('http://127.0.0.1:'))return false;
+        const value=await readSelection();
+        return value.templateId===blue&&value.templateBinding?.name==='地中海蓝'&&value;
+      },'the retained selection after reopening the same desktop profile');
+      assert.equal(archivedPalette(value)?.preferences.customBase,'#123abc');
+      assert.equal(archivedPalette(value)?.defaultScheme.customBase,'#456def');
+      assert.equal(value.templateUsers['olive-gold'].changes.customBase,'#254768');
+      const bytes=Buffer.byteLength(await storedPalette(fixture),'utf8');
+      assert.ok(bytes<=131072);
+      record('restart restores the retained selection and the prior archived palette from desktop storage',{bytes});
+      await fs.writeFile(path.join(fixture,'result.json'),JSON.stringify({...evidence,passed:true},null,2)+'\n');
+      return;
+    }
     const exists=(window,selector)=>run(window,`!!document.querySelector(${JSON.stringify(selector)})`);
     const getPath=(window,selector)=>run(window,`document.querySelector(${JSON.stringify(selector+' path')})?.getAttribute('d')`);
     const click=(window,selector)=>run(window,`document.querySelector(${JSON.stringify(selector)}).click()`);
@@ -117,8 +141,35 @@ async function worker(fixture){
     const initial=await get(route);
     const blueName=initial.template.name;
     await waitFor(()=>exists(settings,management),'template management');
-    const switchToBlue=`[...document.querySelectorAll('${management} .setting-row')].find(row=>row.querySelector('.setting-row-title')?.textContent===${JSON.stringify(blueName)}).querySelector('button').click()`;
-    await run(settings,switchToBlue);
+    const titles=await run(settings,`[...document.querySelectorAll('${management} .setting-row-title')].map(node=>node.textContent)`);
+    const expected=[[olive,'青苔鎏金'],[blue,'地中海蓝'],...(upgrade?[[personal,'我的模板']]:[])];
+    const catalog=await get('/api/templates');
+    assert.deepEqual(catalog.templates.map(({id,name})=>[id,name]).sort(),expected.sort());
+    assert.deepEqual(titles.slice(-expected.length).sort(),expected.map(([,name])=>name).sort());
+    record('the catalog API and settings show only the two starter variants plus personal templates',expected);
+    assert.equal((await readSelection()).templateId,olive);
+    record('the desktop selects the retained olive starter on launch',olive);
+    const selectTemplate=(name)=>run(settings,`[...document.querySelectorAll('${management} .setting-row')].find(row=>row.querySelector('.setting-row-title')?.textContent===${JSON.stringify(name)}).querySelector('button').click()`);
+    if(upgrade){
+      const saved=await waitFor(async()=>{
+        const value=JSON.parse(await storedPalette(fixture));
+        return value.templateId===olive&&archivedPalette(value)&&value;
+      },'the preserved prior palette in the desktop preferences file');
+      assert.equal(archivedPalette(saved).preferences.customBase,'#123abc');
+      assert.equal(archivedPalette(saved).defaultScheme.customBase,'#456def');
+      assert.equal(saved.templateUsers['olive-gold'].changes.customBase,'#254768');
+      const bytes=Buffer.byteLength(await storedPalette(fixture),'utf8');
+      assert.ok(bytes<=131072);
+      assert.ok((await Promise.all(retiredIds.map(id=>fs.stat(path.join(fixture,'templates',id,'template.json'))))).every(stat=>stat.isFile()));
+      record('the archived palette, saved default and historic folders remain in the desktop profile',{retiredIds,bytes});
+      await selectTemplate('我的模板');
+      await waitFor(async()=>{const value=await readSelection();return value.templateId===personal&&value.customBase==='#384759';},'the personal template and its palette');
+      record('the personal template still applies with its own authored palette',personal);
+      await selectTemplate('青苔鎏金');
+      await waitFor(async()=>(await readSelection()).templateId===olive,'select the retained olive template');
+    }
+    const switchToBlue=()=>selectTemplate(blueName);
+    await switchToBlue();
     await waitPath(main,historyIcon,trace(12),'template selection updates the mounted history glyph');
     await waitPath(toolbar,annotationIcon,trace(13),'template selection updates the native annotation toolbar glyph');
     await waitPath(settings,searchIcon,trace(8),'missing template key uses the external root pack');
@@ -153,6 +204,12 @@ async function worker(fixture){
     await fs.unlink(blueFile);
     await waitPath(main,historyIcon,fallback,'deleted file restores the bundled glyph');
     assert.equal((await get(route)).iconPack.warning,'');
+    await selectTemplate('青苔鎏金');
+    await waitFor(async()=>(await readSelection()).templateId===olive,'reselect the retained olive template');
+    await switchToBlue();
+    await waitFor(async()=>(await readSelection()).templateId===blue,'reselect the retained blue template');
+    await waitFor(async()=>JSON.parse(await storedPalette(fixture)).templateId===blue,'the selected blue template reaches desktop storage');
+    record('both retained template settings are independently selectable',expected.slice(0,2));
     await run(settings,`setTimeout(()=>document.querySelector('button[aria-label="关闭设置"]').click(),30); true`);
     await waitFor(()=>settings.isDestroyed(),'the settings window closes');
     await click(main,checkedTask);
@@ -168,7 +225,7 @@ async function worker(fixture){
     assert.ok(BrowserWindow.getAllWindows().every(window=>!window.isVisible()));
     const screenshot=await main.capturePage(undefined,{stayHidden:true});
     assert.ok(!screenshot.isEmpty());
-    await fs.writeFile(path.join(output,`template-icons-${mode}.png`),screenshot.toPNG());
+    await fs.writeFile(path.join(output,`template-icons-${report}.png`),screenshot.toPNG());
     await fs.writeFile(path.join(fixture,'result.json'),JSON.stringify({...evidence,passed:true},null,2)+'\n');
   }finally{
     releaseIcons();
@@ -176,11 +233,40 @@ async function worker(fixture){
   }
 }
 
+async function seedUpgrade(fixture){
+  const runtime=path.join(fixture,'templates'),builtIn=path.join(project,'templates');
+  await fs.mkdir(runtime);
+  for(const entry of await fs.readdir(builtIn,{withFileTypes:true})){
+    if(entry.isDirectory())await fs.cp(path.join(builtIn,entry.name),path.join(runtime,entry.name),{recursive:true});
+  }
+  const read=async id=>JSON.parse(await fs.readFile(path.join(runtime,id,'template.json'),'utf8'));
+  const write=(id,metadata)=>fs.writeFile(path.join(runtime,id,'template.json'),JSON.stringify(metadata));
+  await write(olive,{...await read(olive),name:'青苔鎏金 · Claude'});
+  await write(blue,{...await read(blue),name:'地中海蓝 · 海蓝选区'});
+  const oldColors=JSON.parse(await fs.readFile(path.join(runtime,retired,'colors.json'),'utf8'));
+  const prior=[
+    ['olive-gold','青苔鎏金','低饱和青苔绿与灰金，包含黑、浅灰、白三档配色。',['black','gray','white']],
+    ['mediterranean-blue','地中海蓝','包含深色方案与浅色方案；R6 浅色外围略加中性灰，中央正文保持纯白，深色沿用 R5；1px 分层细描边、AI 白星与冰蓝悬停；black 对应深色，white 对应浅色。',['black','white']],
+    [personal,'我的模板','用户自建调色模板',['black','gray','white']],
+  ];
+  for(const [id,name,description,bases] of prior){
+    await fs.mkdir(path.join(runtime,id));
+    await write(id,{version:1,id,name,description,bases,colorsFile:'colors.json'});
+    await fs.writeFile(path.join(runtime,id,'colors.json'),JSON.stringify({...oldColors,customBase:'#384759'}));
+  }
+  await fs.writeFile(path.join(fixture,'ui-preferences.json'),JSON.stringify({[themeKey]:JSON.stringify({
+    ...oldColors,templateId:retired,customBase:'#123abc',defaultScheme:{...oldColors,customBase:'#456def'},
+    templateUsers:Object.fromEntries(retiredIds.filter(id=>id!==retired).map(id=>[id,{
+      base:oldColors.base,defaultBase:oldColors.base,changes:{customBase:'#254768'},defaultChanges:oldColors,
+    }])),
+  })}));
+}
+
 async function verify(){
   await fs.mkdir(output,{recursive:true});
   const fixture=await fs.mkdtemp(path.join(output,'.template-icons-'));
   try{
-    await fs.writeFile(path.join(fixture,'ui-preferences.json'),JSON.stringify({'hive.theme.v1':JSON.stringify({templateId:olive})}));
+    if(upgrade)await seedUpgrade(fixture);
     const documents=path.join(fixture,'documents');
     await fs.mkdir(documents);
     await fs.writeFile(path.join(documents,'icon-check.md'),'# 图标验收\n\n- [x] 图标刷新后仍可切换这个待办。\n');
@@ -194,20 +280,26 @@ async function verify(){
     }
     const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
     const executable=(await import('electron')).default;
-    const child=spawn(executable,[fileURLToPath(import.meta.url),'--worker',...(packaged?['--package']:[]),fixture],{cwd:project,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
-    let log='';
-    child.stdout.on('data',data=>{log+=data;});
-    child.stderr.on('data',data=>{log+=data;});
-    const exit=await new Promise((resolve,reject)=>{
-      const timeout=setTimeout(()=>child.kill(),45000);
-      child.once('error',error=>{clearTimeout(timeout);reject(error);});
-      child.once('close',(code,signal)=>{clearTimeout(timeout);resolve(code??signal);});
-    });
-    await fs.writeFile(path.join(output,`template-icons-${mode}.log`),log);
-    assert.equal(exit,0,log);
-    const result=await fs.readFile(path.join(fixture,'result.json'),'utf8').catch(()=>{throw new Error(log||'Icon validation did not write a report');});
-    await fs.writeFile(path.join(output,`template-icons-${mode}.json`),result);
-    console.log(result.trim());
+    async function runProbe(restarting=false){
+      const suffix=report+(restarting?'-restart':'');
+      const child=spawn(executable,[fileURLToPath(import.meta.url),'--worker',...(packaged?['--package']:[]),...(upgrade?['--upgrade']:[]),...(restarting?['--restart-check']:[]),fixture],{cwd:project,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+      let log='';
+      child.stdout.on('data',data=>{log+=data;});
+      child.stderr.on('data',data=>{log+=data;});
+      const exit=await new Promise((resolve,reject)=>{
+        const timeout=setTimeout(()=>child.kill(),45000);
+        child.once('error',error=>{clearTimeout(timeout);reject(error);});
+        child.once('close',(code,signal)=>{clearTimeout(timeout);resolve(code??signal);});
+      });
+      await fs.writeFile(path.join(output,`template-icons-${suffix}.log`),log);
+      assert.equal(exit,0,log);
+      const result=await fs.readFile(path.join(fixture,'result.json'),'utf8').catch(()=>{throw new Error(log||'Icon validation did not write a report');});
+      await fs.writeFile(path.join(output,`template-icons-${suffix}.json`),result);
+      console.log(result.trim());
+      await fs.unlink(path.join(fixture,'result.json'));
+    }
+    await runProbe();
+    if(upgrade)await runProbe(true);
   }finally{
     const resolved=await fs.realpath(fixture);
     assert.equal(path.dirname(resolved),await fs.realpath(output));
