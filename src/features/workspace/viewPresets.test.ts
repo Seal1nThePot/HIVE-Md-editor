@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import {defaultWorkspace,hideWorkspacePanel,placeWorkspacePanel} from './workspaceState';
-import {matchesViewEditor,parseViewCollection,remapViewLayout,type ViewPreset} from './viewPresets';
+import {matchesViewEditor,omitTrashPreviewTabs,parseViewCollection,remapViewLayout,type ViewPreset} from './viewPresets';
 import {defaultAppearance} from '../settings/useAppearance';
 import {defaultStatus} from '../editor/EditorStatusBar';
 const rect={x:100,y:200,width:450,height:400};
@@ -56,6 +56,16 @@ describe('saved views',()=>{
     expect(matchesViewEditor({disk:{path:'正文.md'}},saved)).toBe(false);
     expect(matchesViewEditor({disk:null,landing:true},{...saved,landing:undefined})).toBe(false);
     view.editors[0].file='正文.md';expect(()=>parseViewCollection(encode(view))).toThrow('格式无效');
+  });
+  it('omits transient trash previews, including a closed tab’s restore state, from saved views',()=>{
+    const preview='editor:trash-fixture',closed='editor:trash-closed',view=sample();
+    view.layout=placeWorkspacePanel(view.layout,preview,'editor','center',rect);
+    view.layout.rects[closed]=rect;view.layout.restore[closed]={target:'editor',edge:'center'};
+    view.layout.lockedPanels=[preview,'editor'];
+    view.layout=omitTrashPreviewTabs(view.layout);
+    expect(encode(view)).not.toContain('editor:trash-');
+    expect(parseViewCollection(encode(view)).views[0].layout.open).toContain('editor');
+    expect(matchesViewEditor({disk:null,trashPreview:{}},{...view.editors[0],file:null})).toBe(false);
   });
   it('retains source/live display mode independently of the typewriter flag and accepts legacy views',()=>{
     const view=sample();expect(parseViewCollection(encode(view)).views[0].editors[0].displayMode).toBeUndefined();

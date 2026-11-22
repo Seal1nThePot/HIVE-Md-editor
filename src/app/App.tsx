@@ -11,7 +11,7 @@ import {captureEditorView} from '../features/editor/editorViewSnapshot';
 import {findAnnotatedNote,planAnnotatedDocuments,planAnnotatedTrash,planNoteOutline,planNoteProperties,requestApi,runAnnotatedRepositories,type DocumentsToolResult,type NoteFindResult,type NoteOutlineToolResult,type NotePropertiesToolResult,type NoteSnapshotToolResult,type RepositoriesToolResult,type TrashToolResult} from './api';
 import {activeEditor} from '../features/editor/activeEditor';
 import {type ChatAnnotationBatch,type ChatMessageDetails,type Message} from '../features/chat/chatTypes';
-import type {EditorSession} from '../features/editor/editorSessionTypes';
+import {trashPreviewTabPrefix,type EditorSession} from '../features/editor/editorSessionTypes';
 import type {Dialog} from '../features/editor/editorDialogTypes';
 import {useDocumentPersistence} from '../features/files/useDocumentPersistence';
 import {useFileActions} from '../features/files/useFileActions';
@@ -49,7 +49,8 @@ import {WorkspaceProvider, useFileWorkspace, type WorkspaceInfo} from "../featur
 import type {AnnotationContext} from '../features/editor/EditorContextMenu';
 import EditorStatusBar, {useStatusPreferences} from "../features/editor/EditorStatusBar";
 import "../features/files/files.css";
-import TrashPanel from '../features/files/TrashPanel';
+import TrashPanel,{type TrashRecord} from '../features/files/TrashPanel';
+import TrashDocumentPreview,{loadTrashDocument} from '../features/files/TrashDocumentPreview';
 import RepositoryPanel from '../features/files/RepositoryPanel';
 import FileExplorer,{type FileAction} from "../features/files/FileExplorer";
 import FilePicker from '../features/files/FilePicker';
@@ -123,6 +124,7 @@ import {initialConfig, parseModelChoice, selectedModelEntry, type Config, type M
 import { useAppearance } from "../features/settings/useAppearance";
 import {useAnnotationPreferences} from '../features/settings/useAnnotationPreferences';
 import {usePanelIconDragPreferences} from '../features/settings/usePanelIconDragPreferences';
+import {useAIResponsePreferences} from '../features/settings/useAIResponsePreferences';
 import InlineAnnotationEditor, {
   type InlineAnnotationRequest,
 } from "../features/annotations/InlineAnnotationEditor";
@@ -189,6 +191,7 @@ function WritingApp() {
   const annotationPreferences=useAnnotationPreferences();
   const panelIconDragPreferences=usePanelIconDragPreferences();
   const aiButtonLayout=useAIButtonLayout();
+  const aiResponsePreferences=useAIResponsePreferences();
   const workspace = usePanelWorkspace(workbenchRef, id => {if(sessions.current.has(id))activateEditor(id);},28*appearanceSettings.appearance.uiScale/100,appearanceSettings.appearance.panelLockGesture);
   const sessions = useRef(new Map<string, EditorSession>([["editor", {id:"editor",disk:null,state:null,view:null,dirty:false,landing:true}]]));
   const [recentOpen,setRecentOpen]=useState(false),[newNoteBusy,setNewNoteBusy]=useState(false),[renameRequest,setRenameRequest]=useState<{path:string;key:string}>();
@@ -210,7 +213,9 @@ function WritingApp() {
   const editorIds = [...sessions.current.keys()];
   const canDetachDocumentTab=desktopPanels.enabled&&editorIds.filter(id=>workspace.isOpen(id)).length>=2;
   function panelLabel(id:string) {
-    if(sessions.current.has(id))return sessions.current.get(id)?.landing?'新标签页':(sessions.current.get(id)?.imagePath||sessions.current.get(id)?.disk?.path)?.split('/').at(-1)||'未命名稿';
+    const session=sessions.current.get(id);
+    if(session?.trashPreview)return '回收站 · '+(session.trashPreview.path.split('/').at(-1)||session.trashPreview.path);
+    if(session)return session.landing?'新标签页':(session.imagePath||session.disk?.path)?.split('/').at(-1)||'未命名稿';
     return ({files:'文档',repositories:'仓库管理',conversation:'对话',outline:'大纲',toc:'标题目录',scratch:'草稿',annotations:'标注',basis:'依据',search:'查找替换',trash:'回收站',properties:'笔记属性'} as Record<string,string>)[id]||id;
   }
   const leftPanel = workspace.panel("files"), rightPanel = workspace.panel("conversation");
@@ -280,6 +285,8 @@ function WritingApp() {
   const [historyConflict,setHistoryConflict]=useState<HistoryPageProps['conflict']>();
   const historyRunning=useRef(false);
   const [trashDeleteRequest,setTrashDeleteRequest]=useState<import('../features/files/TrashPanel').TrashConfirmationRequest|null>(null);
+  const trashDocumentReads=useRef(new Map<string,AbortController>());
+  useEffect(()=>()=>{for(const controller of trashDocumentReads.current.values())controller.abort();},[]);
   const [repositoryFollowUp,setRepositoryFollowUp]=useState<{mark:WindowMark;name:string}|null>(null);
   const dismissInlineRequest = useCallback((request: InlineAnnotationRequest) => {
     setInlineRequest(current => current?.nonce === request.nonce ? null : current);
@@ -466,6 +473,7 @@ function WritingApp() {
     if(update.docChanged||update.selectionSet)redraw();
   }, []);
   function ribbonCommand(command:RibbonCommand,replaceSearch=false){
+    if(activeTextSource.current==='document'&&sessions.current.get(activeSession.current)?.trashPreview)return;
     if(command==='properties'){workspace.open('properties');return;}
     const source=activeTextSource.current,editor=source==='scratch'?scratchView.current:view.current;
     if(!editor)return;
@@ -532,12 +540,13 @@ function WritingApp() {
     else if (update.docChanged || update.selectionSet) redraw();
   };
   function activateEditor(id: string) {
+    const next=sessions.current.get(id)!;
+    if(next.trashPreview&&activeTextSource.current!=='document'){activeTextSource.current='document';if(id===activeSession.current)redraw();}
     if (id === activeSession.current) return;
     const previous = sessions.current.get(activeSession.current)!;
     captureEditorView(previous);
     previous.context = {proposal:proposal.current,undo:undo.current,writingNodeId};
     if (requestAnchor.current && running.current) stop();
-    const next = sessions.current.get(id)!;
     activeSession.current=id;
     proposal.current=next.context?.proposal||null; undo.current=next.context?.undo||[];
     setWritingNodeId(next.context?.writingNodeId||null);
@@ -790,6 +799,28 @@ function WritingApp() {
     setEntries, setRoot, setConfirm, setDialog, setFilter, setRenameRequest, setCollapsed,
     setTrashRevision, setInlineRequest, setOutline, setSelection, setWritingNodeId,
   });
+  async function openTrashedDocument(item:TrashRecord){
+    const unavailable=()=>structuring.current||switching.current||viewApplying.current||!!requestAnchor.current&&running.current;
+    if(unavailable())throw new Error('请等待当前文稿操作完成，再打开回收站预览。');
+    if(trashDocumentReads.current.has(item.id))return;
+    const existing=[...sessions.current.values()].find(session=>session.trashPreview?.id===item.id&&workspace.isOpen(session.id));
+    if(existing){workspace.reveal(existing.id);return;}
+    if([...sessions.current.keys()].filter(id=>workspace.isOpen(id)).length>=48)throw new Error('打开的文档标签已达 48 个，请先关闭不再使用的标签页。');
+    const controller=new AbortController();
+    trashDocumentReads.current.set(item.id,controller);
+    try{
+      const preview=await loadTrashDocument(request,item.id,controller.signal);
+      if(controller.signal.aborted||!appAlive.current||switching.current)return;
+      if(unavailable())throw new Error('当前文稿状态已变化，请重新打开回收站预览。');
+      const id=trashPreviewTabPrefix+uid();
+      sessions.current.set(id,{id,disk:null,state:null,view:null,dirty:false,trashPreview:preview});
+      if(workspace.openDocumentTab(id,activeSession.current)!=='succeeded'){
+        sessions.current.delete(id);
+        throw new Error('无法打开回收站文稿，请完成当前窗口操作后重试。');
+      }
+      redraw();
+    }finally{trashDocumentReads.current.delete(item.id);}
+  }
   function openDocumentList() {
     workspace.open('files');
     setFocusFileSearch(true);
@@ -905,7 +936,7 @@ function WritingApp() {
   const [chatDropTarget,setChatDropTarget]=useState(false);
   function isMarkdownTab(id:string){
     const session=sessions.current.get(id);
-    return !!session&&!session.landing&&!session.imagePath&&(!session.disk||/\.md$/i.test(session.disk.path));
+    return !!session&&!session.landing&&!session.imagePath&&!session.trashPreview&&(!session.disk||/\.md$/i.test(session.disk.path));
   }
   function stageAttachment(attachment:Omit<ChatAttachment,'id'>){
     const snapshot={...attachment,id:uid()};
@@ -980,6 +1011,7 @@ function WritingApp() {
       if(id!=='editor'&&!closeEditor(id))return;
       humanHistory.forget(id);
       setError('');
+      if(session.trashPreview){sessions.current.delete(id);redraw();return;}
       if(originalProposal&&retainedProposal()){
         if(id!=='editor'){
           redraw();
@@ -1320,6 +1352,7 @@ function WritingApp() {
   function generate(options?:GenerationOptions) {
     if(busy||running.current||structuring.current||switching.current)return;
     const nextMode=options?.annotations?'discuss':options?.mode??mode;
+    if(nextMode!=='discuss'&&sessions.current.get(activeSession.current)?.trashPreview){setError('请打开可编辑的文稿后再运行此功能。');return;}
     if(nextMode!=='discuss'&&pendingProposal(activeSession.current)&&!p){
       setError('这个文件还有待审建议，请在对话中打开原标签页审阅。');
       return;
@@ -1340,7 +1373,7 @@ function WritingApp() {
     };
     return generateWriting({
       document:{view,disk,sessions,activeSession,file:target.file||'',outline,currentHeading,currentWritingNode},
-      model:{config,reasoningEffort:reasoning.effort},
+      model:{config,reasoningEffort:reasoning.effort,responsePreferences:aiResponsePreferences.preferences},
       conversation:{mode,prompt:sentDraft.text,messages:withoutRetriedPrompt(messages,retryTurnId),setPrompt,setLastRequest,add:addTurn,
         attachments:options?.revision?[]:sentDraft.attachments,targetLabel:target.label,
         consumeDraft:()=>{if(consumesComposer)updateConversation(chat=>({...chat,draft:consumeChatDraft(chat.draft,draft)}));},
@@ -1585,10 +1618,10 @@ function WritingApp() {
             title={documentPanel.primary?'正文主版面 · 位置固定':documentPanel.lockHint}
             data-position-fixed={!documentPanel.movable||undefined}
           >
-            <div className="document-tab" data-document-tab={id} data-tab-detachable={canDetachDocumentTab||undefined} title={`${session.landing?'新标签页':session.imagePath||session.disk?.path||'未命名稿'}${canDetachDocumentTab?' · 拖动移出此标签':''}`} onPointerDown={event=>{
+            <div className="document-tab" data-document-tab={id} data-tab-detachable={canDetachDocumentTab||undefined} title={`${session.trashPreview?'只读 · '+session.trashPreview.path:session.landing?'新标签页':session.imagePath||session.disk?.path||'未命名稿'}${canDetachDocumentTab?' · 拖动移出此标签':''}`} onPointerDown={event=>{
               if(!canDetachDocumentTab)return;event.stopPropagation();workspace.beginTabDrag(id,event,{fromTab:true,onFinish:()=>{}});
             }}>
-              <span>{session.landing?'新标签页':(session.imagePath||session.disk?.path)?.split("/").at(-1) || "未命名稿"}</span>
+              <span>{panelLabel(id)}</span>
               {session.dirty && <i className="dirty-dot" />}
               <button type="button" className="document-tab-close" data-no-drag aria-label={`关闭${panelLabel(id)}标签页`} title="关闭标签页" onPointerDown={event=>event.stopPropagation()} onClick={event=>{event.stopPropagation();void closeDocumentTab(id);}}><X size={13}/></button>
             </div>
@@ -1607,7 +1640,7 @@ function WritingApp() {
             {documentPanel.positionLocked&&<Icon name="panel.positionLocked" className="panel-position-lock-icon" size={11}/>}
           </div>
           {session.disk&&fileConflicts[session.disk.path]&&<div className="file-conflict" role="alert"><span>{fileConflicts[session.disk.path]}</span><button type="button" onClick={()=>reloadFromDisk(id)}>重新读取磁盘</button><button type="button" onClick={()=>{activateEditor(id);openSaveAs(session.disk!.path);}}>另存本地副本</button></div>}
-          {session.imagePath?<><ImageFileView key={fileWorkspace.info.id+session.imagePath} path={session.imagePath} workspaceId={fileWorkspace.info.id}/>{emptyPanelFooter("图片")}</>:session.landing?<><NewTabPage active={activeEditorId===id} busy={newNoteBusy||fileBusy||busy} onCreate={()=>void createQuickNote(id)} onOpen={openDocumentList}/>{emptyPanelFooter("新标签页")}</>:<>
+          {session.trashPreview?<><TrashDocumentPreview preview={session.trashPreview}/>{emptyPanelFooter('回收站只读预览')}</>:session.imagePath?<><ImageFileView key={fileWorkspace.info.id+session.imagePath} path={session.imagePath} workspaceId={fileWorkspace.info.id}/>{emptyPanelFooter("图片")}</>:session.landing?<><NewTabPage active={activeEditorId===id} busy={newNoteBusy||fileBusy||busy} onCreate={()=>void createQuickNote(id)} onOpen={openDocumentList}/>{emptyPanelFooter("新标签页")}</>:<>
                 {<Editor initialState={session.state} keepAlive={busy&&activeEditorId===id||!!dialog?.target&&dialog.target.editor===session.view} documentFile={session.disk?.path||''} onOpenLink={target=>{try{const path=resolveLinkTarget(session.disk?.path||'',target);activateEditor(id);void openExplorerFile(path,true).catch(error=>setError(error.message));}catch(error){setError((error as Error).message);}}} onDraftSelection={(text,table)=>stageEditorSelection(id,text,table)} annotationTool={annotationTool} searchActive={workspace.isOpen('search')&&activeEditorId===id&&activeTextSource.current==='document'} onFind={replace=>{activateEditor(id);activeTextSource.current='document';ribbonCommand('find',replace);}} displayMode={session.displayMode||'live'} splitOrder={appearanceSettings.appearance.splitOrder} typewriter={!!session.typewriter} onReady={bindings(id).onReady} onUpdate={bindings(id).onUpdate} onFocus={()=>{if(activeTextSource.current!=='document'){activeTextSource.current='document';redraw();}}} onMarkSelection={()=>{activateEditor(id);markText('document',sessions.current.get(id)?.disk?.path||'');}} onUnmarkSelection={annotationId=>{activateEditor(id);unmarkText('document',annotationId,sessions.current.get(id)?.disk?.path||'');}} onShowAnnotations={context=>{activateEditor(id);showLocalAnnotation('document',context,sessions.current.get(id)?.disk?.path||'');}} onError={setError} inlineProposal={activeEditorId===id?inlineProposal:null}/>}
               {activeEditorId===id&&<ProposalOverlay view={view.current} proposal={inlineProposal} accept={accept} reject={adjust=>{
                 const origin=writingOrigin.current;
@@ -1775,7 +1808,7 @@ function WritingApp() {
 </PanelFrame>
         <PanelFrame chrome={chrome} id="properties" title="笔记属性" className="properties-workspace"><NotePropertiesPanel target={(()=>{if(activeTextSource.current==='scratch'){const editor=scratchView.current;if(!editor)return null;return {editor,file:'自由草稿.md',valid:()=>activeTextSource.current==='scratch'&&scratchView.current===editor};}const session=sessions.current.get(activeEditorId),editor=session?.view,path=session?.disk?.path;if(!editor||!path||session?.landing)return null;return {editor,file:path,valid:()=>activeTextSource.current==='document'&&activeSession.current===activeEditorId&&sessions.current.get(activeEditorId)?.view===editor&&sessions.current.get(activeEditorId)?.disk?.path===path};})()} targetKey={activeTextSource.current==='scratch'?'scratch:自由草稿.md':'document:'+activeEditorId+':'+file} onApplied={()=>inform('笔记属性已应用。')} onTargetAvailability={ready=>{propertyTargetAvailable.current=ready;}}/></PanelFrame>
         <PanelFrame chrome={chrome} id="basis" title="依据" className="basis-workspace"><InputBasisPanel request={lastRequest} file={file} mode={mode} sources={references.sources} entries={entries} workspaceId={fileWorkspace.info.id} onChange={updateReferenceSources} onExternalDrop={addExternalReferences}/>{references.saveError&&<p role="status">{references.saveError}</p>}</PanelFrame>
-        <PanelFrame chrome={chrome} id="trash" title="回收站" className="trash-workspace"><TrashPanel open={workspace.isOpen('trash')} refreshKey={trashRevision} onRestore={id=>manageFile({action:'restore',id})} onChanged={()=>setTrashRevision(value=>value+1)} deleteRequest={trashDeleteRequest} onDeleteRequestShown={shown=>setTrashDeleteRequest(current=>current===shown?null:current)}
+        <PanelFrame chrome={chrome} id="trash" title="回收站" className="trash-workspace"><TrashPanel open={workspace.isOpen('trash')} refreshKey={trashRevision} onPreview={openTrashedDocument} onRestore={id=>manageFile({action:'restore',id})} onChanged={()=>setTrashRevision(value=>value+1)} deleteRequest={trashDeleteRequest} onDeleteRequestShown={shown=>setTrashDeleteRequest(current=>current===shown?null:current)}
           onDeleted={items=>{for(const item of items)recordHistory({actor:'human',kind:'file',file:item.path,label:'永久删除',changes:{file:{action:'permanent-delete',path:item.path,id:item.id}}});}}/></PanelFrame>
         <PanelFrame chrome={chrome} id="search" title="查找替换" className="find-replace-workspace"><FindReplacePanel editor={searchEditor} open={workspace.isOpen('search')} onClose={()=>workspace.close('search')} label={searchInScratch?'自由草稿.md':file.split('/').at(-1)||'未命名稿'}/></PanelFrame>
         {workspace.tabGroups.map(group=><WorkspaceTabs key={group.id} group={group} style={group.style} label={panelLabel} onSelect={workspace.open}
@@ -1843,7 +1876,7 @@ function WritingApp() {
           onUndo={(actor,id)=>void historyTask(()=>replayHistory(actor,id,true))}
           onRedo={(actor,id)=>void historyTask(()=>replayHistory(actor,id,false))} conflict={historyConflict}/>
       </dialog>}
-      {settings && <SettingsPage panelIconDragPreferences={panelIconDragPreferences} annotationPreferences={annotationPreferences} aiButtonLayout={aiButtonLayout} config={config} initialSection={settingsSection} restoreKey={settingsRestoreKey} appearance={appearanceSettings} statusPreferences={statusPreferences} busy={configBusy}
+      {settings && <SettingsPage panelIconDragPreferences={panelIconDragPreferences} annotationPreferences={annotationPreferences} aiButtonLayout={aiButtonLayout} aiResponsePreferences={aiResponsePreferences} config={config} initialSection={settingsSection} restoreKey={settingsRestoreKey} appearance={appearanceSettings} statusPreferences={statusPreferences} busy={configBusy}
         historyLimits={history.summary.limits} onSaveHistoryLimits={async limits=>{humanHistory.flushAll();await history.setLimits(limits);}}
         onRequest={updateSettings} onProbe={(body:ModelProbeRequest,signal?:AbortSignal)=>requestApi<ModelProbeResult>(request,'/model-services/probe',body,signal)}
         onReload={async()=>{const next=await api<Config>('/config');setConfig(current=>next.revision>=current.revision?next:current);}} onClose={()=>setSettings(false)}/>}

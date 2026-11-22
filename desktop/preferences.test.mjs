@@ -12,6 +12,7 @@ describe('desktop preference persistence', () => {
     expect(prefs.allowed('hive.explorer.v1:workspace')).toBe(true);
     expect(prefs.allowed('hive.views.v1:workspace')).toBe(true);
     expect(prefs.allowed('hive.recentDocuments.v1:workspace')).toBe(true);
+    for(const key of ['hive.aiButtonLayout.v1','hive.recentRepositories.v1','hive.aiResponsePreferences.v1'])expect(prefs.allowed(key)).toBe(true);
   });
   it('persists typography alongside old appearance settings with matching preload/main allowlists',async()=>{
     const preload=readFileSync(new URL('./preload.cjs',import.meta.url),'utf8'),main=readFileSync(new URL('./preferences.cjs',import.meta.url),'utf8');

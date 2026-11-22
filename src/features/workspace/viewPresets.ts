@@ -1,6 +1,7 @@
 import {z} from 'zod';
 import type {Mode} from '../../shared/core';
-import type {WorkspaceLayout} from './workspaceState';
+import {detachWorkspacePanel,type WorkspaceLayout} from './workspaceState';
+import {trashPreviewTabPrefix} from '../editor/editorSessionTypes';
 import {dockedPanels,type DockTree} from './panelLayout';
 import type {Appearance} from '../settings/useAppearance';
 import type {EditorDisplayMode} from '../editor/splitView';
@@ -8,8 +9,23 @@ import {normalizeStatus,type StatusKey,type CountMode} from '../editor/statusMod
 
 export type ViewEditor={id:string;file:string|null;anchor:number;head:number;scrollTop:number;scrollLeft?:number;imagePath?:string;typewriter?:boolean;displayMode?:EditorDisplayMode;landing?:boolean};
 // A saved blank tab must never reuse an untitled manuscript buffer.
-export function matchesViewEditor(session:{disk:{path:string}|null;landing?:boolean;imagePath?:string},descriptor:ViewEditor){
-  return (session.disk?.path||null)===descriptor.file&&!!session.landing===!!descriptor.landing&&(session.imagePath||null)===(descriptor.imagePath||null);
+export function matchesViewEditor(session:{disk:{path:string}|null;landing?:boolean;imagePath?:string;trashPreview?:unknown},descriptor:ViewEditor){
+  return !session.trashPreview&&(session.disk?.path||null)===descriptor.file&&!!session.landing===!!descriptor.landing&&(session.imagePath||null)===(descriptor.imagePath||null);
+}
+
+export function omitTrashPreviewTabs(layout:WorkspaceLayout):WorkspaceLayout {
+  const regular=(id:string)=>!id.startsWith(trashPreviewTabPrefix);
+  const without= <T,>(entries:Record<string,T>)=>Object.fromEntries(Object.entries(entries).filter(([id])=>regular(id)));
+  let next=layout;
+  const visible=new Set([...layout.open,...layout.minimized,...dockedPanels(layout.tree),...layout.floatingGroups.flatMap(group=>group.panels)]);
+  for(const id of visible)if(!regular(id))next=detachWorkspacePanel(next,id);
+  const restore=Object.fromEntries(Object.entries(without(next.restore)).flatMap(([id,anchor])=>regular(anchor.target)?
+    [[id,anchor.split?{...anchor,split:{...anchor.split,siblings:anchor.split.siblings.filter(regular)}}:anchor]]:[]));
+  return {...next,open:next.open.filter(regular),minimized:next.minimized.filter(regular),rects:without(next.rects),layers:without(next.layers),restore,
+    ...(next.lockedPanels?{lockedPanels:next.lockedPanels.filter(regular)}:{}),
+    ...(next.autoHide?{autoHide:without(next.autoHide)}:{}),
+    ...(next.autoHideActive&&!regular(next.autoHideActive)?{autoHideActive:null}:{}),
+  };
 }
 export type ViewSnapshot={layout:WorkspaceLayout;editors:ViewEditor[];activeEditor:string;appearance:Appearance;statusItems:StatusKey[];statusCountMode?:CountMode;filter:string;collapsed:string[];chatOrb:boolean;orbPosition?:{x:number;y:number};orbBounds:{width:number;height:number}};
 export type ViewPreset=ViewSnapshot&{id:string;name:string;mode:Mode;updatedAt:string};

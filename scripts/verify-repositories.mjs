@@ -27,6 +27,7 @@ async function worker(base,temporary) {
       const preview=await window.webContents.executeJavaScript(`(async()=>{
         const wait=async(test)=>{for(let count=0;count<150;count++){if(test())return;await new Promise(resolve=>setTimeout(resolve,40));}throw new Error('Demo preview timeout');};
         await wait(()=>document.querySelector('.workspace-switcher'));document.querySelector('.workspace-switcher').click();
+        await wait(()=>document.querySelector('.recent-repositories-manage'));document.querySelector('.recent-repositories-manage').click();
         await wait(()=>document.querySelectorAll('.repository-card').length===10);
         const panel=document.querySelector('[data-panel-id="repositories"]');Object.assign(panel.style,{width:'1100px',height:'760px',left:'70px',top:'20px'});
         await new Promise(resolve=>setTimeout(resolve,150));document.querySelector('.repository-page').scrollTop=0;
@@ -47,13 +48,14 @@ async function worker(base,temporary) {
       const cards=()=>[...document.querySelectorAll('.repository-card')];
       const input=(selector,value)=>{const element=get(selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(element,value);element.dispatchEvent(new Event('input',{bubbles:true}));};
       const click=selector=>{const element=get(selector);if(!element)throw new Error('Missing '+selector);element.click();};
+      const openManager=async()=>{click('.workspace-switcher');await wait(()=>get('.recent-repositories-manage'),'recent repositories');click('.recent-repositories-manage');};
       const info=async()=>await(await fetch('/api/workspace')).json();
       await wait(()=>get('.workspace-switcher'),'app header');
       check('header shows current folder name',get('.workspace-switcher b').textContent==='初始仓库');
       click('button[aria-label="设置"]');await wait(()=>get('.settings-page'),'settings');
       check('settings no longer contains repository management',![...document.querySelectorAll('.settings-sidebar nav button')].some(button=>button.textContent.includes('仓库管理')));
       click('button[aria-label="关闭设置"]');await wait(()=>!get('.settings-page'),'close settings');
-      click('.workspace-switcher');await wait(()=>get('.repository-page'),'repository panel');
+      await openManager();await wait(()=>get('.repository-page'),'repository panel');
       await wait(()=>cards().length===10,'initial repository cards');
       check('management is a separate workspace panel',!!get('[data-panel-id="repositories"] .repository-page')&&!get('.settings-page'));
       check('current repository cannot be removed',get('.repository-current .repository-order button:last-child').disabled);
@@ -80,7 +82,7 @@ async function worker(base,temporary) {
       check('removing the switch preserves automatic save preference',(await info()).autoSave===initialAutoSave);
       const target=cards().find(card=>card.querySelector('h3').textContent==='新项目');target.querySelector('.repository-card-actions > button').click();
       await wait(()=>get('.workspace-switcher b')?.textContent==='新项目','open repository');
-      click('.workspace-switcher');await wait(()=>get('.repository-page')&&cards().length===11,'reopen manager');
+      await openManager();await wait(()=>get('.repository-page')&&cards().length===11,'reopen manager');
       check('opened repository is marked current',get('.repository-current h3').textContent==='新项目');
       get('.repository-current .repository-rename').click();await wait(()=>get('.repository-name-editor input'),'edit display name');
       input('.repository-name-editor input','我的新书');get('.repository-name-editor').requestSubmit();

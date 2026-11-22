@@ -41,6 +41,7 @@ export function PanelControls({ chrome, id, groupMembers }: { chrome: PanelChrom
     groupMembers=groupMembers||desktop.paneMembers(id);
     const { workspace, sessions, editorIds, panelLabel, closeEditor, minimizeEditor, activateEditor, redraw, activeTextSource, ribbonCommand } = chrome;
     const panel = workspace.panel(id), isEditor = sessions.current.has(id);
+    const trashPreview=!!sessions.current.get(id)?.trashPreview;
     const label = isEditor ? `正文 ${editorIds.indexOf(id) + 1}` : panelLabel(id);
     const primary = groupMembers?.includes('editor') || panel.primary;
     const close = () => { for (const member of groupMembers || [id])
@@ -60,11 +61,11 @@ export function PanelControls({ chrome, id, groupMembers }: { chrome: PanelChrom
             { label: '关闭当前窗口', disabled: panel.primary, run: isEditor ? () => closeEditor(id) : panel.close },
             { label: '打开当前窗口并停靠', disabled: panel.primary || !panel.canDock, run: panel.openDocked },
         ] : undefined}
-        actions={[...(detached?nativeWindowActions(desktop.owner(id)):[]),...(isEditor ? [
+        actions={[...(detached?nativeWindowActions(desktop.owner(id)):[]),...(isEditor&&!trashPreview ? [
             { label: '插入笔记属性', icon: <NoteProperties size={14} />, disabled: !sessions.current.get(id)?.view, run: () => { activateEditor(id); activeTextSource.current = 'document'; ribbonCommand('properties'); } },
             { label: '标题目录', icon: <ContentsPanel size={14} />, checked: workspace.isOpen('toc'), run: () => { activateEditor(id); workspace.toggle('toc'); } },
         ] : [])]} detached={detached} />;
-    return isEditor
+    return isEditor&&!trashPreview
         ? <div className="document-panel-controls"><DisplayModeControl label={label} displayMode={sessions.current.get(id)?.displayMode || 'live'} onDisplayMode={mode => { sessions.current.get(id)!.displayMode = mode; redraw(); }} typewriter={!!sessions.current.get(id)?.typewriter} onTypewriter={enabled => { sessions.current.get(id)!.typewriter = enabled; redraw(); }} />{controls}</div>
         : controls;
 }

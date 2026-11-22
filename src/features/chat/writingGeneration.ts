@@ -13,6 +13,7 @@ import type { InputBasisRequest } from './InputBasisPanel';
 import type { ReasoningEffort } from './modelReasoning';
 import { generateDemoText, streamModelText } from './generationTransport';
 import {appendChatAttachments,type ChatAttachment} from './chatAttachments';
+import {applyAIResponsePreferences,type AIResponsePreferences} from '../settings/useAIResponsePreferences';
 export type GenerationOptions = {
     annotations?: SubmittedAnnotation[];
     instruction?: string;
@@ -38,6 +39,7 @@ export type GenerationContext = {
     model: {
         config: Config;
         reasoningEffort: ReasoningEffort;
+        responsePreferences?:AIResponsePreferences;
     };
     conversation: {
         mode: Mode;
@@ -93,7 +95,7 @@ export function stopWritingGeneration(
 }
 // Receives the existing live references; it does not create a second document/session store.
 export async function generateWriting(context: GenerationContext, options?: GenerationOptions) {
-    const { document: { view, disk, sessions, activeSession, file, outline, currentHeading, currentWritingNode }, model: { config, reasoningEffort }, conversation: { mode, prompt, messages, setPrompt, setLastRequest, add, attachments=[],consumeDraft,restoreDraft,targetLabel }, lifecycle: { running, generation, controller, requestAnchor, proposal, origin }, references, writingOutline, request, annotationResponded, ui: { setError, setBusy, setStream, openPanel, inform, redraw } } = context;
+    const { document: { view, disk, sessions, activeSession, file, outline, currentHeading, currentWritingNode }, model: { config, reasoningEffort, responsePreferences }, conversation: { mode, prompt, messages, setPrompt, setLastRequest, add, attachments=[],consumeDraft,restoreDraft,targetLabel }, lifecycle: { running, generation, controller, requestAnchor, proposal, origin }, references, writingOutline, request, annotationResponded, ui: { setError, setBusy, setStream, openPanel, inform, redraw } } = context;
     const uid = () => crypto.randomUUID();
     const submitted = options?.annotations;
     const revision = options?.revision;
@@ -216,6 +218,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
         setError((error as Error).message);
         return;
     }
+    requestMessages = applyAIResponsePreferences(requestMessages,responsePreferences);
     const id = ++generation.current, abort = new AbortController(), requestSessionId = activeSession.current;
     const annotationIds = submitted?.map(item=>item.id) ?? (prior?.annotationIds ?? (requestMode === 'edit' ? options?.sourceAnnotationIds : undefined)) ?? [];
     if (origin) origin.current = { annotationIds, proposalId:prior?.id };

@@ -124,7 +124,18 @@ export function useFileActions(options: FileActionsOptions) {
         return true;
     }
     function showFile(data: DiskFile, targetId = activeSession.current) {
-        const session=sessions.current.get(targetId);if(!session)return;
+        let session=sessions.current.get(targetId);if(!session)return;
+        if(session.trashPreview){
+            const parent=targetId;
+            targetId='editor:'+uid();
+            session={id:targetId,disk:null,state:null,view:null,dirty:false};
+            sessions.current.set(targetId,session);
+            if(workspace.openDocumentTab(targetId,parent)!=='succeeded'){
+                sessions.current.delete(targetId);
+                setError('无法打开文稿，请完成当前窗口操作后重试。');
+                return false;
+            }
+        }
         const same=session.disk?.path===data.path&&(session.view?.state||session.state);
         if(same){
             if(!reconcileKnownFile(data))return false;
@@ -176,6 +187,7 @@ export function useFileActions(options: FileActionsOptions) {
     }
     function openSaveAs(path?: string) {
         const current = sessions.current.get(activeSession.current);
+        if(current?.trashPreview)return;
         const name = path ?? (current?.imagePath || current?.disk?.path || '未命名.md');
         if (name)
             setDialog({ kind: 'saveAs', title: '另存为 Markdown', value: name.replace(/\.md$/i, '-副本.md') });
@@ -237,6 +249,7 @@ export function useFileActions(options: FileActionsOptions) {
     async function openExplorerFile(path:string,newTab=false){
         if(structuring.current||writing()||switching.current||viewApplying.current)throw new Error('请等待文件操作完成或停止正文生成后再打开。');
         if(openPendingReview(path))return;
+        newTab ||= !!sessions.current.get(activeSession.current)?.trashPreview;
         if(isImagePath(path)){
             const existing=[...sessions.current.values()].find(session=>session.imagePath===path);
             if(existing&&!newTab){workspace.open(existing.id);return;}

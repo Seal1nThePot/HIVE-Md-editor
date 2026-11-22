@@ -4,6 +4,7 @@ import type { DiskFile } from '../../shared/fileTypes';
 import type { Proposal, UndoEdit } from '../../shared/core';
 import type { EditorDisplayMode } from './splitView';
 import type { TrashDocument } from '../files/TrashDocumentPreview';
+export const trashPreviewTabPrefix='editor:trash-';
 export type EditorSession = {
     id: string;
     disk: DiskFile | null;
