@@ -14,7 +14,7 @@ const packaged=process.argv.includes('--package');
 const bundle=path.resolve(process.env.HIVE_VERIFY_BUNDLE||path.join(project,'release'));
 const runtime=packaged?path.join(bundle,'win-unpacked/resources/app.asar'):project;
 const mode=packaged?'packaged':'source';
-const olive='claude-olive-gold',blue='claude-mediterranean-blue';
+const olive='claude-olive-gold',blue='hive-mediterranean-blue-study';
 const historyButton='button[aria-label="历史记录"]';
 const historyIcon=historyButton+' svg[data-hive-icon="history.open"]';
 const annotationButton='.global-toolbar-native .dock-annotation-button';

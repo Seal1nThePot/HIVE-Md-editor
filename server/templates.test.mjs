@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import {templateStore,validateTemplateColors} from './templates.mjs';
 
 const sourceFixture=fileURLToPath(new URL('../templates/claude-olive-gold',import.meta.url));
+const productionBundle=path.dirname(sourceFixture);
 const templateId='claude-olive-gold';
 const icon=n=>({viewBox:'0 0 24 24',shapes:[{tag:'path',attrs:{d:`M1 1h${n}`}}]});
 const iconFile=(root,id='')=>path.join(root,id,'icons.json');
@@ -17,6 +18,62 @@ beforeEach(async()=>{temporary=await fs.mkdtemp(path.join(os.tmpdir(),'hive-temp
 afterEach(async()=>{await store?.close();if(temporary&&path.resolve(temporary).startsWith(path.resolve(os.tmpdir())+path.sep)&&path.basename(temporary).startsWith('hive-template-files-'))await fs.rm(temporary,{recursive:true,force:true});});
 
 describe('local template folders',()=>{
+  it('registers only the two renamed starters in a fresh production or source-linked catalog',async()=>{
+    const expected=[['claude-olive-gold','青苔鎏金'],['hive-mediterranean-blue-study','地中海蓝']];
+    for(const [name,sourceDirectory] of [['packaged',undefined],['development',productionBundle]]){
+      const runtime=path.join(temporary,name);
+      const fresh=await templateStore(runtime,productionBundle,{sourceDirectory});
+      try{
+        const {templates,warnings}=await fresh.list();
+        expect(warnings).toEqual([]);
+        expect(templates.map(({id,name})=>[id,name])).toEqual(expected);
+        expect((await fs.readdir(runtime,{withFileTypes:true})).filter(item=>item.isDirectory()).map(item=>item.name)).toEqual(expected.map(([id])=>id));
+        for(const [id] of expected){
+          const original=JSON.parse(await fs.readFile(path.join(productionBundle,id,'colors.json'),'utf8'));
+          expect((await fresh.read(id)).colors).toEqual(validateTemplateColors(original));
+        }
+      }finally{await fresh.close();}
+    }
+  });
+  it('retires only known historic manifests and preserves the runtime directories and custom templates',async()=>{
+    const runtime=path.join(temporary,'upgrade');
+    await fs.cp(productionBundle,runtime,{recursive:true});
+    const writeTemplate=async (id,name,description,bases)=>{
+      const target=path.join(runtime,id);await fs.mkdir(target);
+      await fs.writeFile(path.join(target,'template.json'),JSON.stringify({version:1,id,name,description,bases,colorsFile:'colors.json'}));
+      await fs.writeFile(path.join(target,'colors.json'),JSON.stringify({...fixture,customBase:'#123456'}));
+    };
+    await writeTemplate('olive-gold','青苔鎏金','低饱和青苔绿与灰金，包含黑、浅灰、白三档配色。',['black','gray','white']);
+    await writeTemplate('mediterranean-blue','地中海蓝','包含深色方案与浅色方案；R6 浅色外围略加中性灰，中央正文保持纯白，深色沿用 R5；1px 分层细描边、AI 白星与冰蓝悬停；black 对应深色，white 对应浅色。',['black','white']);
+    await writeTemplate('my-blue','地中海蓝','自建模板',['black','gray','white']);
+    const paths=['olive-gold','mediterranean-blue','claude-mediterranean-blue','hive-moss-gold-study'].flatMap(id=>['template.json','colors.json'].map(file=>path.join(runtime,id,file)));
+    const preserved=await Promise.all(paths.map(file=>fs.readFile(file,'utf8')));
+    const oliveManifest=path.join(runtime,'claude-olive-gold','template.json');
+    const oliveMetadata=JSON.parse(await fs.readFile(oliveManifest,'utf8'));
+    await fs.writeFile(oliveManifest,JSON.stringify({...oliveMetadata,name:'青苔鎏金 · Claude'}));
+    const blueManifest=path.join(runtime,'hive-mediterranean-blue-study','template.json');
+    const blueMetadata=JSON.parse(await fs.readFile(blueManifest,'utf8'));
+    await fs.writeFile(blueManifest,JSON.stringify({...blueMetadata,name:'地中海蓝 · 海蓝选区'}));
+    for(let run=0;run<2;run++){
+      const upgraded=await templateStore(runtime,productionBundle,{sourceDirectory:productionBundle});
+      try{
+        const catalog=(await upgraded.list()).templates;
+        expect(catalog.map(({id})=>id).sort()).toEqual(['claude-olive-gold','hive-mediterranean-blue-study','my-blue']);
+        expect(catalog.find(({id})=>id==='claude-olive-gold').name).toBe('青苔鎏金');
+        expect(catalog.find(({id})=>id==='hive-mediterranean-blue-study').name).toBe('地中海蓝');
+        expect((await upgraded.read('my-blue')).colors.customBase).toBe('#123456');
+      }finally{await upgraded.close();}
+    }
+    expect(await Promise.all(paths.map(file=>fs.readFile(file,'utf8')))).toEqual(preserved);
+    const repurposed=path.join(runtime,'olive-gold','template.json');
+    const metadata=JSON.parse(await fs.readFile(repurposed,'utf8'));
+    await fs.writeFile(repurposed,JSON.stringify({...metadata,description:'我自己维护的模板'}));
+    const customized=await templateStore(runtime,productionBundle,{sourceDirectory:productionBundle});
+    try{
+      expect((await customized.list()).templates.find(item=>item.id==='olive-gold')).toMatchObject({description:'我自己维护的模板'});
+      expect((await customized.read('olive-gold')).colors.customBase).toBe('#123456');
+    }finally{await customized.close();}
+  });
   it('persists reasoning styles and restores them from a repaired legacy cache',async()=>{
     const reasoningTrackProfiles={white:{left:'#123456',middle:'#456789',right:'#789abc'}};
     const reasoningEffects={max:{color:'#abddee',glow:.85,particles:6,duration:470,easing:'cubic-bezier(.18,0,.39,1)'}};

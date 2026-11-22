@@ -1,7 +1,7 @@
 {
   "version": 1,
   "id": "claude-olive-gold",
-  "name": "青苔鎏金 · Claude",
+  "name": "青苔鎏金",
   "description": "青苔鎏金重制版：深色 AI 按钮改深色图标以保证可读；金色强调、橙色警告、青色链接三者色相分离；浅色控件描边加深到可辨识；激活态透明度提高。black 深色，gray 浅灰，white 浅色。",
   "bases": ["black", "gray", "white"],
   "colorsFile": "colors.json"

@@ -1,5 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {defaultTheme,normalizeTheme,themeStorageKey} from './themePreferences';
+import olive from '../../../templates/claude-olive-gold/colors.json';
 
 describe('theme preview and default persistence',()=>{
   let data:Map<string,string>,write:ReturnType<typeof vi.fn>;
@@ -44,13 +45,20 @@ describe('theme preview and default persistence',()=>{
     const customGray=normalizeTheme({...legacy,base:'gray',writingDock:light});expect(customGray.writingDock).toEqual(light);expect(customGray.writingDockProfiles.black).toBeUndefined();
     const custom=normalizeTheme({...legacy,base:'custom',writingDock:dark});expect(custom.writingDock).toEqual(dark);expect(custom.writingDockProfiles.black).toBeUndefined();
   });
-  it('updates the rejected gray scheme once, backs it up and preserves black customizations',async()=>{
-    const {switchThemeBase}=await import('./themePreferences');let store=await import('./themeStore');
-    store.setTheme(old=>({...old,colors:{...old.colors,accent:'#bfb178'}}));store.setTheme(old=>({...old,writingDock:{...old.writingDock,aiButton:{...old.writingDock.aiButton,icon:'#27301f'}}}));
-    store.setTheme(old=>switchThemeBase(old,'gray'));store.setTheme(old=>({...old,surfaceColors:{...old.surfaceColors,gray:{document:'#e9ece3'}}}));
-    store.applyOliveGrayHierarchyUpdate();expect(store.getThemeSnapshot().oliveGrayRevision).toBe(2);expect(store.getThemeSnapshot().preferences.surfaceColors.gray).toBeUndefined();
-    expect((store.getThemeSnapshot().oliveGrayBackup as {preferences:{surfaceColors:{document:string}}}).preferences.surfaceColors.document).toBe('#e9ece3');
-    const black=switchThemeBase(store.getThemeSnapshot().preferences,'black');expect(black.colors.accent).toBe('#bfb178');expect(black.writingDock.aiButton.icon).toBe('#27301f');
-    store.setTheme(old=>({...old,surfaceColors:{...old.surfaceColors,gray:{document:'#abcdef'}}}));store.flushThemePreferences();vi.resetModules();store=await import('./themeStore');store.applyOliveGrayHierarchyUpdate();expect(store.getThemeSnapshot().preferences.surfaceColors.gray?.document).toBe('#abcdef');
+  it('archives an unbound old template’s complete preferences and separate default across migration and restart',async()=>{
+    const legacy=normalizeTheme({...defaultTheme,base:'gray',surfaceColors:{gray:{document:'#e9ece3'}}});
+    const saved=normalizeTheme({...legacy,surfaceColors:{gray:{document:'#dddddd'}}});
+    data.set(themeStorageKey,JSON.stringify({...legacy,templateId:'olive-gold',defaultScheme:saved,oliveGrayRevision:2,oliveGrayBackup:{preserved:true}}));
+    let store=await import('./themeStore');
+    const identity={id:store.defaultTemplateId,name:'青苔鎏金',bases:['black','gray','white']} as const;
+    const bind=()=>store.bindThemeTemplate({...identity,bases:[...identity.bases]},null,null,normalizeTheme(olive));
+    bind();
+    expect(store.getThemeSnapshot().templateId).toBe('claude-olive-gold');
+    expect(store.getThemeSnapshot().preferences.surfaceColors.gray?.document).toBe(olive.surfaceColors.gray.document);
+    const expected={'olive-gold':{preferences:legacy,defaultScheme:saved}};
+    expect(store.getThemeSnapshot().legacyTemplateSettings).toEqual(expected);
+    expect(store.getThemeSnapshot().oliveGrayBackup).toEqual({preserved:true});
+    vi.resetModules();store=await import('./themeStore');bind();
+    expect(store.getThemeSnapshot().legacyTemplateSettings).toEqual(expected);
   });
 });

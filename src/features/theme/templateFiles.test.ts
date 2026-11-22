@@ -2,6 +2,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {defaultTheme,switchThemeBase,themeStorageKey,updateThemeColors} from './themePreferences';
 import olive from '../../../templates/claude-olive-gold/colors.json';
 import blue from '../../../templates/claude-mediterranean-blue/colors.json';
+import retainedBlue from '../../../templates/hive-mediterranean-blue-study/colors.json';
 const revision='a'.repeat(64),nextRevision='b'.repeat(64);
 const info={version:1,id:'claude-olive-gold',name:'青苔鎏金',description:'三档',bases:['black','gray','white'],colorsFile:'colors.json',directory:'C:/templates/olive-gold'};
 const blueInfo={...info,id:'claude-mediterranean-blue',name:'地中海蓝',bases:['black','white'],directory:'C:/templates/mediterranean-blue'};
@@ -15,6 +16,36 @@ beforeEach(()=>{vi.resetModules();vi.useFakeTimers();data=new Map();blueDefaults
 afterEach(()=>{vi.clearAllTimers();vi.useRealTimers();vi.unstubAllGlobals();});
 const writes=()=>request.mock.calls.filter(([,init])=>init?.method==='POST');
 describe('template baseline and personal preference isolation',()=>{
+  it('falls back from an archived selection to olive regardless of catalog ordering and keeps profiles for every template',async()=>{
+    let files=await import('./templateFiles'),store=await import('./themeStore');
+    await files.initializeThemeFiles();await files.loadTemplateFile(blueInfo.id);
+    store.setTheme(old=>updateThemeColors(old,{accent:'#334455'}));store.saveDefaultTheme();
+    store.setTheme(old=>updateThemeColors(old,{accent:'#665544'}));store.flushThemePreferences();
+    const archivedProfile=store.getThemeSnapshot().templateUsers[blueInfo.id];
+    const study={...blueInfo,id:'hive-mediterranean-blue-study',bases:['white','gray','black']};
+    const personal={...info,id:'my-own-theme',name:'我的主题'};
+    const catalog={directory:'C:/templates',templates:[personal,study,info],warnings:[]};
+    request.mockImplementation(async(url:string)=>{
+      if(url==='/api/templates')return response(catalog);
+      const record=url.includes(study.id)?study:url.includes(personal.id)?personal:info;
+      const colors=record===study?retainedBlue:olive;
+      return response({template:record,colors,defaults:colors,revision,defaultsRevision:revision});
+    });
+    vi.clearAllTimers();vi.resetModules();files=await import('./templateFiles');store=await import('./themeStore');
+    await files.initializeThemeFiles();
+    expect(store.getThemeSnapshot()).toMatchObject({templateId:info.id,templateBinding:{name:'青苔鎏金'}});
+    expect(store.getThemeSnapshot().templateUsers[blueInfo.id]).toEqual(archivedProfile);
+    await files.loadTemplateFile(study.id);
+    expect(store.getThemeSnapshot()).toMatchObject({templateId:study.id,templateBinding:{name:'地中海蓝',bases:['white','gray','black']}});
+    await files.loadTemplateFile(info.id);
+    expect(store.getThemeSnapshot().templateBinding?.name).toBe('青苔鎏金');
+    await files.loadTemplateFile(personal.id);
+    store.setTheme(old=>updateThemeColors(old,{accent:'#765432'}));store.flushThemePreferences();
+    vi.clearAllTimers();vi.resetModules();files=await import('./templateFiles');store=await import('./themeStore');
+    await files.initializeThemeFiles();
+    expect(store.getThemeSnapshot()).toMatchObject({templateId:personal.id,preferences:{colors:{accent:'#765432'}}});
+    expect(store.getThemeSnapshot().templateUsers[blueInfo.id]).toEqual(archivedProfile);
+  });
   it('keeps editor highlights per template/base through personal defaults, restore and restart',async()=>{
     let files=await import('./templateFiles'),store=await import('./themeStore');await files.initializeThemeFiles();await files.loadTemplateFile('claude-mediterranean-blue');
     store.setTheme(old=>({...old,editorProfiles:{black:{selectionBackground:'#12345688',selectionText:'#abcdef'},white:{selectionBackground:'#65432177'}}}));store.saveDefaultTheme();

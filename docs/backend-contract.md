@@ -65,6 +65,7 @@
 | GET | `/api/templates/:id/icons` | — | `{version:1,icons,localIcons,revision,warning,packRevision}`，独立读取图标包。`icons` 为逐键合并结果，`localIcons` 为用户模板子目录的有效定义。`warning` 报告跳过的坏包或无效条目。 |
 | POST | `/api/templates/:id/icons` | `{version:1,revision,localIcons}` | 校验全部提交定义并原子替换用户模板子目录的图标文件，返回最新图标包。`revision` 为本地文件字节的 SHA-256，文件不存在时为 `null`。本地文件已有并发修改时返回 409。图标和配色文件各自限制 1 MiB。 |
 | GET | `/api/explorer/trash` | — | 回收站记录数组（按删除时间倒序） |
+| GET | `/api/explorer/trash/document` | `?id=<已删除条目 UUID>` | 当前仓库内已删除的 Markdown 文稿只读快照 `{id,path,text}`，最大 2 MB。未知或内容缺失的条目返回 404。 |
 | POST | `/api/explorer/trash/preview` | `{days:0\|7\|15\|30\|90}`（0＝全部条目） | `{token,days,cutoff,expiresAt,items,count}` |
 | POST | `/api/explorer/trash/purge` | `{token}` | `{deletedIds,failed}` |
 | POST | `/api/explorer/trash/delete` | `{ids:[uuid]}`（1–100 条，免 token） | `{deletedIds,failed}`；逐条校验记录与内容指纹；全都不在 → 404 `这些条目已不在回收站中。`；失败项带 `dataDeleted`/`partialDataDeleted`（见 §6） |

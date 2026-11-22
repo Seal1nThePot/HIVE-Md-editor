@@ -19,6 +19,24 @@ const validId=id=>typeof id==='string'&&/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)&&!
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const color=(value,alpha=false)=>typeof value==='string'&&(alpha?/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i:/^#[0-9a-f]{6}$/i).test(value);
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+const retiredStarterTemplates={
+  'olive-gold':{name:'青苔鎏金',bases:['black','gray','white'],description:'低饱和青苔绿与灰金，包含黑、浅灰、白三档配色。'},
+  'mediterranean-blue':{name:'地中海蓝',bases:['black','white'],description:'包含深色方案与浅色方案；R6 浅色外围略加中性灰，中央正文保持纯白，深色沿用 R5；1px 分层细描边、AI 白星与冰蓝悬停；black 对应深色，white 对应浅色。'},
+  'claude-mediterranean-blue':{name:'地中海蓝 · Claude',bases:['white','gray','black'],description:'晴空海蓝分层逻辑：外框（标题栏/功能区标题/面板头）逐层递进到柔和的侧栏与面板，最终落到最干净的纸面；强调色、选区与 AI 按钮同源，AI 图标用深色高对比线条框定，停靠与激活态统一为天蓝系。包含白、浅灰、黑三档。black 深色，gray 浅灰，white 浅色。'},
+  'hive-moss-gold-study':{name:'青苔鎏金 · 配色试验',bases:['black','gray','white'],description:'黑、灰、白三档沿用青苔与金色。黑底略提亮菜单和输入框的描边，白底略压深菜单描边，让细线更易辨认。'},
+};
+const starterNames={
+  'claude-olive-gold':['青苔鎏金 · Claude','青苔鎏金'],
+  'hive-mediterranean-blue-study':['地中海蓝 · 海蓝选区','地中海蓝'],
+};
+
+// Older packages wrote plain manifests without a provenance flag. Match their public
+// metadata so a personal template can reuse a historic ID without being retired.
+function isRetiredStarter(raw,template){
+  if(!Object.hasOwn(retiredStarterTemplates,template.id)||Object.keys(raw).some(key=>!Object.hasOwn(template,key)))return false;
+  const original=retiredStarterTemplates[template.id];
+  return raw.name===original.name&&raw.description===original.description&&JSON.stringify(raw.bases)===JSON.stringify(original.bases);
+}
 function missingReasoningFields(current,fallback){
   return Object.fromEntries(reasoningFields.filter(field=>current?.[field]===undefined&&fallback[field]!==undefined).map(field=>[field,fallback[field]]));
 }
@@ -119,7 +137,9 @@ export function validateTemplateColors(value,allowDefault=true){
 }
 function manifest(value,id){
   if(!object(value)||value.version!==1||value.id!==id||typeof value.name!=='string'||!value.name.trim()||value.name.length>80||typeof value.description!=='string'||value.description.length>300||value.colorsFile!=='colors.json'||!Array.isArray(value.bases)||!value.bases.length||value.bases.some(base=>!bases.includes(base)))throw fail('模板说明文件无效。');
-  return {version:1,id,name:value.name,description:value.description,bases:[...new Set(value.bases)],colorsFile:'colors.json'};
+  const names=Object.hasOwn(starterNames,id)?starterNames[id]:null;
+  const name=names&&value.name===names[0]?names[1]:value.name;
+  return {version:1,id,name,description:value.description,bases:[...new Set(value.bases)],colorsFile:'colors.json'};
 }
 
 export async function templateStore(directory,bundledDirectory,options={}){
@@ -129,7 +149,7 @@ export async function templateStore(directory,bundledDirectory,options={}){
   const queues=new Map();
   let sourceWarnings=[],closed=false,watcher,sourceTimer,sourcePoll,syncing,closing;
   const source=options.sourceDirectory?path.resolve(options.sourceDirectory):null;
-  const builtinIds=new Set(),sourceRecords=new Map();
+  const sourceRecords=new Map();
   let sourceState={version:1,source,templates:{}};
   async function folder(id){
     if(!validId(id))throw fail('模板标识无效。');
@@ -167,12 +187,20 @@ export async function templateStore(directory,bundledDirectory,options={}){
     if(backup){try{const old=await readFile(target);await replace(target.replace(/\.json$/,'.before-source.json'),old.bytes);}catch(error){if(error.code!=='ENOENT')throw error;}}
     await replace(target,JSON.stringify(value,null,2)+'\n');
   }
+  async function isBundledStarter(template){
+    if(!Object.hasOwn(starterNames,template.id))return false;
+    try{
+      const bundled=(await readFile(path.join(bundledDirectory,template.id,'template.json'))).value;
+      return JSON.stringify(template)===JSON.stringify(manifest(bundled,template.id));
+    }catch(error){if(error.code==='ENOENT')return false;throw error;}
+  }
   // Seed metadata only. The first renderer links its existing colors without replacing them.
   for(const entry of await fs.readdir(bundledDirectory,{withFileTypes:true}).catch(error=>{if(error.code==='ENOENT')return [];throw error;})){
     if(!entry.isDirectory()||!validId(entry.name))continue;
-    builtinIds.add(entry.name);
     try{
-    const bundled=manifest((await readFile(path.join(bundledDirectory,entry.name,'template.json'))).value,entry.name);
+    const metadata=(await readFile(path.join(bundledDirectory,entry.name,'template.json'))).value;
+    const bundled=manifest(metadata,entry.name);
+    if(isRetiredStarter(metadata,bundled))continue;
     const destination=path.join(directory,entry.name);
     await fs.mkdir(destination).catch(error=>{if(error.code!=='EEXIST')throw error;});
     await folder(entry.name);
@@ -192,8 +220,10 @@ export async function templateStore(directory,bundledDirectory,options={}){
           if(!entry.isDirectory()||!validId(entry.name))continue;
           try{
             const sourceFolder=path.join(source,entry.name),stat=await fs.lstat(sourceFolder);if(stat.isSymbolicLink())throw fail('模板源目录不能是链接。');
-            const meta=await readFile(path.join(sourceFolder,'template.json')),raw=await readFile(path.join(sourceFolder,'colors.json'));
-            const template=manifest(meta.value,entry.name),colors=validateTemplateColors(raw.value);
+            const meta=await readFile(path.join(sourceFolder,'template.json'));
+            const template=manifest(meta.value,entry.name);
+            if(isRetiredStarter(meta.value,template))continue;
+            const raw=await readFile(path.join(sourceFolder,'colors.json')),colors=validateTemplateColors(raw.value);
             sourceRecords.set(entry.name,{template,colors});
             const previous=Object.hasOwn(sourceState.templates,entry.name)?sourceState.templates[entry.name]:undefined;
             const destination=path.join(directory,entry.name);
@@ -205,7 +235,8 @@ export async function templateStore(directory,bundledDirectory,options={}){
               let hasMeta=true,hasColors=true;
               try{await fs.lstat(path.join(destination,'template.json'));}catch(error){if(error.code==='ENOENT')hasMeta=false;else throw error;}
               try{await fs.lstat(path.join(destination,'colors.json'));}catch(error){if(error.code==='ENOENT')hasColors=false;else throw error;}
-              if(!hasMeta||previous&&previous.metadata!==meta.revision)await importFile(path.join(destination,'template.json'),template,hasMeta);
+              // Known title aliases are applied at read time, leaving authored runtime manifests intact.
+              if(!hasMeta||previous&&previous.metadata!==meta.revision&&!await isBundledStarter(template))await importFile(path.join(destination,'template.json'),template,hasMeta);
               // First connection preserves existing preferences. New source-only templates
               // can be imported immediately; builtins wait for the renderer's legacy link.
               if(previous&&previous.colors!==raw.revision||!hasColors||recoverReasoning){
@@ -238,9 +269,11 @@ export async function templateStore(directory,bundledDirectory,options={}){
     try{watcher=watch(source,{recursive:true},schedule);watcher.on('error',schedule);watcher.unref();}catch{/* Polling also covers a source directory created later. */}
     sourcePoll=setInterval(()=>{void syncSource();},1500);sourcePoll.unref();
   }
-  async function read(id,refresh=true){
+  async function read(id,refresh=true,catalogOnly=false){
     if(refresh)await syncSource();
-    const target=await folder(id),template=manifest((await readFile(path.join(target,'template.json'))).value,id);
+    const target=await folder(id),raw=(await readFile(path.join(target,'template.json'))).value;
+    const template=manifest(raw,id);
+    if(catalogOnly&&isRetiredStarter(raw,template))return null;
     let stored;
     try{stored=await readFile(path.join(target,'colors.json'));}
     catch(error){
@@ -269,10 +302,10 @@ export async function templateStore(directory,bundledDirectory,options={}){
     await syncSource();const templates=[],warnings=[...sourceWarnings];
     for(const entry of await fs.readdir(directory,{withFileTypes:true})){
       if(!entry.isDirectory()||!validId(entry.name))continue;
-      try{const record=await read(entry.name,false);templates.push({...record.template,directory:record.directory});}
+      try{const record=await read(entry.name,false,true);if(record)templates.push({...record.template,directory:record.directory});}
       catch(error){warnings.push(`${entry.name}：${error.message}`);}
     }
-    templates.sort((a,b)=>a.id==='olive-gold'?-1:b.id==='olive-gold'?1:a.name.localeCompare(b.name,'zh-CN'));
+    templates.sort((a,b)=>a.id==='claude-olive-gold'?-1:b.id==='claude-olive-gold'?1:a.name.localeCompare(b.name,'zh-CN'));
     return {directory,sourceDirectory:source,templates,warnings};
   }
   async function readIconBytes(root,id){

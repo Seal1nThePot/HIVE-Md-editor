@@ -2,7 +2,7 @@ import {useSyncExternalStore} from 'react';
 import type {IconOverrides} from '../../../shared/iconPack.mjs';
 import {setIconOverrides} from '../../shared/icons';
 import {normalizeTheme,type BaseColor,type ThemePreferences} from './themePreferences';
-import {applyOliveGrayHierarchyUpdate,bindThemeTemplate,flushThemePreferences,getThemeSnapshot} from './themeStore';
+import {defaultTemplateId,bindThemeTemplate,flushThemePreferences,getThemeSnapshot} from './themeStore';
 
 export type TemplateInfo={version:1;id:string;name:string;description:string;bases:BaseColor[];colorsFile:'colors.json';directory:string};
 type IconPack={version:1;icons:IconOverrides;warning:string;packRevision:string};
@@ -56,11 +56,12 @@ export function initializeThemeFiles(){
   if(boot)return boot;publish({status:'loading',error:''});const selected=selection;
   boot=(async()=>{
     const catalog=await refreshTemplateCatalog();if(selected!==selection||selecting)return;
-    const before=getThemeSnapshot(),id=catalog.templates.some(item=>item.id===before.templateId)?before.templateId:catalog.templates[0]?.id;
+    const before=getThemeSnapshot();
+    const id=(catalog.templates.find(item=>item.id===before.templateId)??catalog.templates.find(item=>item.id===defaultTemplateId)??catalog.templates[0])?.id;
     if(!id)throw new Error('没有可用模板，请检查模板文件夹。');
     const record=await api<TemplateRecord>(route(id)+'?colorsOnly=1');if(selected!==selection)return;
     if(getThemeSnapshot().preferences!==before.preferences)throw new Error('读取期间配色已变化，当前调整已保留。');
-    bind(record,true);applyOliveGrayHierarchyUpdate();flushThemePreferences();publish({status:'ready',error:''});startPolling();
+    bind(record,true);flushThemePreferences();publish({status:'ready',error:''});startPolling();
     void loadStartupIcons(id,selected);
   })().catch(error=>{if(selected===selection){publish({status:'error',error:(error as Error).message});boot=undefined;}});return boot;
 }
@@ -78,7 +79,7 @@ export async function loadTemplateFile(id:string){
     if(!flushThemePreferences())throw new Error('用户配色尚未保存，请先处理本机保存提示。');
     const before=getThemeSnapshot(),record=await api<TemplateRecord>(route(id));if(selected!==selection)return;
     if(getThemeSnapshot().preferences!==before.preferences||getThemeSnapshot().defaultScheme!==before.defaultScheme)throw new Error('读取期间配色已变化，当前调整已保留。');
-    bind(record,true);applyIconPack(id,record.iconPack);applyOliveGrayHierarchyUpdate();flushThemePreferences();publish({status:'ready',error:''});startPolling();
+    bind(record,true);applyIconPack(id,record.iconPack);flushThemePreferences();publish({status:'ready',error:''});startPolling();
   }catch(error){
     if(selected!==selection)return;
     if(snapshot.status==='loading'){boot=undefined;publish({status:'error',error:(error as Error).message});}

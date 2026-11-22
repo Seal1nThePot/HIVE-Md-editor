@@ -1,7 +1,7 @@
 {
   "version": 1,
   "id": "hive-mediterranean-blue-study",
-  "name": "地中海蓝 · 海蓝选区",
+  "name": "地中海蓝",
   "description": "蓝色标题栏与面板围住明亮纸面，黑色底色沿用深海蓝。白色、浅灰两档用更深一档的海蓝标出文件和所选文字。三档写作快捷栏的中央星标在悬停或键盘聚焦时呈深蓝色。",
   "bases": [
     "white",
