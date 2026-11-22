@@ -216,7 +216,7 @@ async function worker(port, profile) {
       await drag(await call('line', 'Ctrl outside body'), ctrl);
       const colocated = await call('idsAt', 'Ctrl outside body');
       assert.equal(colocated.length, 2, 'Two notes should share the same visible text range');
-      assert.ok(await call('popup'), 'New co-located note did not open');
+      assert.ok(await until(() => call('popup')), 'New co-located note did not open');
       const selection = await call('selection');
       await mouse('mouseMoved', await call('blank'));
       await pause(420);
