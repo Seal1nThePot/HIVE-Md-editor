@@ -801,17 +801,21 @@ function WritingApp() {
   });
   async function openTrashedDocument(item:TrashRecord){
     const unavailable=()=>structuring.current||switching.current||viewApplying.current||!!requestAnchor.current&&running.current;
+    const checkRoom=()=>{
+      if([...sessions.current.keys()].filter(id=>workspace.isOpen(id)).length>=48)throw new Error('打开的文档标签已达 48 个，请先关闭不再使用的标签页。');
+    };
     if(unavailable())throw new Error('请等待当前文稿操作完成，再打开回收站预览。');
     if(trashDocumentReads.current.has(item.id))return;
     const existing=[...sessions.current.values()].find(session=>session.trashPreview?.id===item.id&&workspace.isOpen(session.id));
     if(existing){workspace.reveal(existing.id);return;}
-    if([...sessions.current.keys()].filter(id=>workspace.isOpen(id)).length>=48)throw new Error('打开的文档标签已达 48 个，请先关闭不再使用的标签页。');
+    checkRoom();
     const controller=new AbortController();
     trashDocumentReads.current.set(item.id,controller);
     try{
       const preview=await loadTrashDocument(request,item.id,controller.signal);
       if(controller.signal.aborted||!appAlive.current||switching.current)return;
       if(unavailable())throw new Error('当前文稿状态已变化，请重新打开回收站预览。');
+      checkRoom();
       const id=trashPreviewTabPrefix+uid();
       sessions.current.set(id,{id,disk:null,state:null,view:null,dirty:false,trashPreview:preview});
       if(workspace.openDocumentTab(id,activeSession.current)!=='succeeded'){
