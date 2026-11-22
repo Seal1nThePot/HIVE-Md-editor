@@ -27,9 +27,15 @@ function browserSetup() {
   const button = () => document.querySelector('.dock-annotation-button');
   const center = (rect) => ({x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2)});
   window.annotationTest = {
-    popup: () => !!popup(),
+    popup: () => !!visible(popup()),
     note: () => popup()?.querySelector('textarea').value,
     exists: text => [...editor().querySelectorAll('[data-annotation-id]')].some(el => el.textContent.includes(text)),
+    presentation: selector => {
+      const pencil = document.querySelector(selector);
+      const key = pencil?.dataset.annotationKey;
+      const frame = [...editor().querySelectorAll('[data-annotation-frame-id]')].find(el => el.dataset.annotationFrameId === key);
+      return {pencil: !!visible(pencil), frame: !!visible(frame), popup: !!visible(popup()), note: popup()?.querySelector('textarea').value};
+    },
     selected: () => document.getSelection().toString(),
     mode: () => button().getAttribute('aria-pressed'),
     toolbar: () => center(button().getBoundingClientRect()),
@@ -118,6 +124,11 @@ async function worker(port, profile) {
     const {start, end} = await call('line', lastLine);
     return {x: Math.round((start.x + end.x) / 2), y: start.y};
   };
+  const hoverLine = async text => {
+    const {start, end} = await call('line', text);
+    await mouse('mouseMoved', {x: Math.round((start.x + end.x) / 2), y: start.y});
+    await pause(65);
+  };
   async function checkDismiss(name, point) {
     const hit = await call('hit', point);
     assert.ok(hit.editor && !hit.popup, 'Outside target must be in the editor outside the popup: ' + JSON.stringify(hit));
@@ -179,18 +190,31 @@ async function worker(port, profile) {
     if (await call('popup')) await click(await call('findButton', '完成'));
     const firstBubble = '.annotation-bubble[title*="Ctrl outside body"]';
     if (await evaluate('!!document.querySelector(' + JSON.stringify(firstBubble) + ')')) {
+      await hoverLine('Ctrl outside body');
       await click(await call('point', firstBubble));
       check('Reopening the annotation preserves the note edited before dismissal', await call('note') === 'requirement for Ctrl outside body');
-      await click(await call('point', '.inline-annotation-editor .annotation-remove'));
-      check('Delete still removes the mark and popup', !(await call('popup')) && !(await call('exists', 'Ctrl outside body')));
+      await mouse('mouseMoved', await call('blank'));
+      await pause(420);
+      const hidden = await call('presentation', firstBubble);
+      check('Moving away hides the pencil, frame and editor while retaining the draft',
+        !hidden.pencil && !hidden.frame && !hidden.popup && hidden.note === 'requirement for Ctrl outside body', hidden);
+      await hoverLine('Ctrl outside body');
+      const restored = await call('presentation', firstBubble);
+      check('Returning restores the same pencil, frame and open annotation draft',
+        restored.pencil && restored.frame && restored.popup && restored.note === hidden.note, restored);
+      await click(await call('point', firstBubble), 'right');
+      check('Right-click removes the targeted mark and note, leaving a neighboring annotation intact',
+        await until(async () => !(await call('popup')) && !(await call('exists', 'Ctrl outside body')) && await call('exists', 'Ctrl outside blank')));
     }
 
     const secondBubble = '.annotation-bubble[title*="Ctrl outside blank"]';
     if (await evaluate('!!document.querySelector(' + JSON.stringify(secondBubble) + ')')) {
+      await hoverLine('Ctrl outside blank');
       await click(await call('point', secondBubble));
       assert.ok(await call('popup'), 'Second annotation did not reopen');
       await evaluate('window.dispatchEvent(new Event("blur"))');
       check('Owner window blur closes the popup (synthetic blur)', !(await call('popup')));
+      await hoverLine('Ctrl outside blank');
       await click(await call('point', secondBubble));
       assert.ok(await call('popup'), 'Annotation did not reopen after owner blur');
       await evaluate('document.querySelector(\'[data-path="annotation-other.md"]\').click()');
@@ -199,11 +223,22 @@ async function worker(port, profile) {
       await evaluate('document.querySelector(\'[data-path="annotation-source.md"]\').click()');
       assert.ok(await until(() => evaluate('!!document.querySelector(' + JSON.stringify(secondBubble) + ')')), 'Returning to source did not restore its annotation bubble');
       check('Returning to the previous document keeps its popup dismissed', !(await call('popup')));
+      await hoverLine('Ctrl outside blank');
       await click(await call('point', secondBubble));
       await click(await call('point', '.inline-annotation-editor .gold-button'));
       check('Send closes the popup and shows the submitted annotation as a compact chip', await until(() => evaluate('!annotationTest.popup() && [...document.querySelectorAll(".messages .message.user .chat-annotation-entries > button")].some(button=>button.textContent.includes("Ctrl outside blank"))')));
       check('The submitted note still reaches the demo reply', await until(() => evaluate('[...document.querySelectorAll(".messages .message.assistant")].some(el=>el.textContent.includes("requirement for Ctrl outside blank"))')));
     }
+    const pendingText = 'Toolbar outside blank';
+    const pendingBubble = '.annotation-bubble[title*="'+pendingText+'"]';
+    await hoverLine(pendingText);
+    await click(await call('point', pendingBubble));
+    await click(await call('point', '.inline-annotation-editor .gold-button'));
+    await hoverLine(pendingText);
+    await click(await call('point', pendingBubble), 'right');
+    await pause(850);
+    check('Right-click during a submitted annotation request prevents a late response',
+      !(await call('exists', pendingText)) && !(await evaluate('[...document.querySelectorAll(".messages .message.assistant")].some(el=>el.textContent.includes("requirement for Toolbar outside blank"))')));
   } catch (error) {
     check('Test harness', false, error.stack);
   } finally {

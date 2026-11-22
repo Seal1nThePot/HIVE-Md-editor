@@ -59,6 +59,14 @@ it('applies separate bounds by newest timestamp and leaves snapshots independent
   expect((await createHistoryStore(directory)).read()).toEqual(shrunk);
 });
 
+it('persists optional polish metadata with the original and accepted candidate',async()=>{
+  const initial=record('polish','ai',1);
+  const polish={...initial,changes:{...initial.changes,polish:{id:'comparison',reason:'精简',node:'正文',annotationIds:['selection']}}};
+  await store.append(polish);
+  await store.setStatus({id:'polish',status:'reverted',expectedStatus:'applied'});
+  expect((await createHistoryStore(directory)).read().entries).toEqual([{...polish,status:'reverted'}]);
+});
+
 it('serializes concurrent operations, ignores duplicate IDs, and shields internal snapshots from callers',async()=>{
   const records=Array.from({length:15},(_,index)=>record('record-'+index,index%2===0?'human':'ai',index));
   const snapshot=checkpoint('once','ai',3);

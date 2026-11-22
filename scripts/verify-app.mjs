@@ -167,7 +167,8 @@ async function worker(){
       check('deleting a folder removes its open descendant content',!get('.document-pane')?.textContent.includes('后代删除唯一内容'));
       await open('整合验收.md','整合验收');
       const composer=()=>get('.conversation-view textarea');
-      const writePrompt=value=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(composer(),value);composer().dispatchEvent(new Event('input',{bubbles:true}));};
+      const writeTextarea=(area,value)=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(area,value);area.dispatchEvent(new Event('input',{bubbles:true}));};
+      const writePrompt=value=>writeTextarea(composer(),value);
       const send=async()=>{await wait(()=>!get('[aria-label="发送给 AI"]')?.disabled&&get('[aria-label="发送给 AI"]'),'ready to send');get('[aria-label="发送给 AI"]').click();};
       const closeTab=(path,id)=>[...document.querySelectorAll('.document-tab-close')].find(button=>button.getAttribute('aria-label')==='关闭'+path+'标签页'&&button.getClientRects().length&&(!id||(button.closest('.workspace-tab-item')?.querySelector('[data-panel-tab]')?.dataset.panelTab||button.closest('[data-panel-id]')?.dataset.panelId)===id))?.click();
       const activeDocument=()=>get('.active-editor .split-main .cm-content')?.cmTile?.root?.view;
@@ -177,6 +178,8 @@ async function worker(){
       const currentChat=()=>get('.messages').textContent;
       const activeTabText=()=>get('.active-editor')?.textContent||'';
       const reviewButton=path=>[...document.querySelectorAll('.messages .chat-context')].find(item=>item.textContent.includes(path))?.querySelector('button');
+      const comparison=()=>get('.active-editor .proposal-comparison');
+      const candidate=()=>comparison()?.querySelector('textarea[aria-label="编辑润色结果"]');
 
       await open('对话甲.md','甲稿原句');
       writePrompt('跨标签讨论消息');
@@ -204,20 +207,24 @@ async function worker(){
       select('甲稿原句');
       writePrompt('把“甲稿原句”改成“甲稿建议”');
       await send();
-      await wait(()=>get('.active-editor .proposal-bar')&&activeTabText().includes('甲稿建议'),'primary proposal preview');
+      await wait(()=>candidate()?.value==='甲稿建议','primary polish comparison');
+      check('polish compares the complete candidate below unchanged original body and disk',
+        get('.active-editor .proposal-original')?.textContent==='甲稿原句'&&activeDocument().state.sliceDoc().includes('甲稿原句。手写尾句。')&&
+        !activeDocument().state.sliceDoc().includes('甲稿建议')&&(await fileText('对话甲.md')).endsWith('甲稿原句。')&&
+        comparison().getBoundingClientRect().top>get('.active-editor .proposal-original').getBoundingClientRect().bottom);
       writePrompt('审阅期间保留的草稿');
       closeTab('对话甲.md','editor');
       await wait(()=>get('.active-editor .document-new-page')&&reviewButton('对话甲.md'),'park primary proposal');
       check('closing primary keeps pending suggestion unsaved and retains the chat draft',(await fileText('对话甲.md')).includes('甲稿原句')&&!(await fileText('对话甲.md')).includes('甲稿建议')&&composer().value==='审阅期间保留的草稿');
       get('[data-panel-tab="'+siblingTab.dataset.panelTab+'"]').click();
-      await wait(()=>activeTabText().includes('甲稿建议'),'select a mirrored view of the pending proposal');
+      await wait(()=>activeTabText().includes('甲稿原句')&&activeTabText().includes('手写尾句。'),'select a mirrored view of the pending proposal');
       window.dispatchEvent(new KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true}));
       await wait(()=>document.body.textContent.includes('这段 AI 建议还没确认'),'saving the mirrored preview is blocked');
       check('saving another tab for the same file cannot commit the pending proposal',!(await fileText('对话甲.md')).includes('甲稿建议'));
       reviewButton('对话甲.md').click();
-      await wait(()=>get('.active-editor .proposal-bar')&&activeTabText().includes('手写尾句。'),'restore primary proposal with pre-existing manual edit');
-      get('.active-editor .proposal-bar .adjust').click();
-      await wait(()=>!get('.active-editor .proposal-bar')&&activeTabText().includes('甲稿原句'),'reject restored primary proposal');
+      await wait(()=>candidate()?.value==='甲稿建议'&&activeTabText().includes('手写尾句。'),'restore primary proposal with pre-existing manual edit');
+      comparison().querySelector('.proposal-cancel').click();
+      await wait(()=>!comparison()&&activeTabText().includes('甲稿原句'),'reject restored primary proposal');
       check('review restores original text and keeps the unsent message',composer().value==='审阅期间保留的草稿'&&activeTabText().includes('手写尾句。'));
 
       await menuAction('对话乙.md','在新标签页中打开');
@@ -225,15 +232,37 @@ async function worker(){
       select('乙稿原句');
       writePrompt('把“乙稿原句”改成“乙稿建议”');
       await send();
-      await wait(()=>get('.active-editor .proposal-bar')&&activeTabText().includes('乙稿建议'),'secondary proposal preview');
+      await wait(()=>candidate()?.value==='乙稿建议','secondary polish comparison');
       closeTab('对话乙.md');
       await wait(()=>reviewButton('对话乙.md'),'park secondary proposal');
       check('closing secondary preserves the uncommitted proposal',(await fileText('对话乙.md')).includes('乙稿原句')&&!(await fileText('对话乙.md')).includes('乙稿建议'));
       get('.explorer-row[data-path="对话乙.md"]').click();
-      await wait(()=>get('.active-editor .proposal-bar')&&activeTabText().includes('乙稿建议'),'reopen secondary proposal by file path');
-      get('.active-editor .proposal-bar .accept').click();
-      await wait(()=>!get('.active-editor .proposal-bar'),'accept on the original document');
-      check('review and acceptance stay attached to the original document',activeTabText().includes('乙稿建议')&&!(await fileText('对话甲.md')).includes('乙稿建议'));
+      await wait(()=>candidate()?.value==='乙稿建议','reopen secondary proposal by file path');
+      comparison().querySelector('.proposal-refine-button').click();
+      await wait(()=>comparison()?.querySelector('.proposal-refine textarea'),'lower candidate annotation');
+      writeTextarea(comparison().querySelector('.proposal-refine textarea'),'把“乙稿建议”改成“乙稿二次建议”');
+      comparison().querySelector('.proposal-refine button[type="submit"]').click();
+      check('the prior candidate stays available while new polish is running',candidate()?.value==='乙稿建议'&&activeDocument().state.sliceDoc().includes('乙稿原句'));
+      await wait(()=>candidate()?.value==='乙稿二次建议','refine the lower candidate');
+      writeTextarea(candidate(),'乙稿人工定稿');
+      comparison().querySelector('.proposal-accept').click();
+      await wait(()=>!comparison()&&activeDocument().state.sliceDoc().includes('乙稿人工定稿'),'accept the manually edited candidate on the original document');
+      check('acceptance writes only the selected range in its own editor',activeDocument().state.sliceDoc().endsWith('乙稿人工定稿。')&&(await fileText('对话乙.md')).endsWith('乙稿原句。')&&!(await fileText('对话甲.md')).includes('乙稿人工定稿'));
+      get('.header-help[aria-label="历史记录"]').click();
+      await wait(()=>get('.history-page [role="tablist"]'),'open history journal');
+      [...document.querySelectorAll('.history-page [role="tab"]')].find(button=>button.textContent==='AI 操作').click();
+      const historyAction=title=>[...document.querySelectorAll('.history-detail .history-actions button')].find(button=>button.textContent===title);
+      await wait(()=>historyAction('撤回这次改动')&&!historyAction('撤回这次改动').disabled,'history adoption entry');
+      historyAction('撤回这次改动').click();
+      await wait(()=>historyAction('重新应用')&&!historyAction('重新应用').disabled,'undo the adoption through operation history');
+      get('[aria-label="关闭历史记录"]').click();
+      await wait(()=>candidate()?.value==='乙稿人工定稿','recover the exact accepted candidate from the history journal');
+      check('history undo restores original body and both comparison boxes',activeDocument().state.sliceDoc().endsWith('乙稿原句。')&&!!get('.active-editor .proposal-original'));
+      comparison().querySelector('.proposal-accept').click();
+      await wait(()=>!comparison(),'reaccept the restored comparison');
+      get('.active-editor [aria-label="撤回 AI 修改"]').click();
+      await wait(()=>candidate()?.value==='乙稿人工定稿','inline undo also restores the comparison');
+      check('inline undo restores exact accepted candidate and original',activeDocument().state.sliceDoc().endsWith('乙稿原句。')&&!!get('.active-editor .proposal-original'));
       await new Promise(resolve=>setTimeout(resolve,900));
       return {checks,build};
     })()`);

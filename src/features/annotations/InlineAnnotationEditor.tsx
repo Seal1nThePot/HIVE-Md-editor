@@ -4,6 +4,7 @@ import type { EditorView } from "@codemirror/view";
 import { Check, List, Send, Trash2 } from "../../shared/icons";
 import "./annotation-bubble.css";
 import type { AnnotationSource, TextAnnotation } from "./annotations";
+import {hideAnnotationSelection} from './annotationDecorations';
 import {sameSourceTable} from '../editor/tableViewport';
 export function clampAnnotationPosition(value:{x:number;y:number},width:number,height:number,viewportWidth:number,viewportHeight:number){
   return {x:Math.max(8,Math.min(value.x,Math.max(8,viewportWidth-width-8))),y:Math.max(8,Math.min(value.y,Math.max(8,viewportHeight-height-8)))};
@@ -232,11 +233,7 @@ export default function InlineAnnotationEditor({
       for(const cell of host.querySelectorAll<HTMLElement>('[data-table-annotation-ids]')){
         cell.toggleAttribute('data-annotation-visible',tableAnnotationIds(cell).some(id=>ids.has(id)));
       }
-      const ranges=editor.state.selection.ranges.filter(range=>!range.empty);
-      const hidden=ranges.length>0&&ranges.every(range=>{
-        const matches=items.filter(item=>item.source===source&&!item.stale&&item.from===range.from&&item.to===range.to);
-        return matches.length>0&&matches.every(item=>!ids.has(item.id));
-      });
+      const hidden=hideAnnotationSelection(editor.state,ids);
       editor.dom.toggleAttribute('data-annotation-selection-hidden',hidden);
       for(const pane of host.querySelectorAll('.cm-editor'))pane.toggleAttribute('data-annotation-selection-hidden',hidden);
     }
@@ -302,9 +299,9 @@ export default function InlineAnnotationEditor({
   }
   function cancelBubble(bubble:AnnotationBubble){
     const related=[...bubble.ids,...bubble.candidateIds];
-    const openGroup=shown&&shown.ids.some(id=>related.includes(id)) ? shown.ids : null;
-    const ids=openGroup??bubble.ids;
-    if(openGroup)close();
+    const displayed=shown?.ids.filter(id=>related.includes(id));
+    const ids=displayed?.length ? displayed : bubble.ids;
+    if(displayed?.length)close();
     setChoices(current=>current.filter(id=>!ids.includes(id)));
     setVisibleIds(hoverIds.filter(id=>!ids.includes(id)));
     for(const id of ids)groups.current.delete(id);

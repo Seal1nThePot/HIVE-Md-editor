@@ -1,4 +1,4 @@
-import { StateEffect, StateField } from "@codemirror/state";
+import { StateEffect, StateField, type EditorState } from "@codemirror/state";
 import { Decoration, EditorView, type DecorationSet } from "@codemirror/view";
 export type AnnotationMark = {
   id: string;
@@ -37,3 +37,17 @@ export const annotationHighlights = StateField.define<DecorationSet>({
   },
   provide: (field) => EditorView.decorations.from(field),
 });
+
+export function hideAnnotationSelection(state:EditorState,visibleIds:ReadonlySet<string>){
+  const marks=state.field(annotationHighlights,false);
+  const selected=state.selection.ranges.filter(range=>!range.empty);
+  return !!marks&&selected.length>0&&selected.every(range=>{
+    let annotated=false, visible=false;
+    marks.between(range.from,range.to,(from,to,decoration)=>{
+      if(from!==range.from||to!==range.to)return;
+      annotated=true;
+      visible ||= visibleIds.has(decoration.spec.attributes['data-annotation-id']);
+    });
+    return annotated&&!visible;
+  });
+}
