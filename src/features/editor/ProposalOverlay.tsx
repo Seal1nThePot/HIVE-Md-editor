@@ -1,15 +1,71 @@
 import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {createPortal} from 'react-dom';
 import type {EditorView} from '@codemirror/view';
 import {Icon} from '../../shared/icons';
 import {inlineProposalField,type InlineProposal} from './proposalInline';
 import './proposalInline.css';
 
-type Props={view:EditorView|null;proposal:InlineProposal|null;accept:()=>void;reject:(adjust?:boolean)=>void};
+type Props={
+  view:EditorView|null;
+  proposal:InlineProposal|null;
+  accept:()=>void;
+  reject:(adjust?:boolean)=>void;
+  editCandidate?:(text:string)=>void;
+  editRefinementNote?:(note:string)=>void;
+  refineCandidate?:(instruction:string)=>void;
+  busy?:boolean;
+};
 
 type Position={top:number;left:number;width:number};
 
 /** 建议上方那条很薄的操作条：浮在正文上，滚到框外时贴住视口顶部继续跟随，直到这段建议走完。 */
-export function ProposalOverlay({view,proposal,accept,reject}:Props){
+export function ProposalOverlay(props:Props){
+  if(props.proposal?.placement==='comparison')return <ComparisonOverlay {...props}/>;
+  return <LegacyProposalOverlay {...props}/>;
+}
+
+function ComparisonOverlay({view,proposal,accept,reject,editCandidate,editRefinementNote,refineCandidate,busy}:Props){
+  const [mount,setMount]=useState<HTMLElement|null>(null);
+  const [annotating,setAnnotating]=useState(false);
+  const id=proposal?.id;
+  useLayoutEffect(()=>{
+    if(!view||!id){setMount(null);return;}
+    const locate=()=>setMount([...view.contentDOM.querySelectorAll<HTMLElement>('.proposal-comparison-mount')]
+      .find(element=>element.dataset.proposalId===id)??null);
+    locate();
+    const observer=new MutationObserver(locate);
+    observer.observe(view.contentDOM,{childList:true,subtree:true});
+    return()=>observer.disconnect();
+  },[view,id]);
+  useEffect(()=>{setAnnotating(Boolean(proposal?.refinementNote));},[id]);
+  if(!mount||mount.dataset.proposalId!==id||!proposal)return null;
+  const locked=proposal.stale||!!view?.state.readOnly;
+  const note=proposal.refinementNote??'';
+  const cancel=()=>reject();
+  return createPortal(<section className="proposal-comparison" aria-label="润色结果" data-stale={proposal.stale||undefined}>
+    <header><strong>润色结果</strong><span title={proposal.reason}>{proposal.reason}</span></header>
+    {proposal.stale&&<p role="status">原文已改动，请核对后重新润色。</p>}
+    <textarea aria-label="编辑润色结果" rows={Math.max(3,Math.min(12,proposal.text.split('\n').length+1))}
+      value={proposal.text} readOnly={locked||!editCandidate} onChange={event=>editCandidate?.(event.target.value)}/>
+    {annotating&&<form className="proposal-refine" onSubmit={event=>{
+      event.preventDefault();
+      if(note.trim()&&!locked&&!busy)refineCandidate?.(note);
+    }}>
+      <label>再次批注<textarea rows={2} value={note} readOnly={locked||busy||!editRefinementNote}
+        onChange={event=>editRefinementNote?.(event.target.value)} /></label>
+      <button type="submit" className="text-button" disabled={!note.trim()||locked||busy||!refineCandidate}>发送批注</button>
+    </form>}
+    <footer>
+      <button type="button" className="text-button proposal-refine-button" title="右键取消此润色预览" aria-expanded={annotating}
+        disabled={(locked||busy)&&!annotating} onClick={()=>setAnnotating(value=>!value)}
+        onContextMenu={event=>{event.preventDefault();event.stopPropagation();cancel();}}>再次批注</button>
+      <button type="button" className="text-button proposal-cancel" onClick={cancel}>取消</button>
+      <button type="button" className="gold-button proposal-accept" disabled={locked||busy||proposal.text===proposal.original} onClick={accept}>采纳</button>
+    </footer>
+  </section>,mount);
+}
+
+function LegacyProposalOverlay({view,proposal,accept,reject}:Props){
   const barRef=useRef<HTMLDivElement|null>(null);
   const [position,setPosition]=useState<Position|null>(null);
   const lastKey=useRef('');

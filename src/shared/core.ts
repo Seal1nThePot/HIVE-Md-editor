@@ -23,8 +23,13 @@ export type Proposal = Anchor & {
   node: string;
   writingNodeId?:string;
   creatingHeading?:boolean;
+  placement?: 'comparison';
+  annotationIds?: readonly string[];
+  refinementNote?: string;
+  /** An accepted comparison restored by undo. */
+  historyId?: string;
 };
-export type UndoEdit = Anchor & { before: string; historyId?: string };
+export type UndoEdit = Anchor & { before: string; historyId?: string; comparison?: Proposal };
 export const modeLabels: Record<Mode, string> = {
   discuss: "讨论想法",
   outline: "按大纲节点完成",
@@ -111,9 +116,10 @@ export function canApply(anchor: Anchor, text: string, file: string) {
 export function canApplyToDocument(anchor:Anchor,doc:EditorState['doc']|undefined,file:string){
   return !!doc&&!anchor.stale&&anchor.file===file&&anchor.from>=0&&anchor.to>=anchor.from&&anchor.to<=doc.length&&doc.sliceString(anchor.from,anchor.to)===anchor.original;
 }
-/** 建议已经预置进正文：这个位置仍然原样持有那段预览文本，才算还能确认。 */
+/** The range must still contain the original for a comparison, or the old inline preview text. */
 export function previewIntact(anchor:Proposal,doc:{sliceString(from:number,to:number):string;length:number}|undefined,file:string){
-  return !!doc&&!anchor.stale&&anchor.file===file&&anchor.from>=0&&anchor.from<=anchor.to&&anchor.to<=doc.length&&doc.sliceString(anchor.from,anchor.to)===anchor.text;
+  const expected=anchor.placement==='comparison'?anchor.original:anchor.text;
+  return !!doc&&!anchor.stale&&anchor.file===file&&anchor.from>=0&&anchor.from<=anchor.to&&anchor.to<=doc.length&&doc.sliceString(anchor.from,anchor.to)===expected;
 }
 
 export type Heading = {

@@ -14,7 +14,7 @@ const base={id,actor,createdAt:z.iso.datetime({offset:true}),label:z.string().mi
 const textPatch=z.strictObject({from:revision,before:z.string(),after:z.string(),contextBefore:z.string(),contextAfter:z.string()});
 const recordSchema=z.strictObject({...base,file:z.string().min(1).optional(),status,
   kind:z.enum(['text','properties','outline','file','snapshot-restore']),
-  changes:z.strictObject({text:z.array(textPatch).optional(),outline:z.strictObject({before:outline,after:outline}).optional(),
+  changes:z.strictObject({text:z.array(textPatch).optional(),polish:z.strictObject({id,reason:z.string(),node:z.string(),annotationIds:z.array(id).optional()}).optional(),outline:z.strictObject({before:outline,after:outline}).optional(),
     file:z.strictObject({action:z.string().min(1),path:z.string().min(1),id:id.optional(),from:z.string().min(1).optional()}).optional()}),
 });
 const snapshotSchema=z.strictObject({...base,file:z.string().min(1),text:z.string(),outline:outline.required({initialized:true})});

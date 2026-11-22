@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { DiskFile } from '../../shared/fileTypes';
@@ -21,15 +21,16 @@ type AnnotationActionsOptions = {
     workspace: { open: (id: string) => void };
     chooseSidebar: (id: 'outline' | 'files' | 'scratch') => void;
     setError: (message: string) => void;
-    setInlineRequest: (request: InlineAnnotationRequest | null) => void;
+    setInlineRequest: Dispatch<SetStateAction<InlineAnnotationRequest | null>>;
     setAnnotationFocus: (id: string) => void;
     generate: (options?: GenerationOptions) => unknown;
     openChat: (tab?: 'conversation' | 'annotations') => void;
     annotationInstruction: string;
+    onCancelAnnotations?: (ids:string[]) => void;
 };
 
 /** 正文/草稿上的标注动作：标记、取消、定位、重锚，以及把标注连同指示发给 AI。 */
-export function useAnnotationActions({ annotations, view, scratchView, activeTextSource, disk, file, activeSession, workspace, chooseSidebar, setError, setInlineRequest, setAnnotationFocus, generate, openChat, annotationInstruction }: AnnotationActionsOptions) {
+export function useAnnotationActions({ annotations, view, scratchView, activeTextSource, disk, file, activeSession, workspace, chooseSidebar, setError, setInlineRequest, setAnnotationFocus, generate, openChat, annotationInstruction, onCancelAnnotations }: AnnotationActionsOptions) {
     const [pendingAnnotationContext, setPendingAnnotationContext] = useState<{ source: AnnotationSource; file: string; editor: EditorView; doc: EditorView['state']['doc']; context: AnnotationContext } | null>(null);
     function markText(source: AnnotationSource = activeTextSource.current, expectedFile = source === 'document' ? disk.current?.path : undefined) {
         try {
@@ -83,6 +84,24 @@ export function useAnnotationActions({ annotations, view, scratchView, activeTex
             setError((error as Error).message);
         }
     }
+    function cancelAnnotations(ids:string[]) {
+        const removed = annotations.items.filter(item => ids.includes(item.id));
+        if (!removed.length) return;
+        const removedIds = removed.map(item => item.id);
+        onCancelAnnotations?.(removedIds);
+        annotations.removeMany(removedIds);
+        setInlineRequest(current => current && [current.id, ...(current.ids ?? [])].some(id => removedIds.includes(id)) ? null : current);
+        for (const source of ['document', 'scratch'] as const) {
+            const editor = source === 'document' ? view.current : scratchView.current;
+            if (!editor) continue;
+            const { selection } = editor.state;
+            const exact = removed.filter(item => item.source === source && !item.stale);
+            const ranges = selection.ranges.map(range => exact.some(item => range.from === item.from && range.to === item.to)
+                ? EditorSelection.cursor(range.head) : range);
+            const next = EditorSelection.create(ranges, selection.mainIndex);
+            if (!selection.eq(next)) editor.dispatch({ selection:next });
+        }
+    }
     function locateAnnotation(item: TextAnnotation) {
         try {
             if (item.source === "scratch") {
@@ -124,5 +143,5 @@ export function useAnnotationActions({ annotations, view, scratchView, activeTex
             setError((error as Error).message);
         }
     }
-    return { markText, showLocalAnnotation, unmarkText, locateAnnotation, reanchorAnnotation, sendAnnotations };
+    return { markText, showLocalAnnotation, unmarkText, locateAnnotation, reanchorAnnotation, sendAnnotations, cancelAnnotations };
 }

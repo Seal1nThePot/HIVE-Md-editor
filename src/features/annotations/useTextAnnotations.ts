@@ -464,6 +464,14 @@ export function useTextAnnotations(
     edit: (id: string, note: string) =>
       change(id, (item) => ({ ...item, note })),
     remove: (id: string) => change(id, () => null),
+    removeMany: (ids:string[]) => {
+      const cancelled = new Set(ids);
+      for (const record of visibleRecords()) {
+        const remaining = record.items.filter(item => !cancelled.has(item.id));
+        if (remaining.length !== record.items.length) { record.items = remaining; touch(record); }
+      }
+      setSelected(current=>new Set([...current].filter(id=>!cancelled.has(id))));
+    },
     toggle: (id: string) =>
       setSelected((set) => {
         const next = new Set(set);

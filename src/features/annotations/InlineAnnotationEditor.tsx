@@ -38,16 +38,20 @@ export type InlineAnnotationRequest = {
   nonce: string;
   focus?: boolean;
 };
-type AnnotationBubble={id:string;ids:string[];candidateIds:string[];source:AnnotationSource;file:string;x:number;y:number;target:ScreenRect;scroller:HTMLElement;scaleX:number;scaleY:number};
+type AnnotationBubble={id:string;ids:string[];candidateIds:string[];source:AnnotationSource;file:string;x:number;y:number;target:ScreenRect;paragraph:ScreenRect;scroller:HTMLElement;scaleX:number;scaleY:number};
+
+function sameRect(a:ScreenRect,b:ScreenRect){
+  return a.left===b.left&&a.top===b.top&&a.right===b.right&&a.bottom===b.bottom;
+}
 
 function sameAnnotationBubble(a:AnnotationBubble,b:AnnotationBubble){
   return a.id===b.id&&a.file===b.file&&a.source===b.source&&a.scroller===b.scroller&&a.scaleX===b.scaleX&&a.scaleY===b.scaleY&&
-    a.x===b.x&&a.y===b.y&&a.target.left===b.target.left&&a.target.top===b.target.top&&a.target.right===b.target.right&&a.target.bottom===b.target.bottom&&
+    a.x===b.x&&a.y===b.y&&sameRect(a.target,b.target)&&sameRect(a.paragraph,b.paragraph)&&
     a.ids.join('\0')===b.ids.join('\0')&&a.candidateIds.join('\0')===b.candidateIds.join('\0');
 }
 
-function screenAnnotationBubble(bubble:AnnotationBubble){
-  const {scroller,scaleX,scaleY,target}=bubble,rect=scroller.getBoundingClientRect();
+function screenAnnotationBubble(bubble:AnnotationBubble, target=bubble.target){
+  const {scroller,scaleX,scaleY}=bubble,rect=scroller.getBoundingClientRect();
   const x=(value:number)=>rect.left+(value-scroller.scrollLeft+scroller.clientLeft)*scaleX;
   const y=(value:number)=>rect.top+(value-scroller.scrollTop+scroller.clientTop)*scaleY;
   return {x:x(bubble.x),y:y(bubble.y),target:{left:x(target.left),top:y(target.top),right:x(target.right),bottom:y(target.bottom)}};
@@ -65,6 +69,7 @@ export default function InlineAnnotationEditor({
   onFocusGlobal,
   onReveal,
   onRemove,
+  onCancel,
   saving,
   busy,
   toolActive=false,
@@ -81,6 +86,7 @@ export default function InlineAnnotationEditor({
   onFocusGlobal?: (id:string) => void;
   onReveal?: () => void;
   onRemove?: (id:string) => void;
+  onCancel?: (ids:string[]) => void;
   saving: boolean;
   busy: boolean;
   toolActive?:boolean;
@@ -100,6 +106,8 @@ export default function InlineAnnotationEditor({
     if (request) onDismiss?.(request);
   }, [request, onDismiss]);
   const [hovered, setHovered] = useState<string|null>(null);
+  const [hoverIds,setHoverIds]=useState<string[]>([]);
+  const bubblesRef=useRef<AnnotationBubble[]>([]);
   const [bubblePosition, setBubblePosition] = useState({x:0,y:0});
   const hoverTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
   const groups=useRef(new Map<string,string[]>());
@@ -108,24 +116,61 @@ export default function InlineAnnotationEditor({
   const clearOutline=()=>{for(const cell of outlined.current)cell.classList.remove('cm-table-annotation-top','cm-table-annotation-right','cm-table-annotation-bottom','cm-table-annotation-left');outlined.current=[];};
   useEffect(()=>()=>clearOutline(),[]);
   useEffect(()=>{setChoices([]);if(toolActive){setHovered(null);setShown(null);clearOutline();}},[toolActive]);
-  useEffect(()=>{if(request){const ids=request.ids?.length?request.ids:[request.id];if(ids.length>1)for(const id of ids)groups.current.set(id,ids);setShown({id:request.id,ids,pinned:true,focus:request.focus !== false});}else setShown(null);},[request]);
+  function setVisibleIds(ids:string[]){
+    setHoverIds(current=>current.length===ids.length&&current.every((id,index)=>id===ids[index])?current:ids);
+    setHovered(ids[0]??null);
+  }
+  useEffect(()=>{if(request){const ids=request.ids?.length?request.ids:[request.id];if(ids.length>1)for(const id of ids)groups.current.set(id,ids);setVisibleIds(ids);setShown({id:request.id,ids,pinned:true,focus:request.focus !== false});}else setShown(null);},[request]);
   useEffect(()=>{
+    function leave(){
+      if(hoverTimer.current)return;
+      hoverTimer.current=setTimeout(()=>{hoverTimer.current=null;setVisibleIds([]);},350);
+    }
+    function enter(ids:string[]){
+      if(hoverTimer.current)clearTimeout(hoverTimer.current);
+      hoverTimer.current=null;
+      setVisibleIds(ids);
+    }
     const over=(event:PointerEvent)=>{
-      const target=event.target as Element;
-      if(toolActive&&!target.closest('[data-table-widget]'))return;
-      if(target.closest('.annotation-bubble,.annotation-bubble-choices,.inline-annotation-editor')) { if(hoverTimer.current)clearTimeout(hoverTimer.current); return; }
+      const target=event.target as Element|null;
+      if(target?.nodeType!==1)return;
+      if(target.closest('.annotation-bubble-choices,.inline-annotation-editor')){
+        if(hoverTimer.current)clearTimeout(hoverTimer.current);
+        hoverTimer.current=null;
+        return;
+      }
+      const key=target.closest<HTMLElement>('.annotation-bubble')?.dataset.annotationKey;
+      const bubble=bubblesRef.current.find(value=>value.id===key);
+      if(bubble){enter([...new Set([...bubble.ids,...bubble.candidateIds])]);return;}
       const cell=target.closest<HTMLElement>('[data-table-annotation-ids]');
-      const mark=target.closest<HTMLElement>('[data-annotation-id]');
       hoveredCell.current=cell;
-      const id=cell ? tableAnnotationIds(cell)[0] : mark?.dataset.annotationId;
-      if(id){if(hoverTimer.current)clearTimeout(hoverTimer.current);setHovered(id);}
-      else {if(hoverTimer.current)clearTimeout(hoverTimer.current);hoverTimer.current=setTimeout(()=>setHovered(null),350);}
+      const scroller=target.closest('.cm-scroller');
+      const candidates=bubblesRef.current.filter(value=>{
+        if(value.scroller!==scroller)return false;
+        const {target:rect}=screenAnnotationBubble(value,value.paragraph);
+        return event.clientX>=rect.left&&event.clientX<=rect.right&&event.clientY>=rect.top&&event.clientY<=rect.bottom;
+      });
+      if(candidates.length)enter([...new Set(candidates.flatMap(value=>[...value.ids,...value.candidateIds]))]);
+      else leave();
     };
-    const focus=(event:FocusEvent)=>{const target=event.target as Element,cell=target.closest<HTMLElement>('[data-table-annotation-ids]'),mark=target.closest<HTMLElement>('[data-annotation-id]');const id=cell?tableAnnotationIds(cell)[0]:mark?.dataset.annotationId;if(id&&(!toolActive||cell))setHovered(id);};
-    const open=(event:Event)=>{const id=(event as CustomEvent<{id:string}>).detail?.id;if(id&&!toolActive)setShown(current=>current?.id===id?null:{id,ids:[id],pinned:true,focus:false});};
-    document.addEventListener('hive:open-annotation',open);document.addEventListener('pointerover',over);document.addEventListener('focusin',focus);
-    return()=>{document.removeEventListener('hive:open-annotation',open);document.removeEventListener('pointerover',over);document.removeEventListener('focusin',focus);if(hoverTimer.current)clearTimeout(hoverTimer.current);};
-  },[toolActive]);
+    const out=(event:PointerEvent)=>{if(!event.relatedTarget)leave();};
+    const focus=(event:FocusEvent)=>{const target=event.target as Element,cell=target.closest<HTMLElement>('[data-table-annotation-ids]'),mark=target.closest<HTMLElement>('[data-annotation-id]');const ids=cell?tableAnnotationIds(cell):mark?.dataset.annotationId?[mark.dataset.annotationId]:[];if(ids.length)enter(ids);};
+    const open=(event:Event)=>{const id=(event as CustomEvent<{id:string}>).detail?.id;if(id&&!toolActive){enter([id]);setShown(current=>current?.id===id?null:{id,ids:[id],pinned:true,focus:false});}};
+    document.addEventListener('hive:open-annotation',open);
+    document.addEventListener('pointerover',over);
+    document.addEventListener('pointermove',over);
+    document.addEventListener('pointerout',out);
+    document.addEventListener('focusin',focus);
+    return()=>{
+      document.removeEventListener('hive:open-annotation',open);
+      document.removeEventListener('pointerover',over);
+      document.removeEventListener('pointermove',over);
+      document.removeEventListener('pointerout',out);
+      document.removeEventListener('focusin',focus);
+      if(hoverTimer.current)clearTimeout(hoverTimer.current);
+      hoverTimer.current=null;
+    };
+  },[toolActive,document]);
   const bubbleItem=items.find(value=>value.id===hovered);
   const [choices,setChoices]=useState<string[]>([]);
   const open = !!shown || choices.length > 0;
@@ -152,7 +197,8 @@ export default function InlineAnnotationEditor({
       const cells=[...editor.dom.querySelectorAll<HTMLElement>('[data-table-annotation-ids]')],ownCell=cells.find(cell=>tableAnnotationIds(cell).includes(item.id));
       const ids=ownCell?tableBatchIds(item,items,editor,groups.current):[item.id],key=ids.slice().sort().join('\0');if(!ids.length||seen.has(key))continue;seen.add(key);
       const table=ownCell?.closest('[data-table-widget]');
-      const rects=ownCell?cells.filter(cell=>sameSourceTable(cell.closest('[data-table-widget]'),table)&&tableAnnotationIds(cell).some(id=>ids.includes(id))).flatMap(cell=>[...cell.getClientRects()]):[...editor.dom.querySelectorAll<HTMLElement>('[data-annotation-id]')].filter(mark=>mark.dataset.annotationId===item.id).flatMap(mark=>[...mark.getClientRects()]);
+      const targets=ownCell?cells.filter(cell=>sameSourceTable(cell.closest('[data-table-widget]'),table)&&tableAnnotationIds(cell).some(id=>ids.includes(id))):[...editor.dom.querySelectorAll<HTMLElement>('[data-annotation-id]')].filter(mark=>mark.dataset.annotationId===item.id);
+      const rects=targets.flatMap(mark=>[...mark.getClientRects()]);
       const scroller=editor.scrollDOM,clip=scroller.getBoundingClientRect();
       const fragments=rects.filter(r=>r.width>0&&r.height>0);
       if(!fragments.some(r=>r.right>Math.max(0,clip.left)&&r.left<Math.min(window.innerWidth,clip.right)&&r.bottom>Math.max(0,clip.top)&&r.top<Math.min(window.innerHeight,clip.bottom)))continue;
@@ -160,6 +206,8 @@ export default function InlineAnnotationEditor({
       const localX=(x:number)=>(x-clip.left)/scaleX+scroller.scrollLeft-scroller.clientLeft;
       const localY=(y:number)=>(y-clip.top)/scaleY+scroller.scrollTop-scroller.clientTop;
       const target={left:localX(Math.min(...fragments.map(r=>r.left))),top:localY(Math.min(...fragments.map(r=>r.top))),right:localX(Math.max(...fragments.map(r=>r.right))),bottom:localY(Math.max(...fragments.map(r=>r.bottom)))};
+      const lines=ownCell?[]:targets.map(mark=>mark.closest('.cm-line')?.getBoundingClientRect()).filter(rect=>!!rect?.height);
+      const paragraph=lines.length?{left:localX(clip.left),right:localX(clip.right),top:localY(Math.min(...lines.map(r=>r!.top))),bottom:localY(Math.max(...lines.map(r=>r!.bottom)))}:target;
       let x=target.right+4,y=(target.top+target.bottom-24)/2;if(bubblePlacement==='left')x=target.left-28;if(bubblePlacement==='above'){x=(target.left+target.right-24)/2;y=target.top-28;}if(bubblePlacement==='below'){x=(target.left+target.right-24)/2;y=target.bottom+4;}
       // Keep the anchor in scroll-content coordinates so text and pencil advance in the same paint.
       const visibleLeft=scroller.scrollLeft;
@@ -167,23 +215,45 @@ export default function InlineAnnotationEditor({
       y=Math.max(0,y);
       const same=!ownCell&&result.find(b=>b.source===item.source&&b.file===item.file&&b.target.left===target.left&&b.target.top===target.top&&b.target.right===target.right&&b.target.bottom===target.bottom);
       if(same)same.candidateIds.push(item.id);
-      else result.push({id:item.id,ids,candidateIds:[item.id],source:item.source,file:item.file,x,y,target,scroller,scaleX,scaleY});
+      else result.push({id:item.id,ids,candidateIds:[item.id],source:item.source,file:item.file,x,y,target,paragraph,scroller,scaleX,scaleY});
     }
+    bubblesRef.current=result;
     setBubbles(old=>old.length===result.length&&old.every((item,index)=>sameAnnotationBubble(item,result[index]))?old:result);
   }
-  useLayoutEffect(()=>{measureAllBubbles();});
+  function syncHighlightVisibility(){
+    const ids=new Set(hoverIds);
+    for(const source of ['document','scratch'] as const){
+      const editor=editorFor(source);
+      if(!editor||editor.dom.ownerDocument!==document)continue;
+      const host=editor.dom.closest('.editor-host')||editor.dom;
+      for(const frame of host.querySelectorAll<HTMLElement>('[data-annotation-frame-id]')){
+        frame.toggleAttribute('data-annotation-visible',ids.has(frame.dataset.annotationFrameId!));
+      }
+      for(const cell of host.querySelectorAll<HTMLElement>('[data-table-annotation-ids]')){
+        cell.toggleAttribute('data-annotation-visible',tableAnnotationIds(cell).some(id=>ids.has(id)));
+      }
+      const ranges=editor.state.selection.ranges.filter(range=>!range.empty);
+      const hidden=ranges.length>0&&ranges.every(range=>{
+        const matches=items.filter(item=>item.source===source&&!item.stale&&item.from===range.from&&item.to===range.to);
+        return matches.length>0&&matches.every(item=>!ids.has(item.id));
+      });
+      editor.dom.toggleAttribute('data-annotation-selection-hidden',hidden);
+      for(const pane of host.querySelectorAll('.cm-editor'))pane.toggleAttribute('data-annotation-selection-hidden',hidden);
+    }
+  }
+  useLayoutEffect(()=>{measureAllBubbles();syncHighlightVisibility();});
   useEffect(()=>{
     let frame=0;
-    const schedule=()=>{if(!frame)frame=window.requestAnimationFrame(()=>{frame=0;measureAllBubbles();});};
+    const schedule=()=>{if(!frame)frame=window.requestAnimationFrame(()=>{frame=0;measureAllBubbles();syncHighlightVisibility();});};
     const mutations=new MutationObserver(schedule),resizes=new ResizeObserver(schedule);
     for(const source of ['document','scratch'] as const){
-      const editor=editorFor(source);if(!editor)continue;
+      const editor=editorFor(source);if(!editor||editor.dom.ownerDocument!==document)continue;
       mutations.observe(editor.dom,{subtree:true,childList:true,attributes:true,attributeFilter:['data-annotation-id','data-table-annotation-ids']});
       resizes.observe(editor.scrollDOM);
     }
     window.addEventListener('scroll',schedule,true);window.addEventListener('resize',schedule);
     return()=>{mutations.disconnect();resizes.disconnect();window.cancelAnimationFrame(frame);window.removeEventListener('scroll',schedule,true);window.removeEventListener('resize',schedule);};
-  },[document,items,bubblePlacement]);
+  },[document,items,bubblePlacement,hoverIds]);
   useEffect(()=>{setChoices([]);},[hovered]);
   function measureBubble(){
     if(!bubbleItem){clearOutline();return;}
@@ -230,7 +300,18 @@ export default function InlineAnnotationEditor({
     if(representatives.length>1){setChoices(representatives);return;}
     setChoices([]);setShown(current=>current?.id===bubbleItem.id?null:{id:bubbleItem.id,ids:tableBatchIds(bubbleItem,items,editor,groups.current),pinned:true,focus:false});
   }
+  function cancelBubble(bubble:AnnotationBubble){
+    const related=[...bubble.ids,...bubble.candidateIds];
+    const openGroup=shown&&shown.ids.some(id=>related.includes(id)) ? shown.ids : null;
+    const ids=openGroup??bubble.ids;
+    if(openGroup)close();
+    setChoices(current=>current.filter(id=>!ids.includes(id)));
+    setVisibleIds(hoverIds.filter(id=>!ids.includes(id)));
+    for(const id of ids)groups.current.delete(id);
+    onCancel?.(ids);
+  }
   const item = items.find((value) => value.id === shown?.id);
+  const noteVisible=!!shown?.ids.some(id=>hoverIds.includes(id));
   const revealedRequest=useRef<string|null>(null);
   useLayoutEffect(()=>{
     if(!request?.focus||item?.id!==request.id||revealedRequest.current===request.nonce)return;
@@ -265,11 +346,17 @@ export default function InlineAnnotationEditor({
   function dragMove(event:ReactPointerEvent<HTMLElement>){const current=drag.current;if(!current||event.pointerId!==current.pointer)return;movePosition({x:current.origin.x+event.clientX-current.startX,y:current.origin.y+event.clientY-current.startY});}
   return createPortal(
     <>
-    {bubbles.map(bubble=>createPortal(<button key={bubble.id} type="button" className="annotation-bubble" data-annotation-key={bubble.id} title={`标注：${items.find(item=>item.id===bubble.id)?.original.slice(0,30)||''}`} aria-label="打开标注要求" aria-expanded={!!shown&&shown.ids.some(id=>bubble.ids.includes(id)||bubble.candidateIds.includes(id))} style={{left:bubble.x,top:bubble.y}} onPointerEnter={()=>{setHovered(bubble.id);if(hoverTimer.current)clearTimeout(hoverTimer.current);}} onClick={()=>openBubble(bubble.id)}>✎</button>,bubble.scroller,bubble.id))}
-    {choices.length>0 && <div className="annotation-bubble-choices" role="menu" style={{left:Math.max(2,Math.min(window.innerWidth-130,bubblePosition.x)),top:Math.max(2,Math.min(window.innerHeight-Math.min(choices.length*34+8,window.innerHeight-4)-2,bubblePosition.y+28)),maxHeight:"calc(100vh - 8px)",overflowY:"auto"}}>{choices.map((id,index)=><button type="button" role="menuitem" key={id} onClick={()=>{const selected=items.find(value=>value.id===id);if(selected)setShown({id,ids:tableBatchIds(selected,items,editorFor(selected.source),groups.current),pinned:true,focus:false});setChoices([]);}}>标注 {index+1}</button>)}</div>}
+    {bubbles.map(bubble=>createPortal(<button key={bubble.id} type="button" className="annotation-bubble" data-annotation-key={bubble.id}
+      data-annotation-visible={[...bubble.ids,...bubble.candidateIds].some(id=>hoverIds.includes(id))||undefined}
+      title={`标注：${items.find(item=>item.id===bubble.id)?.original.slice(0,30)||''}`} aria-label="打开标注要求"
+      aria-expanded={noteVisible&&!!shown&&shown.ids.some(id=>bubble.ids.includes(id)||bubble.candidateIds.includes(id))} style={{left:bubble.x,top:bubble.y}}
+      onContextMenu={event=>{if(!onCancel)return;event.preventDefault();event.stopPropagation();cancelBubble(bubble);}}
+      onClick={()=>{setVisibleIds([...new Set([...bubble.ids,...bubble.candidateIds])]);openBubble(bubble.id);}}>✎</button>,bubble.scroller,bubble.id))}
+    {choices.length>0 && <div className="annotation-bubble-choices" data-annotation-visible={choices.some(id=>hoverIds.includes(id))||undefined} role="menu" style={{left:Math.max(2,Math.min(window.innerWidth-130,bubblePosition.x)),top:Math.max(2,Math.min(window.innerHeight-Math.min(choices.length*34+8,window.innerHeight-4)-2,bubblePosition.y+28)),maxHeight:"calc(100vh - 8px)",overflowY:"auto"}}>{choices.map((id,index)=><button type="button" role="menuitem" key={id} onClick={()=>{const selected=items.find(value=>value.id===id);if(selected)setShown({id,ids:tableBatchIds(selected,items,editorFor(selected.source),groups.current),pinned:true,focus:false});setChoices([]);}}>标注 {index+1}</button>)}</div>}
     {shown && item && <div
       ref={box}
       className="inline-annotation-editor"
+      data-annotation-visible={noteVisible||undefined}
       role="dialog"
       aria-label="原位标注要求"
       onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();close();}}}
@@ -291,7 +378,7 @@ export default function InlineAnnotationEditor({
       )}
       <div className="inline-annotation-footer">
         <button type="button" className="annotation-open-global" aria-label="打开全局标注栏" onClick={()=>{close();onOpenGlobal(item.id);}}><List size={12} aria-hidden />全局标注</button>
-        {onRemove&&<button type="button" className="text-button annotation-remove" aria-label={shown.ids.length>1?'删除这组标注':'删除此标注'} disabled={busy} onClick={()=>{for(const id of shown.ids)onRemove(id);close();}}><Trash2 size={12} aria-hidden />删除</button>}
+        {(onCancel||onRemove)&&<button type="button" className="text-button annotation-remove" aria-label={shown.ids.length>1?'删除这组标注':'删除此标注'} disabled={busy} onClick={()=>{if(onCancel)onCancel(shown.ids);else for(const id of shown.ids)onRemove?.(id);close();}}><Trash2 size={12} aria-hidden />删除</button>}
         <span className="annotation-save-status" role="status">{saving ? "正在保存…" : "已自动保留要求"}</span>
         <button className="text-button" onClick={close}>
           <Check size={12} />

@@ -1,7 +1,7 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { EditorView } from '@codemirror/view';
 import { Transaction } from '@codemirror/state';
-import { canApply, makePrompt, minimalReplacement, readAnswer, streamPreview, visibleCount, type Anchor, type Heading, type Mode, type Proposal } from '../../shared/core';
+import { canApply, makePrompt, previewIntact, readAnswer, streamPreview, visibleCount, type Anchor, type Heading, type Mode, type Proposal } from '../../shared/core';
 import type { DiskFile } from '../../shared/fileTypes';
 import type { EditorSession } from '../editor/editorSessionTypes';
 import { annotationMessages, annotationSummary, type SubmittedAnnotation } from '../annotations/annotations';
@@ -19,7 +19,10 @@ export type GenerationOptions = {
     mode?: Mode;
     /** 配合上一条：输入框为空也允许发送，用该模式的默认要求。 */
     allowEmptyPrompt?: boolean;
+    revision?: { proposalId:string; instruction:string };
+    sourceAnnotationIds?: readonly string[];
 };
+export type WritingRequestOrigin = { annotationIds:readonly string[]; proposalId?:string };
 export type GenerationContext = {
     document: {
         view: RefObject<EditorView | null>;
@@ -49,6 +52,7 @@ export type GenerationContext = {
         controller: RefObject<AbortController | null>;
         requestAnchor: RefObject<Anchor | null>;
         proposal: RefObject<Proposal | null>;
+        origin?: RefObject<WritingRequestOrigin | null>;
     };
     references: {
         sources: ReferenceSource[];
@@ -70,34 +74,42 @@ export type GenerationContext = {
     };
 };
 export function stopWritingGeneration(
-    { generation, controller, requestAnchor, running }: GenerationContext['lifecycle'],
+    { generation, controller, requestAnchor, running, origin }: GenerationContext['lifecycle'],
     { setBusy, setStream }: Pick<GenerationContext['ui'], 'setBusy' | 'setStream'>,
 ) {
     generation.current++;
     controller.current?.abort();
     controller.current = null;
     requestAnchor.current = null;
+    if (origin) origin.current = null;
     running.current = false;
     setBusy(false);
     setStream('');
 }
 // Receives the existing live references; it does not create a second document/session store.
 export async function generateWriting(context: GenerationContext, options?: GenerationOptions) {
-    const { document: { view, disk, sessions, activeSession, file, outline, currentHeading, currentWritingNode }, model: { config, reasoningEffort }, conversation: { mode, prompt, messages, setPrompt, setLastRequest, add }, lifecycle: { running, generation, controller, requestAnchor, proposal }, references, writingOutline, request, annotationResponded, ui: { setError, setBusy, setStream, openPanel, inform, redraw } } = context;
+    const { document: { view, disk, sessions, activeSession, file, outline, currentHeading, currentWritingNode }, model: { config, reasoningEffort }, conversation: { mode, prompt, messages, setPrompt, setLastRequest, add }, lifecycle: { running, generation, controller, requestAnchor, proposal, origin }, references, writingOutline, request, annotationResponded, ui: { setError, setBusy, setStream, openPanel, inform, redraw } } = context;
     const uid = () => crypto.randomUUID();
     const submitted = options?.annotations;
-    const requestMode = submitted ? "discuss" : (options?.mode ?? mode);
+    const revision = options?.revision;
+    const usesPrompt = !submitted && !revision;
+    const requestMode = submitted ? "discuss" : revision ? 'edit' : (options?.mode ?? mode);
     const v = view.current, requestDisk = disk.current;
     if (running.current ||
         (requestMode !== 'discuss' && (!v || !requestDisk)) ||
-        (!submitted && !prompt.trim() && !options?.allowEmptyPrompt))
+        (usesPrompt && !prompt.trim() && !options?.allowEmptyPrompt))
         return;
     if(requestMode!=='discuss'&&v?.state.readOnly){
         setError('当前正文只读，请切换到可编辑的显示模式。');
         return;
     }
-    if (proposal.current && requestMode !== "discuss") {
-        setError("请先采纳或放弃当前建议；需要调整时点击「继续调整」。");
+    const prior = revision ? proposal.current : null;
+    if (revision && (!revision.instruction.trim() || !prior || prior.id !== revision.proposalId || prior.placement !== 'comparison' || !previewIntact(prior, v?.state.doc, requestDisk?.path || ''))) {
+        setError('润色预览或原文已变化，请重新核对并填写批注要求。');
+        return;
+    }
+    if (proposal.current && !prior && requestMode !== "discuss") {
+        setError("请先处理当前建议，或在建议框内继续调整。");
         return;
     }
     setError("");
@@ -111,7 +123,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
                 : "接着往下写。";
     const document = v?.state.doc.toString() ?? "", userPrompt = submitted
         ? (options?.instruction?.trim() || "请逐条回应这些文本标注。")
-        : (prompt.trim() || defaultPrompt);
+        : (revision?.instruction.trim() || prompt.trim() || defaultPrompt);
     if (!submitted && document.length > 80000) {
         setError("原型本轮最多发送 8 万字符的文档，请先缩小文档。");
         return;
@@ -119,7 +131,11 @@ export async function generateWriting(context: GenerationContext, options?: Gene
     const s = v?.state.selection.main;
     let from = s?.head ?? 0, to = from, target = "", node = "当前光标位置";
     let newNodeHeading = "", headingLine = "";
-    if (!submitted && requestMode === "edit") {
+    if (prior) {
+        ({from, to, node} = prior);
+        target = prior.text;
+    }
+    else if (!submitted && requestMode === "edit") {
         if (!s || s.empty) {
             setError("请先在正文中选中一个词、一句话或一小段，再提出修改要求。");
             return;
@@ -195,6 +211,8 @@ export async function generateWriting(context: GenerationContext, options?: Gene
         return;
     }
     const id = ++generation.current, abort = new AbortController(), requestSessionId = activeSession.current;
+    const annotationIds = submitted?.map(item=>item.id) ?? (prior?.annotationIds ?? (requestMode === 'edit' ? options?.sourceAnnotationIds : undefined)) ?? [];
+    if (origin) origin.current = { annotationIds, proposalId:prior?.id };
     requestAnchor.current = requestMode === 'discuss' ? null : anchor;
     controller.current = abort;
     running.current = true;
@@ -223,7 +241,8 @@ export async function generateWriting(context: GenerationContext, options?: Gene
             setBusy(false);
             controller.current = null;
             requestAnchor.current = null;
-            if (!submitted)
+            if (origin) origin.current = null;
+            if (usesPrompt)
                 setPrompt(old => old || userPrompt);
             if ((error as Error).name !== 'AbortError')
                 setError((error as Error).message);
@@ -239,7 +258,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
         scope: submitted
             ? `所选标注原文与备注＋当前会话 · ${submitted.length} 处`
             : requestMode === "edit"
-                ? `选区 ${visibleCount(target)} 字`
+                ? `${prior ? '当前润色结果' : '选区'} ${visibleCount(target)} 字`
                 : requestMode === "discuss"
                     ? "仅讨论，不改正文"
                     : requestMode === "outline"
@@ -255,7 +274,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
         documentFile,
         ...(submitted ? { annotationBatch: { instruction: userPrompt, items: submitted } } : {}),
     });
-    if (!submitted)
+    if (usesPrompt)
         setPrompt(old => old === userPrompt ? "" : old);
     if (resolvedReferences.warnings.length) {
         openPanel('basis');
@@ -294,13 +313,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
                     text.trim() +
                     (suffix ? "\n\n" : "\n");
         }
-        if (requestMode === "edit" && result.text.trim() === latest.original.trim())
-            throw new Error("模型没有提出实际文字变化。请补充更具体的修改要求后重试。");
-        const changed = requestMode === "edit"
-            ? minimalReplacement(latest, text)
-            : { ...latest, text };
-        // 只差首尾空白这类"零可见变化"不生成建议卡，直接报错，避免出现"0 字"的待审卡片。
-        if (requestMode === "edit" && !changed.text.trim())
+        if (requestMode === "edit" && (!text.trim() || text.trim() === target.trim()))
             throw new Error("模型没有提出实际文字变化。请补充更具体的修改要求后重试。");
         const defaultReason =
             requestMode === "edit"
@@ -311,12 +324,31 @@ export async function generateWriting(context: GenerationContext, options?: Gene
         // 目标位置在生成过程中被手改过，就不再往正文里塞预览，避免把建议盖到别人的字上。
         if (!canApply(latest, now, disk.current?.path || "自由草稿"))
             throw new Error("目标位置在生成过程中被改动，本轮建议已作废，请重新生成。");
-        // 直接把建议写进正文（只在内存里，不落盘）：表格、公式、Markdown 全部交给正文渲染器显示，
-        // 用户看到的就是成稿的样子，再由 ✓ 保留 / ✗ 撤回决定去留。预览不计入撤销历史。
-        const previewFrom = changed.from, previewText = changed.text;
+        if (requestMode === 'edit') {
+            if (prior) {
+                const current = proposal.current;
+                if (current?.id !== prior.id) return;
+                if (current.text !== prior.text)
+                    throw new Error('等待期间润色结果已被手改，已保留你的修改。');
+            }
+            proposal.current = {
+                ...latest, text, placement:'comparison', annotationIds,
+                id:prior?.id ?? uid(), reason:result.reason || defaultReason, mode:requestMode,
+                count:visibleCount(text), node,
+            };
+            if (!prior) {
+                v.dispatch({ effects:EditorView.scrollIntoView(latest.from,{y:'center'}) });
+                openPanel(activeSession.current);
+            }
+            add('assistant', `${config.demo ? '【交互演示】' : ''}已在原文下方${prior ? '更新' : '显示'}润色预览，共 ${visibleCount(text)} 字。`, { documentFile });
+            redraw();
+            return;
+        }
+        // Outline and continuation keep their existing inline preview workflow.
+        const previewFrom = latest.from, previewText = text;
         const caret = previewFrom + (previewText.length - previewText.trimStart().length);
         v.dispatch({
-            changes: { from: previewFrom, to: changed.to, insert: previewText },
+            changes: { from: previewFrom, to: latest.to, insert: previewText },
             // 光标停在这段建议的开头：视口会滚到框顶（那里正好是操作条），也不会因为末尾多出的空行
             // 被 "当前行" 高亮整块染成灰带。
             selection: { anchor: caret },
@@ -326,7 +358,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
             annotations: Transaction.addToHistory.of(false),
         });
         proposal.current = {
-            ...changed,
+            ...latest, text:previewText,
             from: previewFrom,
             to: previewFrom + previewText.length,
             id: uid(),
@@ -338,13 +370,13 @@ export async function generateWriting(context: GenerationContext, options?: Gene
             creatingHeading: !!newNodeHeading,
         };
         openPanel(activeSession.current);
-        add("assistant", `${config.demo ? "【交互演示】" : ""}已把「${node}」的${requestMode === "edit" ? "局部修改" : requestMode === "outline" ? "节点正文" : "新一段"}放进正文预览，共 ${visibleCount(previewText)} 字，还没有写入磁盘。点这段上方的 ✓ 保留，✗ 撤掉。`);
+        add("assistant", `${config.demo ? "【交互演示】" : ""}已把「${node}」的${requestMode === "outline" ? "节点正文" : "新一段"}放进正文预览，共 ${visibleCount(previewText)} 字，还没有写入磁盘。点这段上方的 ✓ 保留，✗ 撤掉。`, { documentFile });
         redraw();
     }
     catch (e) {
         if (generation.current === id && (e as Error).name !== "AbortError") {
             setError((e as Error).message);
-            if (!submitted)
+            if (usesPrompt)
                 setPrompt(old => old || userPrompt);
             add("system", `本轮未完成：${(e as Error).message} 正文未改动。`);
         }
@@ -356,6 +388,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
             setStream("");
             controller.current = null;
             requestAnchor.current = null;
+            if (origin) origin.current = null;
         }
     }
 }

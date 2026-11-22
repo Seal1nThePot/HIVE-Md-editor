@@ -1,16 +1,33 @@
 import {StateEffect,StateField,type Range,type Text} from '@codemirror/state';
-import {Decoration,EditorView,type DecorationSet} from '@codemirror/view';
+import {Decoration,EditorView,WidgetType,type DecorationSet} from '@codemirror/view';
 
-/** 已经写进正文的一段 AI 建议：文字本身在文档里，这里只描述它占的位置和来历。 */
-export type InlineProposal={from:number;to:number;mode:string;count:number;text:string;original:string;reason:string;stale:boolean;node:string};
+export type InlineProposal={id?:string;from:number;to:number;mode:string;count:number;text:string;original:string;reason:string;stale:boolean;node:string;placement?:'comparison';refinementNote?:string};
 
 export const setInlineProposal=StateEffect.define<InlineProposal|null>();
+
+/** The container belongs to CodeMirror's scroll layout. React supplies its interactive preview. */
+class ComparisonWidget extends WidgetType {
+  constructor(readonly id:string){super();}
+  eq(other:ComparisonWidget){return other.id===this.id;}
+  toDOM(view:EditorView){
+    const mount=view.dom.ownerDocument.createElement('div');
+    mount.className='proposal-comparison-mount';
+    mount.dataset.proposalId=this.id;
+    return mount;
+  }
+}
 
 /** 给这段文字描一圈细线：逐行挂 line decoration，第一行封口、最后一行封底，多行时左右两条线自然接上。 */
 function boxDecorations(proposal:InlineProposal|null,doc:Text):DecorationSet{
   if(!proposal)return Decoration.none;
   const from=Math.max(0,Math.min(proposal.from,doc.length));
   const to=Math.max(from,Math.min(proposal.to,doc.length));
+  if(proposal.placement==='comparison'&&proposal.id){
+    const end=doc.lineAt(Math.max(from,to-1)).to;
+    const ranges:Range<Decoration>[]=[Decoration.widget({widget:new ComparisonWidget(proposal.id),block:true,side:1}).range(end)];
+    if(to>from&&!proposal.stale)ranges.push(Decoration.mark({class:'proposal-original',attributes:{'data-proposal-original':proposal.id}}).range(from,to));
+    return Decoration.set(ranges,true);
+  }
   if(to<=from)return Decoration.none;
   // 建议文本可能带着段首空行（续写是在文末追加 "\n\n"），框只圈真正的文字。
   const text=doc.sliceString(from,to);

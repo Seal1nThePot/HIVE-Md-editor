@@ -7,6 +7,7 @@ export type HistoryOutline = WritingOutlineSnapshot;
 export type HistoryTextPatch = {from:number;before:string;after:string;contextBefore:string;contextAfter:string};
 export type HistoryChanges = {
   text?:HistoryTextPatch[];
+  polish?:{id:string;reason:string;node:string;annotationIds?:readonly string[]};
   outline?:{before:HistoryOutline;after:HistoryOutline};
   file?:{action:string;path:string;id?:string;from?:string};
 };

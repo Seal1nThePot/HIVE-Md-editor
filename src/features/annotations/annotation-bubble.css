@@ -1,6 +1,15 @@
 .annotation-bubble { position: absolute; z-index: 1200; width: 24px; height: 24px; padding: 0; border: 1px solid var(--hive-accent); border-radius: 50%; background: color-mix(in srgb,var(--hive-accent) 15%,var(--hive-panel-bg)); color: var(--hive-popup-text); cursor: pointer; box-shadow: 0 2px 7px var(--hive-shadow-color); }
 .annotation-bubble:focus-visible { outline: 2px solid var(--hive-accent); outline-offset: 2px; }
 .annotation-tool-active .cm-content, .annotation-tool-active .cm-line { cursor: crosshair; }
+.annotation-bubble:not([data-annotation-visible]),
+.annotation-bubble-choices:not([data-annotation-visible]),
+.inline-annotation-editor:not([data-annotation-visible]),
+.cm-text-annotation-frame:not([data-annotation-visible]),
+.cm-editor[data-annotation-selection-hidden] .cm-selectionLayer { visibility: hidden; }
+html .cm-editor[data-annotation-selection-hidden] .cm-content *::selection {
+  background: transparent !important;
+  color: inherit !important;
+}
 
 .annotation-bubble-choices { position: fixed; z-index: 1201; display:flex; flex-direction:column; background:var(--hive-popup-bg,var(--panel)); color:var(--hive-popup-text,var(--text)); border:1px solid var(--hive-popup-border,var(--line)); padding:4px; }
 .annotation-bubble-choices button { background:transparent; color:inherit; border:0; padding:5px 10px; cursor:pointer; }

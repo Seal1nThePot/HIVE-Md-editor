@@ -1,4 +1,66 @@
-/* AI 建议已经写进正文：正文里只有一圈细线，操作条浮在框的上方并跟着视口走（见 ProposalOverlay.tsx）。 */
+.proposal-original {
+  box-shadow: 0 0 0 1px var(--hive-editor-annotation-underline, var(--hive-accent));
+  border-radius: 2px;
+  background: var(--hive-editor-annotation-background);
+  box-decoration-break: clone;
+}
+
+.proposal-comparison-mount {
+  padding: 8px 0 12px;
+}
+
+.proposal-comparison {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hive-editor-annotation-underline, var(--hive-accent));
+  border-radius: 6px;
+  background: var(--hive-panel-bg, var(--panel));
+  color: var(--text);
+}
+
+.proposal-comparison[data-stale] { border-color: var(--hive-danger); }
+.proposal-comparison > p { color: var(--hive-danger); margin: 4px 0; }
+
+.proposal-comparison header,
+.proposal-comparison footer,
+.proposal-refine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: calc(11px * var(--text-scale, 1));
+}
+
+.proposal-comparison header span {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposal-comparison footer { justify-content: flex-end; flex-wrap: wrap; }
+.proposal-comparison footer .proposal-refine-button { margin-right: auto; }
+.proposal-refine { align-items: end; }
+.proposal-refine label { flex: 1; }
+
+.proposal-comparison textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--hive-input-bg, var(--panel));
+  color: var(--hive-input-text, var(--text));
+  font: inherit;
+  resize: vertical;
+  user-select: text;
+}
+
+.proposal-comparison :is(.text-button, .gold-button) { padding: 4px 8px; }
+
+/* Inline continuation and outline previews are already staged in the editor. */
 
 .cm-line.proposal-box {
   border-left: 1px solid var(--line);

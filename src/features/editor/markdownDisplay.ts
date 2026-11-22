@@ -255,7 +255,7 @@ export const markdownDisplayTheme=EditorView.baseTheme({
   '.cm-preview-properties':{whiteSpace:'pre-wrap',overflowWrap:'anywhere',fontSize:'.8em',color:'var(--hive-document-text, var(--text))',padding:'5px 12px',marginBottom:'8px',borderBottom:'1px solid var(--hive-surface-border)',cursor:'text'},
   '.cm-preview-rule':{border:'0',borderTop:'1px solid var(--hive-document-text, var(--text))',margin:'14px 50px'},
   '.cm-table-source-notice':{padding:'5px 50px',color:'var(--hive-document-text, var(--text))',fontSize:'.85em'},
-  '.cm-table-marked':{backgroundColor:'color-mix(in srgb, var(--hive-accent) 19%, transparent)'},
+  '.cm-table-marked[data-annotation-visible]':{backgroundColor:'color-mix(in srgb, var(--hive-accent) 19%, transparent)'},
   '.cm-table-select-top':{borderTop:'2px solid var(--hive-accent) !important'},
   '.cm-table-select-bottom':{borderBottom:'2px solid var(--hive-accent) !important'},
   '.cm-table-select-left':{borderLeft:'2px solid var(--hive-accent) !important'},
