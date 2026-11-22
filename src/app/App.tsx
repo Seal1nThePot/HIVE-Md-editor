@@ -802,7 +802,7 @@ function WritingApp() {
   async function openTrashedDocument(item:TrashRecord){
     const unavailable=()=>structuring.current||switching.current||viewApplying.current||!!requestAnchor.current&&running.current;
     const checkRoom=()=>{
-      if([...sessions.current.keys()].filter(id=>workspace.isOpen(id)).length>=48)throw new Error('打开的文档标签已达 48 个，请先关闭不再使用的标签页。');
+      if(workspace.capture().open.filter(id=>sessions.current.has(id)).length>=48)throw new Error('打开的文档标签已达 48 个，请先关闭不再使用的标签页。');
     };
     if(unavailable())throw new Error('请等待当前文稿操作完成，再打开回收站预览。');
     if(trashDocumentReads.current.has(item.id))return;
