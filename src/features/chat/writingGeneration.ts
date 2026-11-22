@@ -12,6 +12,7 @@ import type { ChatMessageDetails, Message } from './chatTypes';
 import type { InputBasisRequest } from './InputBasisPanel';
 import type { ReasoningEffort } from './modelReasoning';
 import { generateDemoText, streamModelText } from './generationTransport';
+import {appendChatAttachments,type ChatAttachment} from './chatAttachments';
 export type GenerationOptions = {
     annotations?: SubmittedAnnotation[];
     instruction?: string;
@@ -45,6 +46,10 @@ export type GenerationContext = {
         setPrompt: Dispatch<SetStateAction<string>>;
         setLastRequest: (request: InputBasisRequest) => void;
         add: (role: Message['role'], content: string, details?: ChatMessageDetails) => void;
+        attachments?:readonly ChatAttachment[];
+        consumeDraft?:()=>void;
+        restoreDraft?:()=>void;
+        targetLabel?:string;
     };
     lifecycle: {
         running: RefObject<boolean>;
@@ -88,7 +93,7 @@ export function stopWritingGeneration(
 }
 // Receives the existing live references; it does not create a second document/session store.
 export async function generateWriting(context: GenerationContext, options?: GenerationOptions) {
-    const { document: { view, disk, sessions, activeSession, file, outline, currentHeading, currentWritingNode }, model: { config, reasoningEffort }, conversation: { mode, prompt, messages, setPrompt, setLastRequest, add }, lifecycle: { running, generation, controller, requestAnchor, proposal, origin }, references, writingOutline, request, annotationResponded, ui: { setError, setBusy, setStream, openPanel, inform, redraw } } = context;
+    const { document: { view, disk, sessions, activeSession, file, outline, currentHeading, currentWritingNode }, model: { config, reasoningEffort }, conversation: { mode, prompt, messages, setPrompt, setLastRequest, add, attachments=[],consumeDraft,restoreDraft,targetLabel }, lifecycle: { running, generation, controller, requestAnchor, proposal, origin }, references, writingOutline, request, annotationResponded, ui: { setError, setBusy, setStream, openPanel, inform, redraw } } = context;
     const uid = () => crypto.randomUUID();
     const submitted = options?.annotations;
     const revision = options?.revision;
@@ -97,7 +102,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
     const v = view.current, requestDisk = disk.current;
     if (running.current ||
         (requestMode !== 'discuss' && (!v || !requestDisk)) ||
-        (usesPrompt && !prompt.trim() && !options?.allowEmptyPrompt))
+        (usesPrompt && !prompt.trim() && !attachments.length && !options?.allowEmptyPrompt))
         return;
     if(requestMode!=='discuss'&&v?.state.readOnly){
         setError('当前正文只读，请切换到可编辑的显示模式。');
@@ -123,7 +128,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
                 : "接着往下写。";
     const document = v?.state.doc.toString() ?? "", userPrompt = submitted
         ? (options?.instruction?.trim() || "请逐条回应这些文本标注。")
-        : (revision?.instruction.trim() || prompt.trim() || defaultPrompt);
+        : (revision?.instruction.trim() || prompt.trim() || (requestMode==='discuss'&&attachments.length?'请阅读本轮附件。':defaultPrompt));
     if (!submitted && document.length > 80000) {
         setError("原型本轮最多发送 8 万字符的文档，请先缩小文档。");
         return;
@@ -187,16 +192,17 @@ export async function generateWriting(context: GenerationContext, options?: Gene
         .filter((m) => m.id !== "welcome")
         .map((m) => ({
         role: m.role === "system" ? "user" : m.role,
-        content: m.content,
+        content: appendChatAttachments(m.content,m.draft?.attachments??[]),
     }));
     let requestMessages: {
         role: string;
         content: string;
     }[];
     try {
+        const instruction=appendChatAttachments(userPrompt,attachments);
         requestMessages = submitted
-            ? annotationMessages(submitted, userPrompt, history)
-            : makePrompt(requestMode, document, target, node, userPrompt, history, {
+            ? annotationMessages(submitted, instruction, history)
+            : makePrompt(requestMode, document, target, node, instruction, history, {
                 continuationLimit: requestLimit,
                 nodeDescription: currentWritingNode?.description || "",
                 writingOutline: writingOutline.nodes
@@ -242,7 +248,7 @@ export async function generateWriting(context: GenerationContext, options?: Gene
             controller.current = null;
             requestAnchor.current = null;
             if (origin) origin.current = null;
-            if (usesPrompt)
+            if (usesPrompt&&!consumeDraft)
                 setPrompt(old => old || userPrompt);
             if ((error as Error).name !== 'AbortError')
                 setError((error as Error).message);
@@ -266,15 +272,16 @@ export async function generateWriting(context: GenerationContext, options?: Gene
                             ? "文末创建大纲节点并插入正文"
                             : "指定章节末尾插入"
                         : "当前光标处插入",
-        file: requestDisk?.path || (v ? "自由草稿" : "未打开文档"),
+        file: file || targetLabel || requestDisk?.path || (v ? "自由草稿" : "未打开文档"),
     };
     setLastRequest(requestInfo);
-    const documentFile = requestDisk?.path;
+    const documentFile = file || (submitted?undefined:requestDisk?.path);
     add("user", submitted ? annotationSummary(submitted, userPrompt) : userPrompt, {
         documentFile,
         ...(submitted ? { annotationBatch: { instruction: userPrompt, items: submitted } } : {}),
     });
-    if (usesPrompt)
+    if (consumeDraft)consumeDraft();
+    else if (usesPrompt)
         setPrompt(old => old === userPrompt ? "" : old);
     if (resolvedReferences.warnings.length) {
         openPanel('basis');
@@ -376,7 +383,8 @@ export async function generateWriting(context: GenerationContext, options?: Gene
     catch (e) {
         if (generation.current === id && (e as Error).name !== "AbortError") {
             setError((e as Error).message);
-            if (usesPrompt)
+            if (restoreDraft)restoreDraft();
+            else if (usesPrompt)
                 setPrompt(old => old || userPrompt);
             add("system", `本轮未完成：${(e as Error).message} 正文未改动。`);
         }

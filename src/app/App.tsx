@@ -26,8 +26,8 @@ import type {HistoryActor,HistoryOutline,HistoryRecord,HistorySection} from '../
 import {useHistoryJournal} from '../features/history/useHistoryJournal';
 import {useHumanHistory} from '../features/history/useHumanHistory';
 import {notePropertiesTransaction,readNoteProperties} from '../features/editor/noteProperties';
-import {generateWriting,stopWritingGeneration,type GenerationOptions} from '../features/chat/writingGeneration';
-import {createProposalActions} from '../features/chat/proposalActions';
+import {generateWriting,stopWritingGeneration,type GenerationOptions,type WritingRequestOrigin} from '../features/chat/writingGeneration';
+import {createProposalActions,replayPolishProposal} from '../features/chat/proposalActions';
 import {runEditorCommand} from '../features/ribbon/editorCommands';
 // Load the complete style stack with App, including in already-open Vite sessions.
 import "./styles.css";
@@ -235,6 +235,7 @@ function WritingApp() {
   const controller = useRef<AbortController | null>(null),
     generation = useRef(0),
     running = useRef(false);
+  const writingOrigin=useRef<WritingRequestOrigin|null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null),
     importRef = useRef<HTMLInputElement>(null),
     messagesEnd = useRef<HTMLDivElement>(null);
@@ -279,7 +280,7 @@ function WritingApp() {
   const dismissInlineRequest = useCallback((request: InlineAnnotationRequest) => {
     setInlineRequest(current => current?.nonce === request.nonce ? null : current);
   }, []);
-  const [conversationId,setConversationId]=useState(uid);
+  const [conversationId,setConversationId]=useState<string>(uid);
   const [conversations,setConversations]=useState(()=>[newConversation(conversationId,'对话 1')]);
   const conversation=conversations.find(chat=>chat.id===conversationId)!;
   const {draft,messages,lastRequest}=conversation, prompt=draft.text;
@@ -331,8 +332,12 @@ function WritingApp() {
     scratchReady,
     setError,
   );
-  const {markText,showLocalAnnotation,unmarkText,locateAnnotation,reanchorAnnotation,sendAnnotations}=useAnnotationActions({
+  const {markText,showLocalAnnotation,unmarkText,locateAnnotation,reanchorAnnotation,sendAnnotations,cancelAnnotations}=useAnnotationActions({
     annotations,view,scratchView,activeTextSource,disk,file,activeSession,workspace,chooseSidebar,setError,setInlineRequest,setAnnotationFocus:id=>setAnnotationFocus({id,nonce:Date.now()}),generate,openChat,annotationInstruction,
+    onCancelAnnotations:ids=>{
+      if(writingOrigin.current?.annotationIds.some(id=>ids.includes(id)))stop();
+      if(proposal.current?.annotationIds?.some(id=>ids.includes(id))){proposal.current=null;redraw();}
+    },
   });
   const writingOutline = useWritingNodes(/\.md$/i.test(file)?file:'', view, setError);
   const redraw = () => setTick((t) => t + 1);
@@ -539,23 +544,31 @@ function WritingApp() {
     catch(error){if(appAlive.current)setHistoryError((error as Error).message);}
     finally{historyRunning.current=false;if(appAlive.current)setHistoryBusy(false);}
   }
-  function historyTarget(path:string){
+  function hasOtherHistoryProposal(session:EditorSession,permit?:(proposal:Proposal)=>boolean){
+    const path=session.disk?.path;
+    return [...sessions.current.values()].some(candidate=>{
+      if(candidate.disk?.path!==path)return false;
+      const pending=proposalFor(candidate.id);
+      return !!pending&&(candidate!==session||!permit?.(pending));
+    });
+  }
+  function historyTarget(path:string,permit?:(proposal:Proposal)=>boolean){
     const open=[...sessions.current.values()].filter(session=>session.disk?.path===path&&workspace.isOpen(session.id));
     const session=open.find(session=>session.id===activeSession.current)||open[0];
     const state=session?.view?.state||session?.state;
     if(!session||!state)throw new Error('请先打开对应笔记。');
-    if(pendingProposal(session.id))throw new Error('这篇笔记还有未确认的建议，请先审阅。');
+    if(hasOtherHistoryProposal(session,permit))throw new Error('这篇笔记还有未确认的建议，请先审阅。');
     if(savingPaths.current.has(path)||fileConflicts[path])throw new Error('请先完成保存，或处理这篇笔记的磁盘冲突。');
     return {session,state};
   }
-  async function findHistoryTarget(path:string){
+  async function findHistoryTarget(path:string,permit?:(proposal:Proposal)=>boolean){
     if(![...sessions.current.values()].some(session=>session.disk?.path===path&&workspace.isOpen(session.id)))
       await openExplorerFile(path,true);
-    return historyTarget(path);
+    return historyTarget(path,permit);
   }
-  function verifyHistoryTarget(session:EditorSession,state:EditorState){
+  function verifyHistoryTarget(session:EditorSession,state:EditorState,permit?:(proposal:Proposal)=>boolean){
     if(!appAlive.current||sessions.current.get(session.id)!==session||!workspace.isOpen(session.id)||
-      (session.view?.state||session.state)?.doc!==state.doc||pendingProposal(session.id))
+      (session.view?.state||session.state)?.doc!==state.doc||hasOtherHistoryProposal(session,permit))
       throw new Error('等待期间笔记或建议已变化，请重新核对历史记录。');
     const path=session.disk?.path;
     if(path&&(savingPaths.current.has(path)||fileConflicts[path]))throw new Error('请先完成保存，或处理这篇笔记的磁盘冲突。');
@@ -628,7 +641,9 @@ function WritingApp() {
     if(record.actor!==actor||record.status!==expected)throw new Error('操作历史状态已变化，请刷新后重试。');
     if(record.kind==='file'){await replayFileHistory(record,reverse);return;}
     if(!record.file||(!record.changes.text&&!record.changes.outline))throw new Error('这项操作没有可恢复的内容。');
-    const {session,state}=await findHistoryTarget(record.file);
+    const canRedoPolish=(candidate:Proposal)=>!reverse&&candidate.placement==='comparison'&&candidate.historyId===record.id&&
+      candidate.text===record.changes.text?.[0]?.after&&!candidate.refinementNote?.trim();
+    const {session,state}=await findHistoryTarget(record.file,canRedoPolish);
     if(record.changes.text&&state.readOnly)throw new Error('当前正文只读，请切换到可编辑的显示模式。');
     if(actor==='human'&&record.changes.text&&!record.changes.outline&&humanHistory.group(session.id,reverse)===id){
       const command=reverse?undoDocument:redoDocument;
@@ -648,16 +663,25 @@ function WritingApp() {
         sections.push({title:'写作大纲',before:outlineHistoryText(currentOutline),after:outlineHistoryText(nextOutline)});
     }
     const apply=async()=>{
-      verifyHistoryTarget(session,state);
+      verifyHistoryTarget(session,state,canRedoPolish);
       if(session.disk?.path!==path)throw new Error('历史记录对应的笔记路径已变化。');
       await history.setStatus(id,next,expected);
       let committedOutline:HistoryOutline|undefined;
       try{
         if(currentOutline&&nextOutline)committedOutline=await writingOutline.saveFor(path,nextOutline.nodes,currentOutline.revision);
-        verifyHistoryTarget(session,state);
+        verifyHistoryTarget(session,state,canRedoPolish);
         const latest=session.view?.state||session.state;
         if(session.disk?.path!==path||!latest||textPlan&&latest.readOnly)throw new Error('等待期间笔记或编辑状态已变化。');
-        if(textPlan)applyNoteTransaction(session,latest.update({changes:textPlan.changes,userEvent:'input.history.replay',annotations:Transaction.addToHistory.of(false)}));
+        if(textPlan){
+          const prior=proposalFor(session.id),redoing=prior&&canRedoPolish(prior);
+          applyNoteTransaction(session,latest.update({changes:textPlan.changes,userEvent:'input.history.replay',annotations:Transaction.addToHistory.of(false)}));
+          const reopened=replayPolishProposal(record,textPlan,reverse);
+          if(reopened||redoing){
+            if(activeSession.current===session.id)proposal.current=reopened;
+            else session.context={undo:[],writingNodeId:null,...session.context,proposal:reopened};
+            redraw();
+          }
+        }
       }catch(error){
         try{if(committedOutline&&currentOutline)await writingOutline.saveFor(path,currentOutline.nodes,committedOutline.revision);}
         finally{await history.setStatus(id,expected,next);}
@@ -945,7 +969,7 @@ function WritingApp() {
     } finally {closingDocumentTab.current=false;}
   }
   function stop() {
-    stopWritingGeneration({generation,controller,requestAnchor,running,proposal},{setBusy:endChatRun,setStream:showStream});
+    stopWritingGeneration({generation,controller,requestAnchor,running,proposal,origin:writingOrigin},{setBusy:endChatRun,setStream:showStream});
   }
   useEffect(() => {
     let cancelled = false;
@@ -1269,24 +1293,31 @@ function WritingApp() {
     const sentDraft:ChatDraft=options?.annotations
       ? {text:options.instruction??'',attachments:resendingAnnotations?draft.attachments:[],route:{kind:'annotations',items:options.annotations}}
       : {text:draft.text,attachments:draft.attachments};
-    const consumesComposer=!options?.annotations||resendingAnnotations;
+    const consumesComposer=!options?.revision&&(!options?.annotations||resendingAnnotations);
     const retryTurnId=consumesComposer?draft.retryTurnId:undefined;
     const turnId=uid();
     const addTurn:(typeof add)=(role,content,details)=>{
-      const sent=role==='user'?{...sentDraft,text:sentDraft.text||details?.annotationBatch?.instruction||(sentDraft.attachments.length?'':content)}:undefined;
+      const text=options?.revision?.instruction||sentDraft.text||details?.annotationBatch?.instruction||(sentDraft.attachments.length?'':content);
+      const sent=role==='user'?{...sentDraft,text,attachments:options?.revision?[]:sentDraft.attachments}:undefined;
       addTurnMessage(turnId,role,content,{...details,documentFile:target.file},sent,sent?retryTurnId:undefined);
     };
     return generateWriting({
       document:{view,disk,sessions,activeSession,file:target.file||'',outline,currentHeading,currentWritingNode},
       model:{config,reasoningEffort:reasoning.effort},
-      conversation:{mode,prompt:sentDraft.text,messages:withoutRetriedPrompt(messages,retryTurnId),setLastRequest,add:addTurn,attachments:sentDraft.attachments,
+      conversation:{mode,prompt:sentDraft.text,messages:withoutRetriedPrompt(messages,retryTurnId),setPrompt,setLastRequest,add:addTurn,
+        attachments:options?.revision?[]:sentDraft.attachments,targetLabel:target.label,
         consumeDraft:()=>{if(consumesComposer)updateConversation(chat=>({...chat,draft:consumeChatDraft(chat.draft,draft)}));},
-        restoreDraft:()=>{if(consumesComposer)updateConversation(chat=>recoverChatDraft(chat,draft));},
+        restoreDraft:()=>{if(consumesComposer)updateConversation(chat=>recoverChatDraft(chat,{...draft,retryTurnId:turnId}));},
       },
-      lifecycle:{running,generation,controller,requestAnchor,proposal},
+      lifecycle:{running,generation,controller,requestAnchor,proposal,origin:writingOrigin},
       references,writingOutline,request:requestModel,annotationResponded:annotations.responded,
       ui:{setError,setBusy:value=>setActiveRun(value?{chatId:conversationId,target}:null),setStream:showStream,openPanel:workspace.open,inform,redraw},
-    },options);
+    },{...options,sourceAnnotationIds:nextMode==='edit'&&!options?.revision?polishSourceAnnotations():undefined});
+  }
+
+  function polishSourceAnnotations(){
+    const range=view.current?.state.selection.main,path=disk.current?.path;
+    return range&&!range.empty&&path?annotations.items.filter(item=>item.source==='document'&&item.file===path&&!item.stale&&item.from===range.from&&item.to===range.to).map(item=>item.id):[];
   }
 
   async function submitChat() {
@@ -1300,13 +1331,14 @@ function WritingApp() {
     if(!instruction)return;
     const {mark,noteState}=resolved,{workspaceId,document:target}=mark;
     if(target&&mark.id!=='search'&&pendingProposal(target.sessionId)){setError('这篇笔记还有未确认的建议，请先审阅。');return;}
+    const model={instruction:appendChatAttachments(instruction,draft.attachments),selection:config.selection??undefined};
+    if(model.instruction.length>8000){setError('窗口操作要求及附件合计超过 8000 字符，请缩小本轮内容后重试。');return;}
     setError('');
     const id=++generation.current,abort=new AbortController(),turnId=uid();
     controller.current=abort;
     running.current=true;
     setActiveRun({chatId:conversationId,target:resolved});
     const finishPlanning=()=>{controller.current=null;running.current=false;};
-    const model={instruction:appendChatAttachments(instruction,draft.attachments),selection:config.selection??undefined};
     const workspaceTarget={...model,target:{workspaceId}};
     try {
       let result:NoteFindResult|DocumentsToolResult|TrashToolResult|RepositoriesToolResult|NotePropertiesToolResult|NoteOutlineToolResult|NoteSnapshotToolResult;
@@ -1418,9 +1450,10 @@ function WritingApp() {
       }
     }
   }
-  const {accept,reject,undoAI}=createProposalActions({view,disk,proposal,undo,writingOutline:{...writingOutline,save:nodes=>saveHistoryOutline('ai',nodes)},add,setError,inform,redraw,setMode,openChat:()=>openChat('conversation'),promptRef,
+  const {accept,reject,undoAI,editCandidate,editRefinementNote}=createProposalActions({view,disk,proposal,undo,writingOutline:{...writingOutline,save:nodes=>saveHistoryOutline('ai',nodes)},add,setError,inform,redraw,setMode,openChat:()=>openChat('conversation'),promptRef,
     onAccepted:(accepted,doc)=>recordHistory({actor:'ai',kind:'text',file:accepted.file,label:'保留 AI 正文建议',
-      changes:{text:[{...historyTextPatch(doc,accepted.from,accepted.to,accepted.text),before:accepted.original}]}}),
+      changes:{text:[{...historyTextPatch(doc,accepted.from,accepted.to,accepted.text),before:accepted.original}],
+        ...(accepted.placement==='comparison'?{polish:{id:accepted.id,reason:accepted.reason,node:accepted.node,annotationIds:accepted.annotationIds}}:{})}}),
     onReverted:id=>void history.setStatus(id,'reverted','applied',true).catch(()=>{}),
   });
 
@@ -1438,7 +1471,7 @@ function WritingApp() {
     ? !previewIntact(p, view.current?.state.doc, file)
     : false;
   // 建议就地显示在正文锚点后面，不再用底部浮层压住文字。
-  const inlineProposal=useMemo<InlineProposal|null>(()=>p?{from:p.from,to:p.to,mode:modeLabels[p.mode],count:p.count,text:p.text,original:p.original,reason:p.reason,stale,node:p.node}:null,[p,stale]);
+  const inlineProposal=useMemo<InlineProposal|null>(()=>p?{id:p.id,from:p.from,to:p.to,mode:modeLabels[p.mode],count:p.count,text:p.text,original:p.original,reason:p.reason,stale,node:p.node,placement:p.placement,refinementNote:p.refinementNote}:null,[p,stale]);
   return (
     <div className="app-shell" data-revision={tick}>
       <AppHeader
@@ -1540,7 +1573,12 @@ function WritingApp() {
           {session.disk&&fileConflicts[session.disk.path]&&<div className="file-conflict" role="alert"><span>{fileConflicts[session.disk.path]}</span><button type="button" onClick={()=>reloadFromDisk(id)}>重新读取磁盘</button><button type="button" onClick={()=>{activateEditor(id);openSaveAs(session.disk!.path);}}>另存本地副本</button></div>}
           {session.imagePath?<><ImageFileView key={fileWorkspace.info.id+session.imagePath} path={session.imagePath} workspaceId={fileWorkspace.info.id}/>{emptyPanelFooter("图片")}</>:session.landing?<><NewTabPage active={activeEditorId===id} busy={newNoteBusy||fileBusy||busy} onCreate={()=>void createQuickNote(id)} onOpen={openDocumentList}/>{emptyPanelFooter("新标签页")}</>:<>
                 {<Editor initialState={session.state} keepAlive={busy&&activeEditorId===id||!!dialog?.target&&dialog.target.editor===session.view} documentFile={session.disk?.path||''} onOpenLink={target=>{try{const path=resolveLinkTarget(session.disk?.path||'',target);activateEditor(id);void openExplorerFile(path,true).catch(error=>setError(error.message));}catch(error){setError((error as Error).message);}}} onDraftSelection={(text,table)=>stageEditorSelection(id,text,table)} annotationTool={annotationTool} searchActive={workspace.isOpen('search')&&activeEditorId===id&&activeTextSource.current==='document'} onFind={replace=>{activateEditor(id);activeTextSource.current='document';ribbonCommand('find',replace);}} displayMode={session.displayMode||'live'} splitOrder={appearanceSettings.appearance.splitOrder} typewriter={!!session.typewriter} onReady={bindings(id).onReady} onUpdate={bindings(id).onUpdate} onFocus={()=>{if(activeTextSource.current!=='document'){activeTextSource.current='document';redraw();}}} onMarkSelection={()=>{activateEditor(id);markText('document',sessions.current.get(id)?.disk?.path||'');}} onUnmarkSelection={annotationId=>{activateEditor(id);unmarkText('document',annotationId,sessions.current.get(id)?.disk?.path||'');}} onShowAnnotations={context=>{activateEditor(id);showLocalAnnotation('document',context,sessions.current.get(id)?.disk?.path||'');}} onError={setError} inlineProposal={activeEditorId===id?inlineProposal:null}/>}
-              {activeEditorId===id&&<ProposalOverlay view={view.current} proposal={inlineProposal} accept={accept} reject={reject}/>
+              {activeEditorId===id&&<ProposalOverlay view={view.current} proposal={inlineProposal} accept={accept} reject={adjust=>{
+                const origin=writingOrigin.current;
+                if(origin?.proposalId&&origin.proposalId===p?.id)stop();
+                reject(adjust);
+              }} editCandidate={editCandidate} editRefinementNote={editRefinementNote}
+                refineCandidate={instruction=>{if(p)void generate({mode:'edit',revision:{proposalId:p.id,instruction},allowEmptyPrompt:true});}} busy={busy}/>
               }
           <EditorStatusBar status={session.disk?`自由写作 · ${session.dirty?'有未保存的修改':'已保存'}`:'未打开文档'} aiStatus={activeEditorId===id?(writingBusy?'AI 正在生成':p?stale?'建议已被改动，请核对':'预览中：✓ 保留 / ✗ 撤掉，未保存':undefined):session.context?.proposal?'1 条建议等待审阅':undefined} state={session.view?.state||session.state} eol={session.disk?.eol} bom={session.disk?.bom} preferences={statusPreferences} onSettings={()=>openSettings('appearance')}/>
           </>}
@@ -1736,6 +1774,7 @@ function WritingApp() {
         onDismiss={dismissInlineRequest}
         onEdit={annotations.edit}
         onSend={sendAnnotations}
+        onCancel={cancelAnnotations}
         onReveal={()=>window.hiveDesktop?.windowCommand('focus',host||undefined)}
         onRemove={annotations.remove} onFocusGlobal={id=>{setAnnotationBatch(null);setAnnotationFocus({id,nonce:Date.now()});}} onOpenGlobal={id=>{setAnnotationBatch(null);setAnnotationFocus({id,nonce:Date.now()});workspace.open('annotations');}}
         saving={annotations.saving}
