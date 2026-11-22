@@ -8,11 +8,11 @@ import {shortcutLabel} from '../settings/shortcuts';
 import { composerKeyAction } from './composerKeys';
 import {ChatAttachmentList} from './ChatAttachmentList';
 import type {ChatAttachment} from './chatAttachments';
-export default function ChatComposer({inputRef,value,onChange,onSend,onStop,busy,disabled,placeholder,config,modelBusy,onModelChange,reasoningEffort,onReasoningChange,attachments,onRemoveAttachment,allowAttachmentOnly}: {
+export default function ChatComposer({inputRef,value,onChange,onSend,onStop,busy,disabled,placeholder,config,modelBusy,onModelChange,reasoningEffort,onReasoningChange,attachments,onRemoveAttachment,allowAttachmentOnly,canStop}: {
   inputRef:RefObject<HTMLTextAreaElement|null>;value:string;onChange:(value:string)=>void;onSend:()=>void;onStop:()=>void;
   busy:boolean;disabled:boolean;placeholder:string;config:Config;modelBusy:boolean;
   onModelChange:(choice:string)=>void; reasoningEffort?:ReasoningEffort; onReasoningChange?:(effort:ReasoningEffort)=>void;
-  attachments:readonly ChatAttachment[];onRemoveAttachment:(id:string)=>void;allowAttachmentOnly:boolean;
+  attachments:readonly ChatAttachment[];onRemoveAttachment:(id:string)=>void;allowAttachmentOnly:boolean;canStop:boolean;
 }){
   const {bindings}=useShortcutPreferences();
   const box=useRef<HTMLFormElement>(null);
@@ -34,7 +34,7 @@ export default function ChatComposer({inputRef,value,onChange,onSend,onStop,busy
       onKeyDown={event=>{const action=composerKeyAction({key:event.key,shiftKey:event.shiftKey,ctrlKey:event.ctrlKey,metaKey:event.metaKey,altKey:event.altKey,isComposing:event.nativeEvent.isComposing||event.nativeEvent.keyCode===229,disabled:!sendable,text:value,hasAttachments:allowAttachmentOnly&&attachments.length>0},bindings);if(action!=='send')return;event.preventDefault();onSend();}}/>
     <div className="composer-actions compact-composer-actions">
       <ModelPicker config={config} disabled={modelBusy||busy} onModelChange={onModelChange} reasoningEffort={reasoningEffort} onReasoningChange={onReasoningChange}/>
-      {busy?<button type="button" className="send-button stop" aria-label="停止生成" onClick={onStop}><Square size={14}/></button>
+      {busy&&canStop?<button type="button" className="send-button stop" aria-label="停止生成" onClick={onStop}><Square size={14}/></button>
         :<button type="submit" className="send-button" aria-label="发送给 AI" title={`发送 · ${shortcutLabel(bindings,'sendMessage')}（Shift + Enter 换行）`} disabled={!sendable}><ArrowUp size={17}/></button>}
     </div>
   </form>;

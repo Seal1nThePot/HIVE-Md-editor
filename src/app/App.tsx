@@ -289,7 +289,7 @@ function WritingApp() {
   const updateConversation=(update:(chat:Conversation)=>Conversation)=>updateChat(conversationId,update);
   const setPrompt=chatPromptSetter(updateConversation);
   const [mode,setMode]=useState<Mode>('discuss');
-  const [activeRun,setActiveRun]=useState<{chatId:string;target:ChatTarget}|null>(null);
+  const [activeRun,setActiveRun]=useState<{chatId:string;target:ChatTarget;cancellable:boolean}|null>(null);
   const busy=!!activeRun, chatBusy=activeRun?.chatId===conversationId;
   const [stream,setStream]=useState<{text:string;documentFile?:string}|null>(null);
   const physicalToolMarks=marks.filter(mark=>isWindowTool(mark.id));
@@ -336,7 +336,15 @@ function WritingApp() {
     annotations,view,scratchView,activeTextSource,disk,file,activeSession,workspace,chooseSidebar,setError,setInlineRequest,setAnnotationFocus:id=>setAnnotationFocus({id,nonce:Date.now()}),generate,openChat,annotationInstruction,
     onCancelAnnotations:ids=>{
       if(writingOrigin.current?.annotationIds.some(id=>ids.includes(id)))stop();
-      if(proposal.current?.annotationIds?.some(id=>ids.includes(id))){proposal.current=null;redraw();}
+      let cleared=false;
+      for(const session of sessions.current.values()){
+        const candidate=proposalFor(session.id);
+        if(candidate?.placement!=='comparison'||!candidate.annotationIds?.some(id=>ids.includes(id)))continue;
+        if(session.id===activeSession.current)proposal.current=null;
+        else if(session.context)session.context.proposal=null;
+        cleared=true;
+      }
+      if(cleared)redraw();
     },
   });
   const writingOutline = useWritingNodes(/\.md$/i.test(file)?file:'', view, setError);
@@ -554,7 +562,8 @@ function WritingApp() {
   }
   function historyTarget(path:string,permit?:(proposal:Proposal)=>boolean){
     const open=[...sessions.current.values()].filter(session=>session.disk?.path===path&&workspace.isOpen(session.id));
-    const session=open.find(session=>session.id===activeSession.current)||open[0];
+    const owner=open.find(session=>{const pending=proposalFor(session.id);return pending&&permit?.(pending);});
+    const session=owner||open.find(session=>session.id===activeSession.current)||open[0];
     const state=session?.view?.state||session?.state;
     if(!session||!state)throw new Error('请先打开对应笔记。');
     if(hasOtherHistoryProposal(session,permit))throw new Error('这篇笔记还有未确认的建议，请先审阅。');
@@ -562,6 +571,13 @@ function WritingApp() {
     return {session,state};
   }
   async function findHistoryTarget(path:string,permit?:(proposal:Proposal)=>boolean){
+    if(permit){
+      const owner=[...sessions.current.values()].find(session=>{
+        const pending=session.disk?.path===path&&proposalFor(session.id);
+        return pending&&permit(pending);
+      });
+      if(owner&&!workspace.isOpen(owner.id)&&workspace.openDocumentTab(owner.id)!=='succeeded')throw new Error('无法打开历史记录对应的建议标签页。');
+    }
     if(![...sessions.current.values()].some(session=>session.disk?.path===path&&workspace.isOpen(session.id)))
       await openExplorerFile(path,true);
     return historyTarget(path,permit);
@@ -677,8 +693,10 @@ function WritingApp() {
           applyNoteTransaction(session,latest.update({changes:textPlan.changes,userEvent:'input.history.replay',annotations:Transaction.addToHistory.of(false)}));
           const reopened=replayPolishProposal(record,textPlan,reverse);
           if(reopened||redoing){
-            if(activeSession.current===session.id)proposal.current=reopened;
-            else session.context={undo:[],writingNodeId:null,...session.context,proposal:reopened};
+            const activeOwner=activeSession.current===session.id;
+            const edits=(activeOwner?undo.current:session.context?.undo??[]).filter(edit=>edit.historyId!==id);
+            if(activeOwner){proposal.current=reopened;undo.current=edits;}
+            else session.context={writingNodeId:null,...session.context,proposal:reopened,undo:edits};
             redraw();
           }
         }
@@ -1311,7 +1329,7 @@ function WritingApp() {
       },
       lifecycle:{running,generation,controller,requestAnchor,proposal,origin:writingOrigin},
       references,writingOutline,request:requestModel,annotationResponded:annotations.responded,
-      ui:{setError,setBusy:value=>setActiveRun(value?{chatId:conversationId,target}:null),setStream:showStream,openPanel:workspace.open,inform,redraw},
+      ui:{setError,setBusy:value=>setActiveRun(value?{chatId:conversationId,target,cancellable:true}:null),setStream:showStream,openPanel:workspace.open,inform,redraw},
     },{...options,sourceAnnotationIds:nextMode==='edit'&&!options?.revision?polishSourceAnnotations():undefined});
   }
 
@@ -1337,8 +1355,8 @@ function WritingApp() {
     const id=++generation.current,abort=new AbortController(),turnId=uid();
     controller.current=abort;
     running.current=true;
-    setActiveRun({chatId:conversationId,target:resolved});
-    const finishPlanning=()=>{controller.current=null;running.current=false;};
+    setActiveRun({chatId:conversationId,target:resolved,cancellable:true});
+    const releasePlanner=()=>{controller.current=null;running.current=false;};
     const workspaceTarget={...model,target:{workspaceId}};
     try {
       let result:NoteFindResult|DocumentsToolResult|TrashToolResult|RepositoriesToolResult|NotePropertiesToolResult|NoteOutlineToolResult|NoteSnapshotToolResult;
@@ -1356,7 +1374,9 @@ function WritingApp() {
         result=await runAnnotatedRepositories(requestModel,{...workspaceTarget,target:{workspaceId,revision:fileWorkspace.info.revision},pendingName:repositoryFollowUp?.mark===mark?repositoryFollowUp.name:undefined},abort.signal);
       }
       if(generation.current!==id||!appAlive.current)return;
-      const reply=await applyWindowToolResult(mark,result,finishPlanning,noteState);
+      releasePlanner();
+      setActiveRun(current=>current?.chatId===conversationId?{...current,cancellable:false}:current);
+      const reply=await applyWindowToolResult(mark,result,noteState);
       if(generation.current!==id||!appAlive.current)return;
       addTurnMessage(turnId,'user',instruction,{documentFile:resolved.file},{text:draft.text,attachments:draft.attachments,route:{kind:'window',mark}},draft.retryTurnId);
       addTurnMessage(turnId,'assistant',reply,{documentFile:resolved.file});
@@ -1367,11 +1387,11 @@ function WritingApp() {
     } catch(error) {
       if(generation.current===id&&appAlive.current&&(error as Error).name!=='AbortError')setError((error as Error).message);
     } finally {
-      if(generation.current===id){finishPlanning();endChatRun();}
+      if(generation.current===id){releasePlanner();endChatRun();}
     }
   }
 
-  async function applyWindowToolResult(mark:WindowMark,result:NoteFindResult|DocumentsToolResult|TrashToolResult|RepositoriesToolResult|NotePropertiesToolResult|NoteOutlineToolResult|NoteSnapshotToolResult,finishPlanning:()=>void,noteState?:EditorState):Promise<string> {
+  async function applyWindowToolResult(mark:WindowMark,result:NoteFindResult|DocumentsToolResult|TrashToolResult|RepositoriesToolResult|NotePropertiesToolResult|NoteOutlineToolResult|NoteSnapshotToolResult,noteState?:EditorState):Promise<string> {
     switch(result.kind){
       case 'find-note':{
         if(mark.id!=='search'||result.file!==mark.document?.file)throw new Error('查找结果与标注的笔记不一致，请重试。');
@@ -1381,17 +1401,14 @@ function WritingApp() {
       case 'folder-list':
         return result.entries.length?['文件夹「'+(result.folder||'仓库根目录')+'」',...result.entries.map(entry=>entry.name+(entry.type==='folder'?'/':''))].join('\n'):'文件夹「'+(result.folder||'仓库根目录')+'」为空。';
       case 'document-create':{
-        finishPlanning();
         const created=await manageFile({action:'create',parent:result.parent,name:result.name,type:result.type},{quiet:true,actor:'ai'});
         return '已新建 '+created.path+'。'+(created.warning||'');
       }
       case 'document-trash':{
-        finishPlanning();
         const moved=await manageFile({action:'trash',path:result.path},{quiet:true,actor:'ai'});
         return '已移入回收站 '+result.path+'。'+(moved.warning||'');
       }
       case 'trash-restore':{
-        finishPlanning();
         const outcomes:string[]=[];
         for(const item of result.items){
           if(!appAlive.current)break;
@@ -1669,7 +1686,7 @@ function WritingApp() {
                 }}>{panelLabel(mark.id)}{isNoteTool(mark.id)?' · '+(mark.document?.file.split('/').at(-1)||'尚未绑定笔记'):''} <X size={12}/></button>)}</div>}
                 {draft.route?.kind==='annotations'&&<div className="window-tool-targets"><button type="button" className="text-button" aria-label="移除文本标注" onClick={()=>updateConversation(chat=>({...chat,draft:{...chat.draft,route:undefined}}))}>{draft.route.items.length} 条文本标注 <X size={12}/></button></div>}
                 {conversation.parked.length>0&&<button type="button" className="text-button" onClick={()=>updateConversation(restoreParkedDraft)}>恢复先前草稿（{conversation.parked.length}）</button>}
-                <ChatComposer key={conversationId} inputRef={promptRef} value={prompt} onChange={setPrompt} onSend={()=>void submitChat()} onStop={()=>{stop();inform("已停止生成。");}}
+                <ChatComposer key={conversationId} inputRef={promptRef} value={prompt} onChange={setPrompt} onSend={()=>void submitChat()} onStop={()=>{if(controller.current){stop();inform("已停止生成。");}}} canStop={chatBusy&&activeRun.cancellable}
                   attachments={draft.attachments} onRemoveAttachment={id=>updateConversation(chat=>({...chat,draft:{...chat.draft,attachments:chat.draft.attachments.filter(item=>item.id!==id)}}))} allowAttachmentOnly={chatTarget.kind==='document'}
                   busy={chatBusy} disabled={busy&&!chatBusy||chatTarget.kind==='document'&&mode!=='discuss'&&(!disk.current||pendingProposal(activeEditorId))} placeholder={toolMarks.some(mark=>mark===repositoryFollowUp?.mark)?'回复创建仓库的位置…':toolMarks.length?'输入对标注窗口的操作要求…':chatTarget.kind==='annotations'?'输入对文本标注的指示…':mode==="edit"?"输入修改要求…":mode==="outline"?"这一节想怎么写…":mode==="continue"?"接下来想写什么…":"输入消息…"}
                   config={config} modelBusy={configBusy} reasoningEffort={reasoning.effort} onReasoningChange={reasoning.setEffort} onModelChange={choice=>void selectChatModel(choice)}/>{reasoning.saveError&&<p role="status">{reasoning.saveError}</p>}
