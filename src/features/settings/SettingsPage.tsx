@@ -144,10 +144,10 @@ function SettingsContent({panelIconDragPreferences,annotationPreferences,statusP
     <div className="settings-page" style={minimized?{display:'none'}:undefined}>
     <aside className="settings-sidebar" inert={editing}>
       <div className="settings-brand"><span>H</span><b>HIVE</b><small>设置</small></div>
+      <button ref={closeButton} type="button" className="settings-return" onClick={()=>{if(draft)setDiscard(true);else onClose();}} disabled={busy}><ArrowLeft size={16}/>返回写作</button>
       <label className="settings-search"><Icon name="settings.search" size={15}/><input aria-label="搜索设置" placeholder="搜索设置…" value={search} disabled={editing} onChange={event=>setSearch(event.target.value)}/></label>
       <nav aria-label="设置分类">{sections.filter(item=>sectionMatches(item,search)).map(({id,label,description,Icon})=><button key={id} type="button" className={section===id?'active':''} title={description} aria-current={section===id?'page':undefined} disabled={editing} onClick={()=>navigate(id)}><Icon size={16}/><span>{label}</span></button>)}</nav>
       {search.trim()&&!sections.some(item=>sectionMatches(item,search))&&<p className="settings-nav-empty">没有匹配的设置分类</p>}
-      <button ref={closeButton} type="button" className="settings-return" onClick={()=>{if(draft)setDiscard(true);else onClose();}} disabled={busy}><ArrowLeft size={16}/>返回写作</button>
     </aside>
     <main className="settings-content" inert={editing}>
       <div className="settings-content-scroll">

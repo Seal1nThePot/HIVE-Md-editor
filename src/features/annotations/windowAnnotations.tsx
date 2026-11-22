@@ -34,21 +34,29 @@ export function windowAnnotationTarget(target:Element){
   return title?.dataset.lockPanel||title?.closest<HTMLElement>('[data-panel-id]')?.dataset.panelId;
 }
 
-export function useWindowAnnotationGesture(windows:ReadonlyMap<string,Window>,captureMark:(panel:string)=>WindowMark){
+export function useWindowAnnotationGesture(windows:ReadonlyMap<string,Window>,captureMark:(panel:string)=>WindowMark,documentTabs?:{
+  enabled:boolean;has:(id:string)=>boolean;stage:(id:string)=>void;
+}){
   const {toggle}=useWindowAnnotations();
   const capture=useRef(captureMark);capture.current=captureMark;
+  const tabs=useRef(documentTabs);tabs.current=documentTabs;
   useEffect(()=>{
     const cleanups=[...new Set([window,...windows.values()])].map(owner=>{
-      let press:{mark:WindowMark;pointer:number;x:number;y:number;cancelled:boolean}|undefined;
+      let press:{id:string;mark?:WindowMark;pointer:number;x:number;y:number;cancelled:boolean}|undefined;
       const identify=(event:MouseEvent)=>{
         const target=event.target as Element|null;
-        return event.ctrlKey&&!event.altKey&&!event.shiftKey&&!event.metaKey&&event.button===0&&target?.nodeType===1?windowAnnotationTarget(target):undefined;
+        if(event.altKey||event.shiftKey||event.metaKey||event.button!==0||target?.nodeType!==1)return;
+        const tab=target.closest<HTMLElement>('[data-document-tab],[data-panel-tab]');
+        const id=tab?.dataset.documentTab||tab?.dataset.panelTab;
+        if(id&&!target.closest('[data-no-drag]')&&tabs.current?.has(id)&&(event.ctrlKey||tabs.current.enabled))return {id,documentTab:true};
+        const panel=event.ctrlKey?windowAnnotationTarget(target):undefined;
+        if(panel)return {id:panel,documentTab:false};
       };
       const down=(event:PointerEvent)=>{
         press=undefined;
-        const id=event.isPrimary?identify(event):undefined;
-        if(!id)return;
-        press={mark:capture.current(id),pointer:event.pointerId,x:event.clientX,y:event.clientY,cancelled:false};
+        const hit=event.isPrimary?identify(event):undefined;
+        if(!hit)return;
+        press={id:hit.id,mark:hit.documentTab?undefined:capture.current(hit.id),pointer:event.pointerId,x:event.clientX,y:event.clientY,cancelled:false};
         event.preventDefault();
         event.stopPropagation();
       };
@@ -58,10 +66,13 @@ export function useWindowAnnotationGesture(windows:ReadonlyMap<string,Window>,ca
       const click=(event:MouseEvent)=>{
         const initial=press;
         press=undefined;
-        if(!initial||initial.mark.id!==identify(event)||!event.detail)return;
+        const hit=identify(event);
+        if(!initial||initial.id!==hit?.id||!!initial.mark===hit.documentTab||!event.detail)return;
         event.preventDefault();
         event.stopPropagation();
-        if(!initial.cancelled&&Math.hypot(event.clientX-initial.x,event.clientY-initial.y)<=5)toggle(initial.mark);
+        if(initial.cancelled||Math.hypot(event.clientX-initial.x,event.clientY-initial.y)>5)return;
+        if(initial.mark)toggle(initial.mark);
+        else tabs.current?.stage(initial.id);
       };
       const cancel=()=>{press=undefined;};
       owner.addEventListener('pointerdown',down,true);

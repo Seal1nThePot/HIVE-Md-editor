@@ -1,4 +1,5 @@
 import type { SubmittedAnnotation } from '../annotations/annotations';
+import type {ChatDraft} from './chatConversations';
 
 export type ChatAnnotationBatch = {
     instruction: string;
@@ -8,6 +9,8 @@ export type ChatAnnotationBatch = {
 export type ChatMessageDetails = {
     documentFile?: string;
     annotationBatch?: ChatAnnotationBatch;
+    turnId?:string;
+    draft?:ChatDraft;
 };
 
 export type Message = ChatMessageDetails & {

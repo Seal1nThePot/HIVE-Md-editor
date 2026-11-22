@@ -50,7 +50,7 @@
 .settings-page .status-setting-rows{display:block;margin:14px 0}
 .settings-page .ribbon-display-settings{border:0;margin:0 0 22px;padding:0}
 .settings-page .settings-card{max-width:1000px}
-.settings-return { margin-top:auto; padding:14px 12px 0; justify-content:flex-start; color:var(--hive-settings-sidebar-text); }
+.settings-return { margin:0 0 12px; padding:0 12px; justify-content:flex-start; color:var(--hive-settings-sidebar-text); }
 .settings-nav-empty { color:var(--hive-settings-sidebar-text); font-size:calc(11px * var(--text-scale)); padding:12px; }
 .settings-sidebar nav button > span {white-space:nowrap;}
 .settings-content { flex:1; min-width:0; overflow:auto; padding:clamp(24px,5vw,64px); }

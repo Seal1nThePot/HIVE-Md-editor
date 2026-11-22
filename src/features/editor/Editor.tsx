@@ -242,7 +242,7 @@ export default function Editor({
   onFocus?:()=>void;
   onFind?:(replace?:boolean)=>void;
   onOpenLink?:(target:string)=>void;
-  onDraftSelection?:(text:string)=>void;
+  onDraftSelection?:(text:string,table?:{ordinal:number})=>void;
   documentFile?:string;
   annotationTool?:boolean;
   searchActive?:boolean;

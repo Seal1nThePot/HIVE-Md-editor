@@ -6,7 +6,7 @@ import {selectAll} from '@codemirror/commands';
 import {Scissors,Copy,ClipboardPaste,Clipboard,Icon,TextSelect,FileInput,Sparkles} from "../../shared/icons";
 import {textForQuickAI} from '../chat/contextDraft';
 import {previewPlan} from './markdownPresentation';
-import {cellContent} from './tableWidget';
+import {cellContent,tableSourceSelection} from './tableWidget';
 import {tableCell} from './tableViewport';
 import './editor-context-menu.css';
 import {usePanelDocument} from '../../shared/panelDocument';
@@ -19,13 +19,17 @@ export function decodedOffsets(raw:string){const offsets=[0];let pos=0;while(pos
 export function clipboardChange(state:EditorState,selection:EditorSelection,inserted:string){const selected=state.update({selection}).state;return selected.changeByRange(range=>({changes:{from:range.from,to:range.to,insert:inserted},range:EditorSelection.cursor(range.from+inserted.length)}));}
 
 export default function EditorContextMenu({editor,point,input,onClose,onMark,onUnmark,annotationId,onShowAnnotations,onError,link,onOpenLink,onDraftSelection}:{
-  link?:string;onOpenLink?:(target:string)=>void;editor:EditorView;point:{x:number;y:number;position?:number|null};input?:HTMLTextAreaElement;onClose:()=>void;onMark:()=>void;onUnmark?:(id?:string)=>void;annotationId?:string;onShowAnnotations?:(context:AnnotationContext)=>void;onError?:(message:string)=>void;onDraftSelection?:(text:string)=>void;
+  link?:string;onOpenLink?:(target:string)=>void;editor:EditorView;point:{x:number;y:number;position?:number|null};input?:HTMLTextAreaElement;onClose:()=>void;onMark:()=>void;onUnmark?:(id?:string)=>void;annotationId?:string;onShowAnnotations?:(context:AnnotationContext)=>void;onError?:(message:string)=>void;onDraftSelection?:(text:string,table?:{ordinal:number})=>void;
 }){
   const menu=useRef<HTMLDivElement>(null),[position,setPosition]=useState(point);
   const document=usePanelDocument(),window=document.defaultView!;
-  const snapshot=useRef({doc:editor.state.doc,selection:editor.state.selection,input,inputValue:input?.value,start:input?.selectionStart??0,end:input?.selectionEnd??0}).current;
-  const hasSelection=input?snapshot.start!==snapshot.end:snapshot.selection.ranges.some(range=>!range.empty);
-  const draftSelection=!input&&onDraftSelection?textForQuickAI(editor.state,snapshot.selection,point.position):'';
+  const snapshot=useRef(editor.state).current;
+  const inputSnapshot=useRef({value:input?.value,start:input?.selectionStart??0,end:input?.selectionEnd??0}).current;
+  const {start,end,value:inputValue}=inputSnapshot;
+  const tableRange=!input&&onDraftSelection?snapshot.field(tableSourceSelection,false):null;
+  const table=tableRange?previewPlan(snapshot).replacements.find(item=>item.kind==='table'&&item.from===tableRange.from&&item.to===tableRange.to):undefined;
+  const hasSelection=input?start!==end:snapshot.selection.ranges.some(range=>!range.empty);
+  const draftSelection=table?snapshot.sliceDoc(table.from,table.to):!input&&onDraftSelection?textForQuickAI(snapshot,snapshot.selection,point.position):'';
   const readOnly=editor.state.readOnly||!!input?.readOnly;
   const focusTarget=()=>input?.isConnected?input.focus():editor.focus();
   useLayoutEffect(()=>{
@@ -50,21 +54,21 @@ export default function EditorContextMenu({editor,point,input,onClose,onMark,onU
     const row=Number(input.dataset.row),col=Number(input.dataset.col),source=table&&tableCell(table,row,col);
     if(!source||source.virtual!==undefined){onError?.('请先选中单元格中的文字。');return;}
     const part=cellContent(source,editor.state.doc),offsets=decodedOffsets(part.raw);
-    const from=part.from+(offsets[snapshot.start]??part.raw.length),to=part.from+(offsets[snapshot.end]??part.raw.length);
+    const from=part.from+(offsets[start]??part.raw.length),to=part.from+(offsets[end]??part.raw.length);
     let ids:string[]=[];try{const parsed=JSON.parse(cell?.dataset.tableAnnotationIds||'[]');if(Array.isArray(parsed))ids=parsed.filter(value=>typeof value==='string');}catch{/* ignore invalid metadata */}
     onShowAnnotations?.({ranges:[{from,to}],ids});
   }
-  const valid=()=>editor.dom.isConnected&&editor.state.doc===snapshot.doc&&(!input||input.isConnected&&input.value===snapshot.inputValue);
+  const valid=()=>editor.dom.isConnected&&editor.state.doc===snapshot.doc&&(!input||input.isConnected&&input.value===inputValue);
   async function clipboard(action:'cut'|'copy'|'paste'|'plain'){
     onClose();
     if(!valid()||action!=='copy'&&(readOnly||editor.state.readOnly||!!input?.readOnly)){onError?.('选区或正文已变化，无法完成操作，请重新选择。');return;}
-    const text=input?snapshot.inputValue!.slice(snapshot.start,snapshot.end):snapshot.selection.ranges.filter(range=>!range.empty).map(range=>snapshot.doc.sliceString(range.from,range.to)).join('\n');
+    const text=input?inputValue!.slice(start,end):snapshot.selection.ranges.filter(range=>!range.empty).map(range=>snapshot.doc.sliceString(range.from,range.to)).join('\n');
     try{
       if(action==='copy'||action==='cut')await window.navigator.clipboard.writeText(text);
       const inserted=action==='paste'||action==='plain'?await window.navigator.clipboard.readText():'';
       if(action!=='copy'){
         if(!valid()||editor.state.readOnly||!!input?.readOnly){onError?.('剪贴板操作期间正文已变化，请重新选择。');return;}
-        if(input){input.focus();input.setRangeText(inserted,snapshot.start,snapshot.end,'end');input.dispatchEvent(new Event('input',{bubbles:true}));}
+        if(input){input.focus();input.setRangeText(inserted,start,end,'end');input.dispatchEvent(new Event('input',{bubbles:true}));}
         else {const transaction=clipboardChange(editor.state,snapshot.selection,inserted);editor.dispatch({...transaction,userEvent:action==='cut'?'delete.cut':'input.paste'});editor.focus();}
       }else focusTarget();
     }catch{onError?.(action==='paste'||action==='plain'?'无法读取剪贴板，请检查浏览器权限或使用 Ctrl+V。':'无法写入剪贴板，请检查浏览器权限或使用键盘快捷键。');focusTarget();}
@@ -85,7 +89,7 @@ export default function EditorContextMenu({editor,point,input,onClose,onMark,onU
     </div>
     <hr/>
     {link&&onOpenLink&&<button type="button" role="menuitem" onClick={()=>run(()=>onOpenLink(link))}><FileInput size={15}/><span>{parseExternalHttpLink(link)?'在浏览器中打开':'跳转至文件'}</span></button>}
-    {!!draftSelection.trim()&&<button type="button" role="menuitem" onClick={()=>run(()=>{if(!valid()){onError?.('正文或选区已变化，请再次打开右键菜单。');return;}onDraftSelection?.(draftSelection);})}><Sparkles size={15}/><span>添加到 AI 输入框</span></button>}
+    {!!draftSelection.trim()&&<button type="button" role="menuitem" onClick={()=>run(()=>{if(!valid()){onError?.('正文或选区已变化，请再次打开右键菜单。');return;}onDraftSelection?.(draftSelection,table?{ordinal:table.tableOrdinal??0}:undefined);})}><Sparkles size={15}/><span>添加到 AI 输入框</span></button>}
     {!input&&<button type="button" role="menuitem" disabled={!hasSelection} onClick={()=>run(onMark)}><Icon name="annotation.markSelection" size={15}/><span>标注选区</span><kbd>Ctrl + 单击</kbd></button>}
     {!input&&onUnmark&&<button type="button" role="menuitem" disabled={!hasSelection&&!annotationId} onClick={()=>run(()=>onUnmark(annotationId))}><Icon name="annotation.unmarkSelection" size={15}/><span>取消标注</span></button>}
     {onShowAnnotations&&<button type="button" role="menuitem" onClick={()=>run(showLocal)}><Icon name="annotation.showLocal" size={15}/><span>查看文本标注</span></button>}
