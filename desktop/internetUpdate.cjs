@@ -1,7 +1,7 @@
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
-const repository = 'Seal1nThePot/HIVE-Context-test';
+const repository = 'Seal1nThePot/HIVE-Md-editor';
 const releaseApi = `https://api.github.com/repos/${repository}/releases/latest`;
 const releaseHost = 'github.com';
 const downloadHosts = new Set([releaseHost, 'release-assets.githubusercontent.com', 'objects.githubusercontent.com']);

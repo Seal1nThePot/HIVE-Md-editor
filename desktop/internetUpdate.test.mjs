@@ -5,7 +5,7 @@ import path from 'node:path';
 import internetUpdate from './internetUpdate.cjs';
 
 const { createInternetUpdate } = internetUpdate;
-const repository = 'Seal1nThePot/HIVE-Context-test';
+const repository = 'Seal1nThePot/HIVE-Md-editor';
 const build = { version: '0.1.7' };
 const release = { tag_name: 'v0.1.7', assets: [
   { name: 'update.hive.json', state: 'uploaded' }, { name: 'app.asar', state: 'uploaded', size: 4 },

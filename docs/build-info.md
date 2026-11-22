@@ -38,7 +38,7 @@
 
 在「设置 → 关于 → 应用更新」选择「互联网（GitHub）」。应用会保存来源选择，下次启动沿用。本地模式仍可检查配置的本地目录或选择 `update.hive.json`。
 
-互联网模式检查 [GitHub 稳定发布](https://github.com/Seal1nThePot/HIVE-Context-test/releases/latest)。最新稳定发布须同时提供同一构建的 `update.hive.json` 和 `app.asar`，以及供首次安装使用的 Windows x64 ZIP。用户确认后才下载 `app.asar`。更新器校验字节数、SHA-256、构建信息和运行时兼容性，再通过原有保存、重启和失败恢复流程替换应用。
+互联网模式检查 [GitHub 稳定发布](https://github.com/Seal1nThePot/HIVE-Md-editor/releases/latest)。最新稳定发布须同时提供同一构建的 `update.hive.json` 和 `app.asar`，以及供首次安装使用的 Windows x64 ZIP。用户确认后才下载 `app.asar`。更新器校验字节数、SHA-256、构建信息和运行时兼容性，再通过原有保存、重启和失败恢复流程替换应用。
 
 诊断由前端白名单重新构造，默认展示可选择的文本预览，复制内容与点击时的预览一致。正文、聊天、模型配置、密钥、端点、环境变量及目录路径均不作为诊断来源。本地资料使用纯文本展开阅读，不导航离开写作会话，也不需要外链桥接。
 

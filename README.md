@@ -7,7 +7,7 @@
 <p align="center"><strong>在同一个工作区写 Markdown、整理资料、审阅 AI 建议。</strong></p>
 
 <p align="center">
-  <a href="https://github.com/Seal1nThePot/HIVE-Md-editor/releases/download/v0.1.7-icon/HIVE-0.1.7-Windows-x64.zip"><strong>下载 Windows x64 · v0.1.7</strong></a>
+  <a href="https://github.com/Seal1nThePot/HIVE-Md-editor/releases/download/v0.1.8/HIVE-0.1.8-Windows-x64.zip"><strong>下载 Windows x64 · v0.1.8</strong></a>
   · <a href="https://github.com/Seal1nThePot/HIVE-Md-editor/releases">发行记录</a>
   · <a href="#快速开始">快速开始</a>
   · <a href="#界面一览">界面一览</a>
@@ -21,7 +21,7 @@ HIVE 是面向写作与笔记的桌面 Markdown 编辑器。把现有文件夹�
 
 ## 快速开始
 
-1. 下载并解压完整的 [Windows x64 ZIP](https://github.com/Seal1nThePot/HIVE-Md-editor/releases/download/v0.1.7-icon/HIVE-0.1.7-Windows-x64.zip)，运行 `win-unpacked` 中的 `HIVE markdown editor.exe`。
+1. 下载并解压完整的 [Windows x64 ZIP](https://github.com/Seal1nThePot/HIVE-Md-editor/releases/download/v0.1.8/HIVE-0.1.8-Windows-x64.zip)，运行 `win-unpacked` 中的 `HIVE markdown editor.exe`。
 2. 点击左上角的仓库名称，在「仓库管理」里添加你的 Markdown 文件夹，再从左侧文档列表打开一篇文稿。
 3. 在「设置 → 关于 → 应用更新」选择本地或互联网来源。互联网模式从 GitHub Releases 检查稳定版。 [更新说明](docs/build-info.md)
 
@@ -51,7 +51,7 @@ HIVE 是面向写作与笔记的桌面 Markdown 编辑器。把现有文件夹�
 发布标签保留了与 Windows 包对应的源码。使用 Node.js 22.12 或更新版本。
 
 ```powershell
-git clone --branch v0.1.7-icon https://github.com/Seal1nThePot/HIVE-Md-editor.git
+git clone --branch v0.1.8 https://github.com/Seal1nThePot/HIVE-Md-editor.git
 cd HIVE-Md-editor
 npm ci
 npm run desktop:dev
