@@ -1836,7 +1836,7 @@ function WritingApp() {
           onOpen={(position) => openChat(chatTab, position)}
         />
       )}
-      {[...annotationOwners].map(([host,ownerDocument])=><InlineAnnotationEditor key={host} ownerDocument={ownerDocument}
+      {[...annotationOwners].map(([host,ownerDocument])=><InlineAnnotationEditor key={host} ownerDocument={ownerDocument} scopeKey={JSON.stringify([fileWorkspace.info.id,activeEditorId,file])}
         items={annotations.items.filter(item=>(item.source==='document'?view.current:scratchView.current)?.dom.ownerDocument===ownerDocument)}
         request={inlineRequest&&annotations.items.some(item=>item.id===inlineRequest.id&&(item.source==='document'?view.current:scratchView.current)?.dom.ownerDocument===ownerDocument)?inlineRequest:null}
         editorFor={(source) => {const editor=source==='document'?view.current:scratchView.current;return editor?.dom.ownerDocument===ownerDocument?editor:null;}}

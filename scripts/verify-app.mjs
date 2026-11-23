@@ -238,8 +238,17 @@ async function worker(){
       await wait(()=>candidate()?.value==='关联批注的建议','linked polish comparison');
       get('[data-panel-tab="'+siblingTab.dataset.panelTab+'"]').click();
       await wait(()=>reviewButton('对话甲.md')&&linkedPencil(),'linked comparison parked in the mirrored tab');
+      const deletePrompt=()=>get('dialog.annotation-delete-confirm[open]');
       linkedPencil().dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
-      await wait(()=>!reviewButton('对话甲.md')&&!linkedPencil(),'right-click cancels the matching review parked in the other copy');
+      await wait(deletePrompt,'confirm deleting the linked annotation');
+      check('asking to delete keeps the annotation and linked comparison',!!reviewButton('对话甲.md')&&!!linkedPencil());
+      deletePrompt().querySelector('button').click();
+      await wait(()=>!deletePrompt(),'cancel annotation deletion');
+      check('declining keeps the matching review parked in the other copy',!!reviewButton('对话甲.md')&&!!linkedPencil());
+      linkedPencil().dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
+      await wait(deletePrompt,'reopen delete confirmation');
+      deletePrompt().querySelector('.annotation-delete-danger').click();
+      await wait(()=>!reviewButton('对话甲.md')&&!linkedPencil(),'confirmed deletion clears the matching review parked in the other copy');
       check('annotation cancellation clears the linked comparison across two tabs without changing the body',activeDocument().state.sliceDoc().includes('甲稿原句。手写尾句。'));
 
       await menuAction('对话乙.md','在新标签页中打开');
@@ -301,7 +310,9 @@ else{
     const appRoot=packaged?path.join(bundle,'win-unpacked'):null,backend=appRoot?path.join(appRoot,'resources/app.asar/server/index.mjs'):path.join(project,'server/index.mjs');
     server=fork(backend,['--production'],{execPath:appRoot?path.join(appRoot,'HIVE markdown editor.exe'):process.execPath,cwd:project,silent:true,windowsHide:true,env:{...process.env,...(appRoot?{ELECTRON_RUN_AS_NODE:'1'}:{}),HIVE_PORT:'0',HIVE_DOCUMENTS:docs,HIVE_STATE_DIR:path.join(temp,'state'),HIVE_API_KEY:''}});server.stdout.on('data',v=>serverLog+=v);server.stderr.on('data',v=>serverLog+=v);
     const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Integrated backend timeout')),15000);server.once('error',reject);server.once('exit',code=>{clearTimeout(timer);reject(new Error('Integrated backend exited '+code+'\n'+serverLog));});server.on('message',m=>{if(m?.type==='hive-ready'){clearTimeout(timer);resolve(m.port);}});});
-    const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const child=spawn((await import('electron')).default,[fileURLToPath(import.meta.url),'--integrated-worker',...(packaged?['--package']:[]),String(port),temp],{cwd:project,windowsHide:true,env,stdio:['ignore','pipe','pipe']});let log='';child.stdout.on('data',v=>log+=v);child.stderr.on('data',v=>log+=v);
+    const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+    const hostFlags=env.HIVE_TEST_ELECTRON_NO_SANDBOX==='1'?['--no-sandbox']:[];
+    const child=spawn((await import('electron')).default,[...hostFlags,fileURLToPath(import.meta.url),'--integrated-worker',...(packaged?['--package']:[]),String(port),temp],{cwd:project,windowsHide:true,env,stdio:['ignore','pipe','pipe']});let log='';child.stdout.on('data',v=>log+=v);child.stderr.on('data',v=>log+=v);
     const code=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{child.kill();reject(new Error('Integrated UI timeout'));},45000);child.once('error',reject);child.once('exit',code=>{clearTimeout(timer);resolve(code);});});await fs.writeFile(path.join(output,prefix+'-app.log'),log);console.log(log);assert.equal(code,0);
   }finally{await fs.writeFile(path.join(output,prefix+'-server.log'),serverLog);if(server&&server.exitCode===null)await new Promise(resolve=>{server.once('exit',resolve);server.kill();});const resolved=path.resolve(temp);assert.equal(path.dirname(resolved),path.resolve(output));assert.ok(path.basename(resolved).startsWith('.app-check-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 }
