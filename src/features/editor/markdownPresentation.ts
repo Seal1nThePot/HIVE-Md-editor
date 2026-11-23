@@ -5,14 +5,17 @@ import {inspectFormatting} from './formatting';
 import {markdownTree} from './markdownParse';
 import {scanMath,mergeSourceSpans,outsideMath,type SourceSpan} from './mathSyntax';
 import {paragraphTypographyStyles} from '../typography/paragraphTypography';
+import {listItemMarker} from './listStructure';
 
 type Span={from:number;to:number};
 type Node=SyntaxNode;
 export type PreviewCell=Span&{text:string;virtual?:number;trailing?:boolean};
-export type PreviewReplacement=Span&{reveal:Span;block?:boolean;kind?:'bullet'|'task'|'image'|'rule'|'table'|'properties'|'math'|'mermaid';text?:string;src?:string;rows?:PreviewCell[][];columns?:number;rowEnds?:{to:number;trailing:boolean}[];tableOrdinal?:number;list?:boolean};
-export type PreviewStyle=Span&{className?:string;line?:boolean;align?:'left'|'center'|'right';title?:string;link?:string;linkReveal?:Span;list?:{depth:number;width:string}};
+export type PreviewReplacement=Span&{reveal:Span;block?:boolean;kind?:'bullet'|'task'|'image'|'rule'|'table'|'properties'|'math'|'mermaid';text?:string;src?:string;rows?:PreviewCell[][];columns?:number;rowEnds?:{to:number;trailing:boolean}[];tableOrdinal?:number;list?:'padding'|'marker'|'ordered-marker'|'task-marker'};
+export type PreviewStyle=Span&{className?:string;line?:boolean;align?:'left'|'center'|'right';title?:string;link?:string;linkReveal?:Span;list?:{depth:number;width:string;offset:number}};
 export type PreviewPlan={replacements:PreviewReplacement[];styles:PreviewStyle[];punctuation:Span[]};
 const cache=new WeakMap<Text,PreviewPlan>();
+type ListLabel={text:string;width:string};
+type ListLayout=ListLabel&{depth:number;offset:number;ordered:boolean;marker:NonNullable<ReturnType<typeof listItemMarker>>};
 function children(node:Node,name?:string){const items:Node[]=[];for(let item=node.firstChild;item;item=item.nextSibling)if(!name||item.name===name)items.push(item);return items;}
 
 type LocalPreviewUpdate={previousDoc:Text;changes:ChangeDesc};
@@ -91,17 +94,27 @@ export function previewPlan(state:EditorState):PreviewPlan{
     }
   };
   const hideLine=(pos:number,reveal?:Span)=>{const line=doc.lineAt(pos);hide(line.from,Math.min(doc.length,line.to+1),reveal||{from:line.from,to:line.to},{block:true});};
-  const listDepth=(node:Node)=>{let level=0;for(let parent=node.parent;parent;parent=parent.parent)if(parent.name==='ListItem')level++;return level;};
-  const listLine=(from:number,depth:number,width:string,first=false)=>{
-    const line=doc.lineAt(from);
-    styles.push({from:line.from,to:line.from,line:true,className:'cm-preview-list-line'+(first?' cm-preview-list-first':''),list:{depth,width}});
+  const listLine=(from:number,layout:ListLayout,first=false)=>{
+    const line=doc.lineAt(from),{depth,width,offset}=layout;
+    styles.push({from:line.from,to:line.from,line:true,className:'cm-preview-list-line'+(first?' cm-preview-list-first':''),list:{depth,width,offset}});
     return line;
   };
   const listPrefix=(from:number,to:number,reveal:Span)=>{
     const spaces=text.slice(from,to).match(/[ \t]+$/)?.[0].length||0;
-    hide(to-spaces,to,reveal,{list:true});
+    hide(to-spaces,to,reveal,{list:'padding'});
   };
-  const listWidth=(mark:Node)=>/^\d/.test(text[mark.from])?`max(1.4em, ${mark.to-mark.from+1}ch)`:'1.4em';
+  function orderedLabels(items:Node[]){
+    const markers=items.flatMap(item=>{
+      const mark=item.name==='ListItem'?item.getChild('ListMark'):null;
+      return mark?[{from:item.from,raw:text.slice(mark.from,mark.to)}]:[];
+    });
+    if(!markers.length)return new Map<number,ListLabel>();
+    const first=markers[0].raw,start=Number(first.slice(0,-1)),delimiter=first.at(-1);
+    const labels=markers.map(({raw},index)=>({raw,label:String(start+index)+delimiter}));
+    const length=labels.reduce((max,entry)=>Math.max(max,entry.raw.length,entry.label.length),0);
+    const width='max(1.4em, '+(length+1)+'ch)';
+    return new Map(markers.map((item,index)=>[item.from,{text:labels[index].label,width}]));
+  }
   function joinClosingPunctuation(from:number,to:number,after:number){
     const line=doc.lineAt(after);
     if(to<=from||to<line.from||after===line.to)return;
@@ -115,19 +128,32 @@ export function previewPlan(state:EditorState):PreviewPlan{
     styles.push({from,to,className:'cm-preview-link',title:link,link,linkReveal:reveal});
     if(reveal)joinClosingPunctuation(from,to,reveal.to);
   }
-  function walk(node:Node){
+  function walk(node:Node,list?:ListLayout,quotes=0,ordered?:ListLabel){
     const parts=children(node),span={from:node.from,to:node.to};
+    if(node.name==='Blockquote')quotes++;
+    if(node.name==='OrderedList'){
+      const labels=orderedLabels(parts);
+      for(const part of parts)walk(part,list,quotes,labels.get(part.from));
+      return;
+    }
+    if(node.name==='ListItem'){
+      const marker=listItemMarker(doc,node,quotes);
+      if(marker){
+        const depth=list?list.depth+1:0;
+        const base=Math.max(marker.quoteColumn,list?.marker.contentColumn??0);
+        const offset=(list?.offset??0)+Math.max(0,marker.column-base);
+        const label=ordered??{text:['•','◦','▪'][Math.min(2,depth)],width:'1.4em'};
+        list={depth,offset,ordered:!!ordered,marker,...label};
+      }
+    }
     if(node.name==='Paragraph')styles.push(...paragraphTypographyStyles(node,doc));
-    if(node.name==='Paragraph'||node.name==='Task'){
-      const item=node.parent,mark=item?.name==='ListItem'?item.getChild('ListMark'):null;
-      if(item&&mark){
-        const first=doc.lineAt(node.from),last=doc.lineAt(Math.max(node.from,node.to-1)),depth=listDepth(item),width=listWidth(mark);
-        for(let number=first.number;number<=last.number;number++){
-          if(number===doc.lineAt(mark.from).number)continue;
-          const line=listLine(doc.line(number).from,depth,width);
-          const leading=/^(?:[ \t]*>[ \t]?)*[ \t]*/.exec(line.text)?.[0].length||0;
-          listPrefix(line.from,line.from+leading,{from:line.from,to:line.to});
-        }
+    if(list&&(node.name==='Paragraph'||node.name==='Task')&&node.parent?.name==='ListItem'){
+      const first=doc.lineAt(node.from),last=doc.lineAt(Math.max(node.from,node.to-1));
+      for(let number=first.number;number<=last.number;number++){
+        if(number===list.marker.line.number)continue;
+        const line=listLine(doc.line(number).from,list);
+        const leading=/^(?:[ \t]*>[ \t]?)*[ \t]*/.exec(line.text)?.[0].length||0;
+        listPrefix(line.from,line.from+leading,{from:line.from,to:line.to});
       }
     }
     if(hasMath&&['FencedCode','CodeBlock','InlineCode','Table','Image','HTMLBlock','HTMLTag','Autolink','LinkReference','URL','LinkTitle'].includes(node.name))mathExcluded.push(span);
@@ -183,16 +209,16 @@ export function previewPlan(state:EditorState):PreviewPlan{
       if(marks.length>=2)styles.push({from:marks[0].to,to:marks.at(-1)!.from,className:node.name==='StrongEmphasis'?'cm-preview-strong':node.name==='Emphasis'?'cm-preview-emphasis':'cm-preview-strike'});
     }
     if(node.name==='EmphasisMark'||node.name==='StrikethroughMark'){hide(node.from,node.to,node.parent||span);return;}
-    if(node.name==='ListMark'){
-      const depth=listDepth(node.parent||node),line=listLine(node.from,depth,listWidth(node),true);
+    if(node.name==='ListMark'&&list){
+      const line=listLine(node.from,list,true);
       const reveal={from:line.from,to:line.to};
       listPrefix(line.from,node.from,reveal);
       const task=node.parent?.getChild('Task')?.getChild('TaskMarker');
-      if(task)hide(node.from,task.from,reveal,{list:true});
+      if(task)hide(node.from,task.from,reveal,{list:'task-marker'});
       else {
         let end=node.to;
         while(end<line.to&&/[ \t]/.test(text[end]))end++;
-        hide(node.from,end,reveal,{kind:'bullet',text:/^\d/.test(text[node.from])?text.slice(node.from,node.to):['•','◦','▪'][Math.min(2,depth)],list:true});
+        hide(node.from,end,reveal,{kind:'bullet',text:list.text,list:list.ordered?'ordered-marker':'marker'});
       }
       return;
     }
@@ -200,7 +226,7 @@ export function previewPlan(state:EditorState):PreviewPlan{
       const line=doc.lineAt(node.from);let end=node.to;
       while(end<line.to&&/[ \t]/.test(text[end]))end++;
       hide(node.from,node.to,span,{kind:'task',text:/[xX]/.test(text.slice(node.from,node.to))?'☑':'☐'});
-      hide(node.to,end,{from:line.from,to:line.to},{list:true});
+      hide(node.to,end,{from:line.from,to:line.to},{list:'padding'});
       return;
     }
     if(node.name==='QuoteMark'){let to=node.to;if(text[to]===' ')to++;hide(node.from,to,span);return;}
@@ -227,7 +253,7 @@ export function previewPlan(state:EditorState):PreviewPlan{
         const link=url?text.slice(url.from,url.to):references.get(referenceKey(reference));
         linkStyle(first.to,end.from,link,span);
         hide(node.from,first.to,span);hide(end.from,node.to,span);
-        for(const part of parts)if(part.from>=first.to&&part.to<=end.from)walk(part);
+        for(const part of parts)if(part.from>=first.to&&part.to<=end.from)walk(part,list,quotes);
         return;
       }
     }
@@ -244,7 +270,7 @@ export function previewPlan(state:EditorState):PreviewPlan{
       return;
     }
     if(node.name==='LinkReference'){hide(node.from,node.to,span,{block:true});return;}
-    for(const part of parts)walk(part);
+    for(const part of parts)walk(part,list,quotes);
   }
   const metadata=documentFrontmatter(doc);if(metadata)hide(metadata.from,metadata.to,{from:metadata.from,to:metadata.to},{kind:'properties',block:true,text:'笔记属性'});
   walk(markdownTree(state).topNode);
@@ -278,13 +304,13 @@ function intersectsSelection(item:PreviewReplacement,range:EditorState['selectio
   if(!range.empty)return range.from<item.to&&range.to>item.from;
   return range.from<item.to&&(range.from>item.from||item.kind==='math'&&range.from===item.from);
 }
-const selectionReplacements={image:new WeakMap<Text,PreviewReplacement[]>(),math:new WeakMap<Text,PreviewReplacement[]>()};
+const selectionReplacements={image:new WeakMap<Text,PreviewReplacement[]>(),math:new WeakMap<Text,PreviewReplacement[]>(),'ordered-marker':new WeakMap<Text,PreviewReplacement[]>()};
 /** Changes within the same replacement ranges can reuse the existing decorations. */
 export function replacementSelectionSignature(state:EditorState,kind:keyof typeof selectionReplacements,selection:EditorSelection|null){
   if(!selection)return '';
   const cache=selectionReplacements[kind];
   let items=cache.get(state.doc);
-  if(!items){items=previewPlan(state).replacements.filter(item=>item.kind===kind).sort((a,b)=>a.from-b.from);cache.set(state.doc,items);}
+  if(!items){items=previewPlan(state).replacements.filter(item=>kind==='ordered-marker'?item.list===kind:item.kind===kind).sort((a,b)=>a.from-b.from);cache.set(state.doc,items);}
   const selected=new Set<number>();
   for(const range of selection.ranges){
     let low=0,high=items.length;
@@ -304,6 +330,9 @@ export function visibleReplacements(state:EditorState,focused:boolean,selection:
   const filtered=previewPlan(state).replacements.filter(item=>{
     if(item.kind==='table'||item.kind==='task')return true;
     if(item.kind==='image')return !focused||!selection?.ranges.some(range=>intersectsSelection(item,range));
+    // Keep sequential labels while editing the body or deleting a preceding item.
+    // The actual marker stays editable when the caret or selection enters it.
+    if(item.list==='ordered-marker')return !focused||!selection?.ranges.some(range=>intersectsSelection(item,range));
     if(item.kind==='math'&&pointerMath)return !focused||!pointerMath.ranges.some(range=>intersectsSelection(item,range));
     return !active.some(line=>item.reveal.from<=line.to&&item.reveal.to>line.from);
   });

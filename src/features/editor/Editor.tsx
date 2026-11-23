@@ -49,6 +49,7 @@ import './headingFolding.css';
 import {codeModeExtensions,codeModeMarker} from './codeMode';
 import {splitPadding,setSplitPadding,splitTopPadding,setSplitTopPadding,splitBlockPadding,setSplitBlockPadding,alignSplitViews} from './splitAlignment';
 import {outlineTree} from './markdownParse';
+import {indentMarkdownList} from './listStructure';
 
 const colors = HighlightStyle.define([
   {tag:tags.heading1,class:'cm-markdown-h1'},
@@ -148,7 +149,10 @@ export function makeState(
         ...defaultKeymap,
         ...historyKeymap.filter(binding=>binding.run!==undo&&binding.run!==redo),
         ...searchKeymap.filter(binding=>!['Mod-f','F3','Mod-g'].includes(binding.key||'')),
-        indentWithTab,
+        {...indentWithTab,run:view=>{
+          if(view.state.field(displayModeField)==='live'&&!view.composing&&indentMarkdownList(view))return true;
+          return indentWithTab.run!(view);
+        }},
       ]),
       syntaxHighlighting(colors),
       fencedCodeHighlight,

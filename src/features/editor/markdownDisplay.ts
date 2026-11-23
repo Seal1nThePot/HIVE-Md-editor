@@ -138,7 +138,9 @@ export const markdownPreview=StateField.define<DecorationSet>({
     if(tr.state.field(displayModeField)==='preview')return value;
     const prior=tr.startState.field(previewFocus,false),next=tr.state.field(previewFocus,false);
     const before=prior?.selection??null,after=next?.selection??null;
-    if(before!==after&&(activeLines(tr.state,before)!==activeLines(tr.state,after)||replacementSelectionSignature(tr.state,'image',before)!==replacementSelectionSignature(tr.state,'image',after)))return build(tr.state);
+    if(before!==after&&(activeLines(tr.state,before)!==activeLines(tr.state,after)||
+      replacementSelectionSignature(tr.state,'image',before)!==replacementSelectionSignature(tr.state,'image',after)||
+      replacementSelectionSignature(tr.state,'ordered-marker',before)!==replacementSelectionSignature(tr.state,'ordered-marker',after)))return build(tr.state);
     const priorMath=prior?.pointerMath??null,nextMath=next?.pointerMath??null;
     if(priorMath!==nextMath){
       const mathChanged=priorMath&&nextMath
@@ -174,16 +176,23 @@ function build(state:EditorState){
   ranges.push(...details.ranges);
   const items=visibleReplacements(state,!!(selection||pointerMath),selection,pointerMath)
     .filter(item=>!details.hidden.some(span=>item.from<span.to&&item.to>span.from));
-  const active=previewActiveLines(state,selection),rawListLines=new Set<number>();
-  if(selection){
-    for(const item of plan.replacements)if(item.list&&active.some(line=>item.reveal.from<=line.to&&item.reveal.to>line.from))rawListLines.add(state.doc.lineAt(item.from).from);
+  const active=previewActiveLines(state,selection),rawTaskLines=new Set<number>();
+  // A revealed source marker occupies the same hanging column as its preview widget.
+  // Task items keep their existing editable prefix and interactive checkbox.
+  const visibleList=new Set(items.filter(item=>item.list));
+  const rawList=selection?plan.replacements.filter(item=>item.list&&!visibleList.has(item)&&active.some(line=>item.reveal.from<=line.to&&item.reveal.to>line.from)):[];
+  for(const item of rawList)if(item.list==='task-marker')rawTaskLines.add(state.doc.lineAt(item.from).from);
+  for(const item of rawList){
+    if(rawTaskLines.has(state.doc.lineAt(item.from).from))continue;
+    const className=item.list==='padding'?'cm-preview-list-source-padding':'cm-preview-list-source-marker';
+    ranges.push(Decoration.mark({class:className}).range(item.from,item.to));
   }
   for(const style of plan.styles){
-    if(style.list&&rawListLines.has(style.from))continue;
+    if(style.list&&rawTaskLines.has(style.from))continue;
     const attributes:Record<string,string>={};if(style.align)attributes.style=`text-align: ${style.align}`;if(style.title)attributes.title=style.title;
     const reveal=style.linkReveal,sourceLink=reveal&&active.some(line=>reveal.from<=line.to&&reveal.to>line.from);
     if(style.link&&!sourceLink)attributes['data-hive-link']=style.link;
-    if(style.list)attributes.style=`--hive-list-depth: ${style.list.depth}; --hive-list-marker-width: ${style.list.width}`;
+    if(style.list)attributes.style=`--hive-list-depth: ${style.list.depth}; --hive-list-offset: ${style.list.offset}; --hive-list-marker-width: ${style.list.width}`;
     if(style.line)ranges.push(Decoration.line({class:style.className,attributes}).range(style.from));
     else if(style.to>style.from)ranges.push(Decoration.mark({class:sourceLink?'cm-source-link':style.className,attributes}).range(style.from,style.to));
   }

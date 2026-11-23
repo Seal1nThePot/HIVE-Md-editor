@@ -157,6 +157,50 @@ describe('live Markdown display',()=>{
     expect(previewPlan(state).replacements.filter(item=>item.kind==='bullet').map(item=>item.text)).toEqual(['•','◦','▪']);
     expect(state.update({effects:setDisplayMode.of('source')}).state.field(markdownPreview).size).toBe(0);
   });
+  it('renumbers each ordered sibling group from its source start without altering surviving Markdown or undo',()=>{
+    const doc='9. root A\n   4) child A\n   9) child B\n70. root B\n99. root C';
+    let state=EditorState.create({doc,extensions:[history(),markdownDisplayExtensions]});
+    const labels=()=>previewPlan(state).replacements.filter(item=>item.kind==='bullet').map(item=>item.text);
+    expect(labels()).toEqual(['9.','4)','5)','10.','11.']);
+    const from=doc.indexOf('70.'),to=doc.indexOf('99.');
+    state=state.update({changes:{from,to},selection:{anchor:from},effects:setPreviewFocus.of(true),userEvent:'delete.backward'}).state;
+    expect(labels()).toEqual(['9.','4)','5)','10.']);
+    expect(state.sliceDoc()).toBe(doc.slice(0,from)+doc.slice(to));
+    expect(visibleReplacements(state,true).find(item=>item.from===from)?.text).toBe('10.');
+    expect(state.update({effects:setDisplayMode.of('preview')}).state.sliceDoc()).toBe(state.sliceDoc());
+    expect(state.update({effects:setDisplayMode.of('source')}).state.field(markdownPreview).size).toBe(0);
+    expect(undo({get state(){return state;},dispatch(tr){state=tr.state;}})).toBe(true);
+    expect(state.sliceDoc()).toBe(doc);
+    expect(labels()).toEqual(['9.','4)','5)','10.','11.']);
+  });
+
+  it('reserves one hanging column through 9 and 10 and through editable source marker reveal',()=>{
+    const doc='9. first body\n1. second body\n   explicit continuation';
+    const first=create(doc),from=doc.indexOf('1.');
+    const readLineStyles=(state:EditorState)=>{
+      const styles:string[]=[];
+      state.field(markdownPreview).between(0,doc.length,(_from,_to,decoration)=>{
+        if(decoration.spec.class?.includes('cm-preview-list-line'))styles.push(decoration.spec.attributes.style);
+      });
+      return styles;
+    };
+    const stable=readLineStyles(first);
+    expect(new Set(stable).size).toBe(1);
+    expect(stable[0]).toContain('4ch');
+    let state=first.update({effects:setPreviewFocus.of(true),selection:{anchor:from+4,head:doc.length}}).state;
+    expect(visibleReplacements(state,true).find(item=>item.from===from)?.text).toBe('10.');
+    expect(readLineStyles(state)).toEqual(stable);
+    const prior=state.field(markdownPreview);
+    state=state.update({selection:{anchor:from+1}}).state;
+    expect(state.field(markdownPreview)).not.toBe(prior);
+    expect(visibleReplacements(state,true).some(item=>item.from===from)).toBe(false);
+    expect(readLineStyles(state)).toEqual(stable);
+    let exposedMarker='';
+    state.field(markdownPreview).between(from,from+3,(start,end,decoration)=>{
+      if(decoration.spec.class==='cm-preview-list-source-marker')exposedMarker=state.sliceDoc(start,end);
+    });
+    expect(exposedMarker).toBe('1. ');
+  });
   it('shows code contents literally while hiding fence lines outside editing',()=>{
     const state=create('```md\n# 这是代码\n**照原样显示**\n```');
     expect(hidden(state).join('')).toBe('```md\n```');expect(previewPlan(state).styles.some(style=>style.className==='cm-preview-h1')).toBe(false);
