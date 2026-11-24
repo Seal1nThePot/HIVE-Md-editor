@@ -8,6 +8,7 @@
   padding: 4px;
   background: var(--hive-popup-bg,var(--panel));
   color: var(--hive-popup-text,var(--text));
+  font-size: var(--hive-panel-menu-font-size);
   border: 1px solid var(--hive-popup-border,var(--line));
   border-radius: 6px;
   box-shadow: 0 4px 16px #0003;

@@ -11,12 +11,13 @@ import './file-explorer.css';
 import ImageLibrary from './ImageLibrary';
 import type {WorkspaceReferenceSource} from '../chat/referenceSources';
 import {useFileWorkspace} from './WorkspaceContext';
+import {pastedDocumentPath} from './localDocumentPath';
 
 export type FileAction={action:string;path?:string;parent?:string;name?:string;type?:'file'|'folder';id?:string};
 export type FileResult={path:string;from?:string;type:'file'|'folder';id?:string;deletedAt?:string;warning?:string};
 type ReferenceDestination='basis'|'chat';
 type Props={entries:Entry[];workspaceId:string;root:string;file:string;dirty:boolean;filter:string;setFilter:(value:string)=>void;collapsed:Set<string>;setCollapsed:Dispatch<SetStateAction<Set<string>>>;
-  onRefresh?:()=>Promise<void>;onReferenceDrop?:(source:WorkspaceReferenceSource,destination:ReferenceDestination)=>void;onOpen:(path:string,newTab?:boolean)=>Promise<void>;onAction:(action:FileAction,options?:{quiet?:boolean})=>Promise<FileResult>;onPreflight?:(actions:FileAction[])=>Promise<void>;onReferenceBatch?:(sources:WorkspaceReferenceSource[])=>Promise<{path:string;ok:boolean;error?:string;warning?:string}[]>;onAI:(path:string)=>void;onOpenRepositories?:()=>void;treeReady?:boolean;renameRequest?:{path:string;key:string}};
+  onRefresh?:()=>Promise<void>;onReferenceDrop?:(source:WorkspaceReferenceSource,destination:ReferenceDestination)=>void;onOpen:(path:string,newTab?:boolean)=>Promise<void>;onOpenPath?:(path:string)=>Promise<void>;onAction:(action:FileAction,options?:{quiet?:boolean})=>Promise<FileResult>;onPreflight?:(actions:FileAction[])=>Promise<void>;onReferenceBatch?:(sources:WorkspaceReferenceSource[])=>Promise<{path:string;ok:boolean;error?:string;warning?:string}[]>;onAI:(path:string)=>void;onOpenRepositories?:()=>void;treeReady?:boolean;renameRequest?:{path:string;key:string}};
 type Menu={x:number;y:number;entry?:Entry;sort?:boolean;more?:boolean};
 type Drop={path:string;where:'before'|'after'|'inside'};
 function sortIcon(mode:SortMode,direction:SortDirection):IconName {
@@ -24,11 +25,12 @@ function sortIcon(mode:SortMode,direction:SortDirection):IconName {
   if(mode==='name')return direction==='asc'?'file.sortAToZ':'file.sortZToA';
   return direction==='asc'?'file.sortOldest':'file.sortNewest';
 }
-export default function FileExplorer({entries,workspaceId,root,file,dirty,filter,setFilter,collapsed,setCollapsed,onOpen,onAction,onAI,renameRequest,onReferenceDrop,onRefresh,onPreflight,onReferenceBatch,onOpenRepositories,treeReady=true}:Props){
+export default function FileExplorer({entries,workspaceId,root,file,dirty,filter,setFilter,collapsed,setCollapsed,onOpen,onOpenPath,onAction,onAI,renameRequest,onReferenceDrop,onRefresh,onPreflight,onReferenceBatch,onOpenRepositories,treeReady=true}:Props){
   const {bindings}=useShortcutPreferences();
   const document=usePanelDocument(),window=document.defaultView!;
   const storage='hive.explorer.v1:'+workspaceId;
   const space=useFileWorkspace();
+  const pastedPath=onOpenPath&&pastedDocumentPath(filter);
   const referenceDrop=useRef(onReferenceDrop);referenceDrop.current=onReferenceDrop;
   const [externalDrop,setExternalDrop]=useState(false),[importStatus,setImportStatus]=useState(''),[imageRevision,setImageRevision]=useState(0);
   const [imagesOpen,setImagesOpen]=useState(false);
@@ -41,11 +43,11 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
   const foldersSeen=useRef<{workspace:string;paths:Set<string>}>({workspace:workspaceId,paths:new Set()});
   const [move,setMove]=useState<Entry|null>(null),[moveParent,setMoveParent]=useState(''),[deleting,setDeleting]=useState<Entry|null>(null),[drop,setDrop]=useState<Drop|null>(null);
   useEffect(()=>{
-    if(!scope||!filter.trim()){setSearchResult(null);setSearching(false);return;}
+    if(!scope||!filter.trim()||pastedPath){setSearchResult(null);setSearching(false);return;}
     const controller=new AbortController();let alive=true;setSearching(true);
     const timer=setTimeout(()=>{void space.request('/api/explorer/search?folder='+encodeURIComponent(scope)+'&query='+encodeURIComponent(filter),{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);if(alive)setSearchResult({...data,scope,query:filter});}).catch(error=>{if(alive&&error.name!=='AbortError')setError(error.message);}).finally(()=>{if(alive)setSearching(false);});},250);
     return()=>{alive=false;clearTimeout(timer);controller.abort();};
-  },[scope,filter,space.request,entries]);
+  },[scope,filter,pastedPath,space.request,entries]);
   const importInput=useRef<HTMLInputElement>(null),importLease=useRef<AbortController|null>(null),currentWorkspace=useRef(workspaceId);
   const workspaceEpoch=useRef(0);if(currentWorkspace.current!==workspaceId){currentWorkspace.current=workspaceId;workspaceEpoch.current++;}
   useEffect(()=>{setOperation(null);setSelected('');setSelection(new Set());anchor.current='';setBatch(null);setMove(null);setDeleting(null);setBatchResult([]);setError('');setWarning('');setImagesOpen(false);setMenu(null);return()=>{importLease.current?.abort();importLease.current=null;};},[workspaceId]);
@@ -307,7 +309,11 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
     }
   }}>
     {externalDrop&&<div className="explorer-external-drop" aria-hidden="true">松开以导入 Markdown 或图片<br/><small>复制到当前文件库</small></div>}
-    <div className="explorer-search"><Search size={13}/><input ref={search} disabled={busy} aria-label="筛选文件" placeholder={scope?'在文件夹中查找…':'查找文件…'} value={filter} onChange={event=>setFilter(event.target.value)}/></div>
+    <div className="explorer-search"><Search size={13}/><input ref={search} disabled={busy} aria-label="筛选文件" placeholder={scope?'在文件夹中查找…':'查找文件或粘贴路径…'} value={filter} onChange={event=>setFilter(event.target.value)} onKeyDown={event=>{
+      if(event.key!=='Enter'||event.nativeEvent.isComposing||event.repeat||!pastedPath||!onOpenPath)return;
+      event.preventDefault();event.stopPropagation();
+      void run(async()=>{await onOpenPath(pastedPath);return true;},'open').then(opened=>{if(opened)setFilter('');});
+    }}/></div>
     <div className="explorer-tools" data-opening-file={pendingOperation==='open'||undefined}><span className="explorer-heading" title={scope}><span>{scope?scope.split('/').at(-1):'全部文档'}</span>{chosen.length>1&&<small role="status" aria-label={`已选择 ${chosen.length} 项`}>已选 {chosen.length} 项</small>}</span>{scope&&<button type="button" disabled={busy} onClick={()=>{setScope('');setFilter('');}}>全部</button>}<div>
       <input ref={importInput} type="file" hidden multiple accept=".md,.png,.jpg,.jpeg,.gif,.webp" onChange={event=>{const files=Array.from(event.currentTarget.files||[]);event.currentTarget.value='';if(files.length)void importDropped(files);}}/>
       <button type="button" aria-label="导入文件" title="导入文件" disabled={busy} onClick={()=>importInput.current?.click()}><Upload size={14}/></button>
@@ -317,7 +323,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       <button type="button" aria-label="文档更多操作" title="更多操作" aria-haspopup="menu" aria-expanded={!!menu?.more} disabled={busy} onClick={event=>{const rect=event.currentTarget.getBoundingClientRect();setMenu(menu?.more?null:{x:rect.right,y:rect.bottom,more:true});}}><MoreHorizontal size={15}/></button>
     </div></div>
     {batchResult.length>0&&!batch&&<div className="explorer-batch-result" role="status">{batchResult.map((item,index)=><div key={index}>{item}</div>)}<button type="button" onClick={()=>setBatchResult([])}>关闭结果</button></div>}
-    {scope&&filter&&<small className="explorer-search-status" role="status">{searching?'正在查找文件名与正文…':currentResults?`找到 ${currentResults.matches.length} 份文档${currentResults.truncated?'，仅显示前 200 份':''}`:'查找文件名与正文'}</small>}
+    {scope&&filter&&!pastedPath&&<small className="explorer-search-status" role="status">{searching?'正在查找文件名与正文…':currentResults?`找到 ${currentResults.matches.length} 份文档${currentResults.truncated?'，仅显示前 200 份':''}`:'查找文件名与正文'}</small>}
     {warning&&<p className="explorer-error" role="status">操作已完成：{warning}<button type="button" aria-label="关闭文件操作警告" onClick={()=>setWarning('')}><X size={12}/></button></p>}
     {error&&<p className="explorer-error" role="alert">{error}<button type="button" aria-label="关闭文件操作提示" onClick={()=>setError('')}><X size={12}/></button></p>}
     {importStatus&&<p className="explorer-import-status" role="status">{importStatus}<button type="button" aria-label="关闭导入结果" onClick={()=>setImportStatus('')}><X size={12}/></button></p>}
@@ -325,7 +331,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       <div role="tree" aria-multiselectable="true" aria-label="文件和文件夹">{row(entries)}</div>
       {treeReady&&!entries.length&&!scope&&!filter
         ? onOpenRepositories&&<div className="explorer-empty"><button type="button" disabled={busy} onClick={onOpenRepositories}>打开仓库管理</button></div>
-        : treeReady&&!view.matching.size&&<p className="empty-note">{filter?'没有匹配的文件。':'从一份新文档开始。'}</p>}
+        : treeReady&&!view.matching.size&&<p className="empty-note">{pastedPath?'按 Enter 打开 Markdown 文稿。':filter?'没有匹配的文件。':'从一份新文档开始。'}</p>}
       <div className="explorer-root-drop">拖到空白处移至根目录</div>
     </div>
     {imagesOpen&&<ImageLibrary workspaceId={workspaceId} file={file} refreshKey={imageRevision} onClose={()=>{setImagesOpen(false);window.requestAnimationFrame(()=>container.current?.querySelector<HTMLButtonElement>('[aria-label="文档更多操作"]')?.focus());}}/>}

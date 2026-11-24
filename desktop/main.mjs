@@ -14,6 +14,7 @@ import {createFileRevealHandler} from './fileReveal.cjs';
 import {createLocalUpdate,markUpdateReady} from './localUpdate.cjs';
 import {dockIconPayload} from '../shared/iconPack.mjs';
 import {createExternalHttpLinkHandler} from './externalLinks.mjs';
+import {createLocalDocumentHandlers} from './localDocuments.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appIcon = path.join(root, 'assets', 'brand', 'hive.png');
@@ -207,6 +208,9 @@ const isMainFrame = event => isMainOrigin(event) && event.senderFrame === mainWi
 const about = createAboutHandlers({isMainOrigin:isMainFrame, app, shell, root, versions:process.versions, platform:process.platform, arch:process.arch, development:process.env.HIVE_DESKTOP_DEV === '1' && !app.isPackaged});
 ipcMain.handle('hive:about-info', about.getAboutInfo);
 ipcMain.handle('hive:open-external-http-link', createExternalHttpLinkHandler({isMainFrame, shell}));
+const localDocuments = createLocalDocumentHandlers(isMainFrame);
+ipcMain.handle('hive:open-local-markdown', localDocuments.open);
+ipcMain.handle('hive:save-local-markdown', localDocuments.save);
 ipcMain.handle('hive:open-app-data-directory', about.openAppDataDirectory);
 const localUpdate = createLocalUpdate({
   app, dialog, isMainOrigin: isMainFrame, resources: process.resourcesPath,

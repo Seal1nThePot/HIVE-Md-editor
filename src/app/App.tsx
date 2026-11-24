@@ -215,7 +215,7 @@ function WritingApp() {
   function panelLabel(id:string) {
     const session=sessions.current.get(id);
     if(session?.trashPreview)return '回收站 · '+(session.trashPreview.path.split('/').at(-1)||session.trashPreview.path);
-    if(session)return session.landing?'新标签页':(session.imagePath||session.disk?.path)?.split('/').at(-1)||'未命名稿';
+    if(session)return session.landing?'新标签页':(session.imagePath||session.disk?.path||session.external?.disk.path)?.split('/').at(-1)||'未命名稿';
     return ({files:'文档',repositories:'仓库管理',conversation:'对话',outline:'大纲',toc:'标题目录',scratch:'草稿',annotations:'标注',basis:'依据',search:'查找替换',trash:'回收站',properties:'笔记属性'} as Record<string,string>)[id]||id;
   }
   const leftPanel = workspace.panel("files"), rightPanel = workspace.panel("conversation");
@@ -510,7 +510,7 @@ function WritingApp() {
       });
       sessionScrollBindings.current.set(id,()=>{next.scrollDOM.removeEventListener('scroll',remember);if(frame!==undefined)window.cancelAnimationFrame(frame);});
     }
-    if (activeSession.current === id && next) {
+    if (activeSession.current === id && next && !session.external) {
       annotations.syncEditor("document", next, session.disk?.path);
       setScratchReady(value => value + 1);
     }
@@ -521,7 +521,8 @@ function WritingApp() {
       for(const transaction of update.transactions)humanHistory.track(id,session.disk.path,transaction);
     session.state = update.state;
     if(update.docChanged)session.contentVersion=(session.contentVersion||0)+1;
-    if(update.docChanged)session.dirty = !documentMatchesText(update.state.doc,session.disk?.text || "");
+    if(update.docChanged)session.dirty = !documentMatchesText(update.state.doc,session.external?.disk.text ?? session.disk?.text ?? "");
+    if(session.external){if(update.docChanged)redraw();return;}
     if (update.docChanged && !syncingSessions.current && session.disk) {
       syncingSessions.current = true;
       try {
@@ -541,7 +542,7 @@ function WritingApp() {
   };
   function activateEditor(id: string) {
     const next=sessions.current.get(id)!;
-    if(next.trashPreview&&activeTextSource.current!=='document'){activeTextSource.current='document';if(id===activeSession.current)redraw();}
+    if((next.trashPreview||next.external)&&activeTextSource.current!=='document'){activeTextSource.current='document';if(id===activeSession.current)redraw();}
     if (id === activeSession.current) return;
     const previous = sessions.current.get(activeSession.current)!;
     captureEditorView(previous);
@@ -550,8 +551,8 @@ function WritingApp() {
     activeSession.current=id;
     proposal.current=next.context?.proposal||null; undo.current=next.context?.undo||[];
     setWritingNodeId(next.context?.writingNodeId||null);
-    setOutline(next.state?headings(next.state):[]);
-    const range=next.state?.selection.main;
+    setOutline(next.state&&!next.external?headings(next.state):[]);
+    const range=next.external?undefined:next.state?.selection.main;
     setSelection(range&&next.state?{from:range.from,to:range.to,text:next.state.sliceDoc(range.from,range.to)}:{from:0,to:0,text:""});
     setInlineRequest(null);setScratchReady(value=>value+1);setError("");
   }
@@ -786,7 +787,7 @@ function WritingApp() {
     return retained;
   }
 
-  const { refresh, openFile, safeSwitch, openSaveAs, save, openBlankTab, createQuickNote, openExplorerFile, manageFile, preflightFileActions, reloadFromDisk, switchWorkspace, submitDialog, importFile } = useFileActions({
+  const { refresh, openFile, safeSwitch, openSaveAs, save, openBlankTab, createQuickNote, openExplorerFile, openDocumentPath, manageFile, preflightFileActions, reloadFromDisk, switchWorkspace, submitDialog, importFile } = useFileActions({
     api, appAlive, promptRef, hasUnsentChatDraft:()=>unsentDraft.current, dialogRef, uid, workspace, sessions, activeSession, activeTextSource,
     proposal, undo, prompt, dialog, running, requestAnchor, structuring, switching, viewApplying,
     creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,
@@ -940,7 +941,7 @@ function WritingApp() {
   const [chatDropTarget,setChatDropTarget]=useState(false);
   function isMarkdownTab(id:string){
     const session=sessions.current.get(id);
-    return !!session&&!session.landing&&!session.imagePath&&!session.trashPreview&&(!session.disk||/\.md$/i.test(session.disk.path));
+    return !!session&&!session.landing&&!session.imagePath&&!session.trashPreview&&!session.external&&(!session.disk||/\.md$/i.test(session.disk.path));
   }
   function stageAttachment(attachment:Omit<ChatAttachment,'id'>){
     const snapshot={...attachment,id:uid()};
@@ -1015,7 +1016,7 @@ function WritingApp() {
       if(id!=='editor'&&!closeEditor(id))return;
       humanHistory.forget(id);
       setError('');
-      if(session.trashPreview){sessions.current.delete(id);redraw();return;}
+      if(session.trashPreview||session.external){sessions.current.delete(id);redraw();return;}
       if(originalProposal&&retainedProposal()){
         if(id!=='editor'){
           redraw();
@@ -1283,14 +1284,22 @@ function WritingApp() {
   },[annotationLocation,setError]);
   const annotationPanelOpen=workspace.isOpen('annotations');
   useEffect(()=>{if(!annotationPanelOpen)setAnnotationBatch(null);},[annotationPanelOpen]);
-  const chatFileOpener = useRef(openExplorerFile);
-  chatFileOpener.current = openExplorerFile;
+  const chatFileOpener = useRef(openDocumentPath);
+  chatFileOpener.current = openDocumentPath;
   const openChatDocument = useCallback((source:string,target:string)=>{
     try {
       const path=resolveLinkTarget(source,target);
-      void chatFileOpener.current(path,true).catch(error=>setError(error.message));
+      void chatFileOpener.current(path).catch(error=>setError(error.message));
     } catch(error) { setError((error as Error).message); }
   },[setError]);
+  function openEditorDocument(id:string,target:string){
+    try{
+      const session=sessions.current.get(id);
+      const path=resolveLinkTarget(session?.disk?.path||session?.external?.disk.path||'',target);
+      activateEditor(id);
+      void openDocumentPath(path).catch(error=>setError(error.message));
+    }catch(error){setError((error as Error).message);}
+  }
   const openChatExternal = useCallback((target:string)=>{
     void openExternalHttpLink(target).then(opened=>{if(!opened)setError('无法打开外部链接。');});
   },[setError]);
@@ -1588,7 +1597,7 @@ function WritingApp() {
           >
             <FileExplorer onRefresh={refresh} entries={entries} workspaceId={fileWorkspace.info.id} root={root} file={file} dirty={dirty} filter={filter} setFilter={setFilter} collapsed={collapsed} setCollapsed={setCollapsed} renameRequest={renameRequest}
               treeReady={!!root} onOpenRepositories={()=>workspace.open('repositories')}
-              onOpen={openExplorerFile} onAction={manageFile} onPreflight={preflightFileActions} onReferenceBatch={addReferenceBatch}
+              onOpen={openExplorerFile} onOpenPath={openDocumentPath} onAction={manageFile} onPreflight={preflightFileActions} onReferenceBatch={addReferenceBatch}
               onReferenceDrop={(source,destination)=>addReference(source,destination==='basis')} onAI={path=>{const entry=entries.flatMap(function walk(value):Entry[]{return [value,...(value.children||[]).flatMap(walk)];}).find(entry=>entry.path===path);if(entry)addReference({path,type:entry.type});}}/>
           </div>
           <input
@@ -1607,6 +1616,7 @@ function WritingApp() {
         </aside></DesktopPanel>
         {editorIds.map((id,index)=>{
           const session=sessions.current.get(id)!,documentPanel=workspace.panel(id);
+          const external=session.external,documentPath=session.disk?.path||external?.disk.path;
           return (<DesktopPanel key={id} id={id} title={`${panelLabel(id)} · 正文 ${index+1}`} open={workspace.isOpen(id)} visible={documentPanel.visible}><main data-panel-id={id} aria-label={`正文编辑区 ${index+1}`}
           className={
             "document-pane workspace-panel " + (documentPanel.grouped?'panel-grouped ':'') + (activeEditorId === id ? "active-editor " : "") +
@@ -1622,7 +1632,7 @@ function WritingApp() {
             title={documentPanel.primary?'正文主版面 · 位置固定':documentPanel.lockHint}
             data-position-fixed={!documentPanel.movable||undefined}
           >
-            <div className="document-tab" data-document-tab={id} data-tab-detachable={canDetachDocumentTab||undefined} title={`${session.trashPreview?'只读 · '+session.trashPreview.path:session.landing?'新标签页':session.imagePath||session.disk?.path||'未命名稿'}${canDetachDocumentTab?' · 拖动移出此标签':''}`} onPointerDown={event=>{
+            <div className="document-tab" data-document-tab={id} data-tab-detachable={canDetachDocumentTab||undefined} title={`${session.trashPreview?'只读 · '+session.trashPreview.path:session.landing?'新标签页':session.imagePath||documentPath||'未命名稿'}${canDetachDocumentTab?' · 拖动移出此标签':''}`} onPointerDown={event=>{
               if(!canDetachDocumentTab)return;event.stopPropagation();workspace.beginTabDrag(id,event,{fromTab:true,onFinish:()=>{}});
             }}>
               <span>{panelLabel(id)}</span>
@@ -1643,9 +1653,18 @@ function WritingApp() {
             <PanelControls chrome={chrome} id={id} />
             {documentPanel.positionLocked&&<Icon name="panel.positionLocked" className="panel-position-lock-icon" size={11}/>}
           </div>
-          {session.disk&&fileConflicts[session.disk.path]&&<div className="file-conflict" role="alert"><span>{fileConflicts[session.disk.path]}</span><button type="button" onClick={()=>reloadFromDisk(id)}>重新读取磁盘</button><button type="button" onClick={()=>{activateEditor(id);openSaveAs(session.disk!.path);}}>另存本地副本</button></div>}
-          {session.trashPreview?<><TrashDocumentPreview preview={session.trashPreview}/>{emptyPanelFooter('回收站只读预览')}</>:session.imagePath?<><ImageFileView key={fileWorkspace.info.id+session.imagePath} path={session.imagePath} workspaceId={fileWorkspace.info.id}/>{emptyPanelFooter("图片")}</>:session.landing?<><NewTabPage active={activeEditorId===id} busy={newNoteBusy||fileBusy||busy} onCreate={()=>void createQuickNote(id)} onOpen={openDocumentList}/>{emptyPanelFooter("新标签页")}</>:<>
-                {<Editor initialState={session.state} keepAlive={busy&&activeEditorId===id||!!dialog?.target&&dialog.target.editor===session.view} documentFile={session.disk?.path||''} onOpenLink={target=>{try{const path=resolveLinkTarget(session.disk?.path||'',target);activateEditor(id);void openExplorerFile(path,true).catch(error=>setError(error.message));}catch(error){setError((error as Error).message);}}} onDraftSelection={(text,table)=>stageEditorSelection(id,text,table)} annotationTool={annotationTool} searchActive={workspace.isOpen('search')&&activeEditorId===id&&activeTextSource.current==='document'} onFind={replace=>{activateEditor(id);activeTextSource.current='document';ribbonCommand('find',replace);}} displayMode={session.displayMode||'live'} splitOrder={appearanceSettings.appearance.splitOrder} typewriter={!!session.typewriter} onReady={bindings(id).onReady} onUpdate={bindings(id).onUpdate} onFocus={()=>{if(activeTextSource.current!=='document'){activeTextSource.current='document';redraw();}}} onMarkSelection={()=>{activateEditor(id);markText('document',sessions.current.get(id)?.disk?.path||'');}} onUnmarkSelection={annotationId=>{activateEditor(id);unmarkText('document',annotationId,sessions.current.get(id)?.disk?.path||'');}} onShowAnnotations={context=>{activateEditor(id);showLocalAnnotation('document',context,sessions.current.get(id)?.disk?.path||'');}} onError={setError} inlineProposal={activeEditorId===id?inlineProposal:null}/>}
+          {documentPath&&fileConflicts[documentPath]&&<div className="file-conflict" role="alert"><span>{fileConflicts[documentPath]}</span><button type="button" onClick={()=>reloadFromDisk(id)}>重新读取磁盘</button>{!external&&<button type="button" onClick={()=>{activateEditor(id);openSaveAs(documentPath);}}>另存本地副本</button>}</div>}
+          {external?<><div className="external-document-bar">
+            <span title={external.disk.path}>{external.editable?'仓库外文稿':'仓库外 · 只读预览'} · {external.disk.path}</span>
+            {external.editable?<button type="button" disabled={!session.dirty||fileBusy} onClick={()=>void saveSession(id)}>保存到原文件</button>:
+              <button type="button" onClick={()=>{external.editable=true;redraw();}}>切换到编辑</button>}
+          </div>
+            <Editor initialState={session.state} displayMode={external.editable?'live':'preview'}
+              onReady={bindings(id).onReady} onUpdate={bindings(id).onUpdate} onError={setError}
+              onOpenLink={target=>openEditorDocument(id,target)}/>
+            {emptyPanelFooter(external.editable?(session.dirty?'有未保存的修改':'已保存'):'只读预览')}
+          </>:session.trashPreview?<><TrashDocumentPreview preview={session.trashPreview}/>{emptyPanelFooter('回收站只读预览')}</>:session.imagePath?<><ImageFileView key={fileWorkspace.info.id+session.imagePath} path={session.imagePath} workspaceId={fileWorkspace.info.id}/>{emptyPanelFooter("图片")}</>:session.landing?<><NewTabPage active={activeEditorId===id} busy={newNoteBusy||fileBusy||busy} onCreate={()=>void createQuickNote(id)} onOpen={openDocumentList}/>{emptyPanelFooter("新标签页")}</>:<>
+                {<Editor initialState={session.state} keepAlive={busy&&activeEditorId===id||!!dialog?.target&&dialog.target.editor===session.view} documentFile={session.disk?.path||''} onOpenLink={target=>openEditorDocument(id,target)} onDraftSelection={(text,table)=>stageEditorSelection(id,text,table)} annotationTool={annotationTool} searchActive={workspace.isOpen('search')&&activeEditorId===id&&activeTextSource.current==='document'} onFind={replace=>{activateEditor(id);activeTextSource.current='document';ribbonCommand('find',replace);}} displayMode={session.displayMode||'live'} splitOrder={appearanceSettings.appearance.splitOrder} typewriter={!!session.typewriter} onReady={bindings(id).onReady} onUpdate={bindings(id).onUpdate} onFocus={()=>{if(activeTextSource.current!=='document'){activeTextSource.current='document';redraw();}}} onMarkSelection={()=>{activateEditor(id);markText('document',sessions.current.get(id)?.disk?.path||'');}} onUnmarkSelection={annotationId=>{activateEditor(id);unmarkText('document',annotationId,sessions.current.get(id)?.disk?.path||'');}} onShowAnnotations={context=>{activateEditor(id);showLocalAnnotation('document',context,sessions.current.get(id)?.disk?.path||'');}} onError={setError} inlineProposal={activeEditorId===id?inlineProposal:null}/>}
               {activeEditorId===id&&<ProposalOverlay view={view.current} proposal={inlineProposal} accept={accept} reject={adjust=>{
                 const origin=writingOrigin.current;
                 if(origin?.proposalId&&origin.proposalId===p?.id)stop();

@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest';
 import {defaultWorkspace,hideWorkspacePanel,placeWorkspacePanel} from './workspaceState';
-import {matchesViewEditor,omitTrashPreviewTabs,parseViewCollection,remapViewLayout,type ViewPreset} from './viewPresets';
+import {matchesViewEditor,omitTransientDocumentTabs,parseViewCollection,remapViewLayout,type ViewPreset} from './viewPresets';
 import {defaultAppearance} from '../settings/useAppearance';
 import {defaultStatus} from '../editor/EditorStatusBar';
 const rect={x:100,y:200,width:450,height:400};
@@ -62,7 +62,7 @@ describe('saved views',()=>{
     view.layout=placeWorkspacePanel(view.layout,preview,'editor','center',rect);
     view.layout.rects[closed]=rect;view.layout.restore[closed]={target:'editor',edge:'center'};
     view.layout.lockedPanels=[preview,'editor'];
-    view.layout=omitTrashPreviewTabs(view.layout);
+    view.layout=omitTransientDocumentTabs(view.layout);
     expect(encode(view)).not.toContain('editor:trash-');
     expect(parseViewCollection(encode(view)).views[0].layout.open).toContain('editor');
     expect(matchesViewEditor({disk:null,trashPreview:{}},{...view.editors[0],file:null})).toBe(false);

@@ -22,7 +22,8 @@
 .panel-drag-header[data-position-fixed] {cursor:default;}
 .panel-control-menu { position:fixed; z-index:12000; width:200px; max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); overflow:auto; padding:7px; background:var(--hive-popup-bg); border:1px solid var(--hive-popup-border); border-radius:8px; box-shadow:var(--hive-popup-shadow); color:var(--hive-popup-text); }
 .panel-control-menu > small { display:block; padding:5px 9px 7px; font-size: calc(9px * var(--text-scale, 1)); color:var(--muted); }
-.panel-control-menu > button { display:flex; align-items:center; gap:9px; width:100%; padding:9px; font-size: calc(11px * var(--text-scale, 1)); border-radius:4px; justify-content:flex-start; text-align:left; color:var(--hive-popup-text); }
+:root { --hive-panel-menu-font-size: calc(11px * var(--text-scale, 1)); }
+.panel-control-menu > button { display:flex; align-items:center; gap:9px; width:100%; padding:9px; font-size: var(--hive-panel-menu-font-size); border-radius:4px; justify-content:flex-start; text-align:left; color:var(--hive-popup-text); }
 .panel-control-menu > button:hover,.panel-control-menu > button:focus-visible { outline:none; background:var(--hive-selection-bg); color:var(--hive-selection-text); }
 .panel-control-menu > p { font-size: calc(8px * var(--text-scale, 1)); padding:8px 9px 3px; margin:3px 0 0; border-top:1px solid var(--hive-popup-border); color:var(--muted); }
 .panel-control-menu hr { border:0; border-top:1px solid var(--hive-popup-border); margin:6px; }

@@ -11,7 +11,9 @@ import {documentMatchesText} from '../editor/documentText';
 import {beginFileActivity,type FileActivityUpdate} from './fileOperations';
 import type {Transaction} from '@codemirror/state';
 import {documentSyncBaselines,pollAfterCompletion,workspaceTreeSync} from './workspaceSync';
-import { writeDocument } from './writeDocument';
+import { writeDocument,writeExternalDocument } from './writeDocument';
+
+const sessionDisk = (session?: EditorSession) => session?.external?.disk ?? session?.disk;
 
 type PersistenceOptions = {
     api: ApiClient;
@@ -55,12 +57,14 @@ export function useDocumentPersistence({
     }
     async function saveSession(id: string, quiet = false): Promise<boolean> {
         const session = sessions.current.get(id);
-        const source = session?.disk;
+        const source = sessionDisk(session);
         const state = session?.view?.state ?? session?.state;
         if (!session || !state)
             return true;
         if (!source)
             return !session.dirty;
+        if (session.external && (!session.external.editable || !session.dirty))
+            return true;
         // 预览建议还没被确认，写盘就等于替用户采纳了它。
         if (pendingProposal?.(id)) {
             if (!quiet)
@@ -75,29 +79,33 @@ export function useDocumentPersistence({
             appAlive?.current !== false && sessions.current === owner && treeSync.owner() === workspaceEpoch;
         const snapshot = state.doc.toString();
         const owners = new Map([...owner.values()]
-            .filter(other => other.disk?.path === source.path)
-            .map(other => [other.id, { session: other, disk: other.disk }]));
+            .filter(other => sessionDisk(other)?.path === source.path)
+            .map(other => [other.id, { session: other, disk: sessionDisk(other) }]));
         savingPaths.current.add(source.path);
         const release=quiet?()=>{}:beginFileActivity(sessions,(busy,openingFile)=>{if(appAlive?.current!==false)setFileBusy(busy,openingFile);});
         try {
-            const result = await writeDocument(api, {
+            const document = {
                 path: source.path, text: snapshot, baseline: source.hash, eol: source.eol, bom: source.bom,
-            });
+            };
+            const result = await (session.external ? writeExternalDocument(document) : writeDocument(api, document));
             if (!isCurrentWorkspace())
                 return true;
 
             // Acknowledge the captured snapshot. Edits made while saving stay dirty.
             let adopted = false;
             for (const other of owner.values()) {
-                if (other.disk?.path !== source.path)
+                const disk = sessionDisk(other);
+                if (disk?.path !== source.path)
                     continue;
                 const captured = owners.get(other.id);
                 const sameBaseline = captured
-                    ? captured.session === other && captured.disk === other.disk
-                    : other.disk.hash === source.hash && other.disk.text === source.text;
+                    ? captured.session === other && captured.disk === disk
+                    : disk.hash === source.hash && disk.text === source.text;
                 if (!sameBaseline)
                     continue;
-                other.disk = { ...source, text: snapshot, hash: result.hash };
+                const saved = { ...source, text: snapshot, hash: result.hash };
+                if(other.external)other.external.disk=saved;
+                else other.disk=saved;
                 other.dirty = !(other.view?.state ?? other.state)?.doc.eq(state.doc);
                 adopted = true;
             }
@@ -112,7 +120,7 @@ export function useDocumentPersistence({
             if (!isCurrentWorkspace())
                 return false;
             const relevant = [...owners.values()].some(captured =>
-                owner.get(captured.session.id) === captured.session && captured.session.disk === captured.disk);
+                owner.get(captured.session.id) === captured.session && sessionDisk(captured.session) === captured.disk);
             if (!relevant)
                 return false;
             setConflict(source.path, (error as Error).message);
@@ -129,13 +137,14 @@ export function useDocumentPersistence({
         if(appAlive?.current===false)return;
         const changesByDocument=new Map<NonNullable<EditorSession['state']>['doc'],{from:number;to:number;insert:string}>();
         for (const session of sessions.current.values()) {
-            if (session.disk?.path !== data.path)
+            if (sessionDisk(session)?.path !== data.path)
                 continue;
             const state = session.view?.state || session.state;
             if (!state)
                 continue;
             const unchanged=documentMatchesText(state.doc,data.text);
-            session.disk = { ...data };
+            if(session.external)session.external.disk={...data};
+            else session.disk = { ...data };
             session.dirty = false;
             if (!unchanged) {
                 let changes=changesByDocument.get(state.doc);
@@ -150,7 +159,7 @@ export function useDocumentPersistence({
                     const transaction=state.update({changes,userEvent:'input.disk-sync'});session.state=transaction.state;
                     session.contentVersion=(session.contentVersion||0)+1;
                     mapStoredSessionContext(session.context,transaction);
-                    onStoredChange?.(session.id,transaction);
+                    if(!session.external)onStoredChange?.(session.id,transaction);
                 }
             }
         }

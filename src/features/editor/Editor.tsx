@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import {usePanelDocument} from '../../shared/panelDocument';
 import { EditorState, EditorSelection, StateEffect, Compartment, Prec, type Text } from "@codemirror/state";
 import {linkAt} from './linkNavigation';
+import {isDrivePath} from '../files/localDocumentPath';
 import {openExternalHttpLink,parseExternalHttpLink} from '../../shared/externalLinks';
 import EditorContextMenu, {type AnnotationContext} from './EditorContextMenu';
 import {previewAnnotationHint,textAnnotationHit} from '../annotations/annotationGesture';
@@ -96,7 +97,7 @@ function editorLinkAt(editor:EditorView,target:HTMLElement,point:{x:number;y:num
   const raw=rendered?.dataset.hiveLink||(pos!==null?linkAt(editor.state,pos):undefined);
   if(!raw)return;
   const link=raw.trim().replace(/^<([^<>]+)>$/,'$1');
-  return parseExternalHttpLink(link)||(!/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(link)?link:undefined);
+  return parseExternalHttpLink(link)||(isDrivePath(link)||!/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(link)?link:undefined);
 }
 
 const preventRepeatedIndent = Prec.highest(EditorView.domEventHandlers({

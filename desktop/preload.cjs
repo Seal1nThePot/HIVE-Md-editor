@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('hiveDesktop', Object.freeze({
   getAboutInfo: () => ipcRenderer.invoke('hive:about-info'),
   openAppDataDirectory: () => ipcRenderer.invoke('hive:open-app-data-directory'),
   openExternalHttpLink: target => typeof target === 'string' && target.length <= 8192 ? ipcRenderer.invoke('hive:open-external-http-link', target) : Promise.resolve(false),
+  openLocalMarkdown: (target, root) => ipcRenderer.invoke('hive:open-local-markdown', target, root),
+  saveLocalMarkdown: document => ipcRenderer.invoke('hive:save-local-markdown', document),
   getUpdateMode: () => ipcRenderer.invoke('hive:update-available'),
   setUpdateSource: source => ipcRenderer.invoke('hive:update-source', source),
   installUpdate: () => ipcRenderer.invoke('hive:update'),

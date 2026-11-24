@@ -13,6 +13,8 @@ import {PanelActivityContext,panelIsVisible} from '../../shared/panelActivity';
 import type {DockingColors} from '../theme/dockingAppearance';
 import type {AboutInfo} from '../../shared/buildInfo';
 import type {DockIconOverrides} from '../../../shared/iconPack.mjs';
+import type {DiskFile} from '../../shared/fileTypes';
+import type {DocumentWrite,DocumentWriteResult} from '../files/writeDocument';
 
 declare global {
   interface Window {hiveDesktop?:{
@@ -21,6 +23,8 @@ declare global {
     chooseRepositoryDirectory:()=>Promise<string|null>;
     getAboutInfo:()=>Promise<AboutInfo>;openAppDataDirectory:()=>Promise<void>;
     openExternalHttpLink?:(target:string)=>Promise<boolean>;
+    openLocalMarkdown?:(target:string,root:string)=>Promise<{relative:string}|{external:DiskFile}>;
+    saveLocalMarkdown?:(document:DocumentWrite)=>Promise<DocumentWriteResult>;
     getUpdateMode?:()=>Promise<'unsupported'|'directory'|'picker'|'internet'>;
     setUpdateSource?:(source:'local'|'internet')=>Promise<'unsupported'|'directory'|'picker'|'internet'>;
     installUpdate?:()=>Promise<{status:'cancelled'|'restarting'|'current'|'empty'}|{status:'error';message:string}>;

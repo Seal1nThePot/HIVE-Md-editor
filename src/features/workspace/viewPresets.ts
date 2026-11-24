@@ -9,12 +9,12 @@ import {normalizeStatus,type StatusKey,type CountMode} from '../editor/statusMod
 
 export type ViewEditor={id:string;file:string|null;anchor:number;head:number;scrollTop:number;scrollLeft?:number;imagePath?:string;typewriter?:boolean;displayMode?:EditorDisplayMode;landing?:boolean};
 // A saved blank tab must never reuse an untitled manuscript buffer.
-export function matchesViewEditor(session:{disk:{path:string}|null;landing?:boolean;imagePath?:string;trashPreview?:unknown},descriptor:ViewEditor){
-  return !session.trashPreview&&(session.disk?.path||null)===descriptor.file&&!!session.landing===!!descriptor.landing&&(session.imagePath||null)===(descriptor.imagePath||null);
+export function matchesViewEditor(session:{disk:{path:string}|null;landing?:boolean;imagePath?:string;trashPreview?:unknown;external?:unknown},descriptor:ViewEditor){
+  return !session.trashPreview&&!session.external&&(session.disk?.path||null)===descriptor.file&&!!session.landing===!!descriptor.landing&&(session.imagePath||null)===(descriptor.imagePath||null);
 }
 
-export function omitTrashPreviewTabs(layout:WorkspaceLayout):WorkspaceLayout {
-  const regular=(id:string)=>!id.startsWith(trashPreviewTabPrefix);
+export function omitTransientDocumentTabs(layout:WorkspaceLayout,externalTabs=new Set<string>()):WorkspaceLayout {
+  const regular=(id:string)=>!id.startsWith(trashPreviewTabPrefix)&&!externalTabs.has(id);
   const without= <T,>(entries:Record<string,T>)=>Object.fromEntries(Object.entries(entries).filter(([id])=>regular(id)));
   let next=layout;
   const visible=new Set([...layout.open,...layout.minimized,...dockedPanels(layout.tree),...layout.floatingGroups.flatMap(group=>group.panels)]);
