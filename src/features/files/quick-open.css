@@ -1,0 +1,22 @@
+.quick-open-workspace > .panel-status-footer-empty {display:none;}
+.quick-open-panel {min-height:0;flex:1;display:flex;flex-direction:column;font-size:calc(12px * var(--text-scale));}
+.quick-open-tabs {display:flex;gap:4px;overflow:auto;padding:5px 8px;border-bottom:1px solid var(--hive-surface-border);}
+.quick-open-tabs button,.quick-open-docs button {display:flex;align-items:center;gap:6px;min-width:0;text-align:left;}
+.quick-open-tabs button {flex:0 0 auto;max-width:85%;padding:4px 7px;border:1px solid transparent;border-radius:4px;background:transparent;}
+.quick-open-tabs button[aria-selected=true],.quick-open-docs button:hover {background:var(--hive-selection-bg);}
+.quick-open-tabs span,.quick-open-tabs small,.quick-open-docs span {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.quick-open-tabs small {color:var(--muted);}
+.quick-open-docs {overflow:auto;flex:1;min-height:45px;padding:7px 8px;}
+.quick-open-docs[data-drag-active],.quick-open-docs[data-reference-pointer-active] {outline:2px solid var(--hive-accent);outline-offset:-2px;}
+.quick-open-docs p,.quick-open-settings p {margin:6px 4px;color:var(--muted);}
+.quick-open-docs ul {list-style:none;padding:0;margin:0;}
+.quick-open-docs button {width:100%;padding:6px;border:0;background:transparent;border-radius:4px;}
+.quick-open-tabs svg,.quick-open-docs svg {flex:none;}
+.quick-open-settings {max-height:48%;overflow:auto;padding:8px;border-top:1px solid var(--hive-surface-border);}
+.quick-open-actions,.quick-open-settings form {display:flex;flex-wrap:wrap;align-items:center;gap:5px;}
+.quick-open-settings form {margin-top:8px;}
+.quick-open-settings select {min-width:0;max-width:100%;}
+.quick-open-settings fieldset {min-width:0;border:1px solid var(--hive-surface-border);margin:7px 0 0;}
+.quick-open-settings label {display:flex;gap:6px;overflow-wrap:anywhere;align-items:baseline;margin-bottom:5px;}
+.quick-open-error {margin:4px 9px;overflow-wrap:anywhere;color:var(--hive-danger,var(--text));}
+.quick-open-footer {justify-content:flex-end;margin-top:auto;}

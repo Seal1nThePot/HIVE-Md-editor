@@ -58,7 +58,9 @@ import FileExplorer,{type FileAction} from "../features/files/FileExplorer";
 import FilePicker from '../features/files/FilePicker';
 import {readRecentDocuments,rememberRecentDocument} from '../features/files/recentDocuments';
 import NewTabPage,{NewTabButton} from '../features/editor/NewTabPage';
-import {flattenEntries,type Entry} from "../features/files/explorerState";
+import {flattenEntries,parentPath,type Entry} from "../features/files/explorerState";
+import QuickOpenPanel from '../features/files/QuickOpenPanel';
+import {useQuickOpen} from '../features/files/useQuickOpen';
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import {undo as undoDocument,redo as redoDocument} from '@codemirror/commands';
@@ -124,6 +126,7 @@ import RailEdgeHandle from "../features/workspace/RailEdgeHandle";
 import {ShortcutPreferencesProvider,useShortcutPreferences} from '../features/settings/ShortcutPreferences';
 import {matchesShortcut,shortcutLabel} from '../features/settings/shortcuts';
 import SettingsPage, {type SettingsSection} from "../features/settings/SettingsPage";
+import {usePlugins} from '../features/settings/usePlugins';
 import {initialConfig, parseModelChoice, selectedModelEntry, type Config, type ModelProbeRequest, type ModelProbeResult} from "../features/settings/modelConfig";
 import { useAppearance } from "../features/settings/useAppearance";
 import {useAnnotationPreferences} from '../features/settings/useAnnotationPreferences';
@@ -159,7 +162,7 @@ import {
 const uid = () => crypto.randomUUID();
 const FileTextIcon=iconComponent('file.text');
 const railIcons:Record<string,typeof FileTextIcon>={
-  files:DocumentsPanel,repositories:iconComponent('panel.repositories'),conversation:MessageSquare,
+  files:DocumentsPanel,'quick-open':DocumentsPanel,repositories:iconComponent('panel.repositories'),conversation:MessageSquare,
   outline:OutlinesPanel,toc:ContentsPanel,scratch:ScratchPanel,annotations:Highlighter,properties:NoteProperties,
   basis:iconComponent('panel.basis'),search:iconComponent('editor.findReplace'),trash:Trash2,
 };
@@ -201,6 +204,8 @@ function WritingApp({initialPlacement,capturePlacement}:{
   useEffect(()=>{void history.read();},[history.read]);
   const api=<T,>(url:string,body?:unknown)=>requestApi<T>(request,url,body);
   const statusPreferences=useStatusPreferences();
+  const plugins=usePlugins();
+  const statusPlugins=plugins.catalog?.plugins.filter(plugin=>plugin.enabled);
   const switching=useRef(false),structuring=useRef(false);
 
   const workbenchRef = useRef<HTMLDivElement>(null);
@@ -249,7 +254,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
     const session=sessions.current.get(id);
     if(session?.trashPreview)return '回收站 · '+(session.trashPreview.path.split('/').at(-1)||session.trashPreview.path);
     if(session)return session.landing?'新标签页':(session.imagePath||session.disk?.path||session.external?.disk.path)?.split('/').at(-1)||'未命名稿';
-    return ({files:'文档',repositories:'仓库管理',conversation:'对话',outline:'大纲',toc:'标题目录',scratch:'草稿',annotations:'标注',basis:'依据',search:'查找替换',trash:'回收站',properties:'笔记属性'} as Record<string,string>)[id]||id;
+    return ({files:'文档','quick-open':'快速打开文档',repositories:'仓库管理',conversation:'对话',outline:'大纲',toc:'标题目录',scratch:'草稿',annotations:'标注',basis:'依据',search:'查找替换',trash:'回收站',properties:'笔记属性'} as Record<string,string>)[id]||id;
   }
   const leftPanel = workspace.panel("files"), rightPanel = workspace.panel("conversation");
   const conversationHasNativeTabs = (desktopPanels.paneMembers('conversation')?.length ?? 0) > 1;
@@ -257,10 +262,10 @@ function WritingApp({initialPlacement,capturePlacement}:{
   const [focusFileSearch,setFocusFileSearch]=useState(false);
   useEffect(()=>{
     if(!focusFileSearch)return;
-    const input=leftPanel.ref.current?.querySelector<HTMLInputElement>('input[aria-label="筛选文件"]');
-    if(!input?.isConnected||input.disabled||!input.getClientRects().length)return;
-    if(input.ownerDocument!==document)desktopPanels.focus('files');
-    input.focus({preventScroll:true});
+    const control=leftPanel.ref.current?.querySelector<HTMLInputElement|HTMLButtonElement>('input[aria-label="筛选文件"],button[aria-label="查找文件"]');
+    if(!control?.isConnected||control.disabled||!control.getClientRects().length)return;
+    if(control.ownerDocument!==document)desktopPanels.focus('files');
+    if(control.tagName==='BUTTON')control.click();else control.focus({preventScroll:true});
     setFocusFileSearch(false);
   });
   const scratchView = useRef<EditorView | null>(null),
@@ -283,6 +288,8 @@ function WritingApp({initialPlacement,capturePlacement}:{
   const [entries, setEntries] = useState<Entry[]>([]),
     [root, setRoot] = useState(""),
     [tick, setTick] = useState(0);
+  const quickOpen=useQuickOpen(fileWorkspace.info.id,entries);
+  const [quickOpenError,setQuickOpenError]=useState('');
   useEffect(()=>{if(file)rememberRecentDocument(fileWorkspace.info.id,file);},[fileWorkspace.info.id,file]);
   const [scratchReady, setScratchReady] = useState(0);
   const [chatTab, setChatTab] = useState<"conversation" | "annotations">(
@@ -825,6 +832,10 @@ function WritingApp({initialPlacement,capturePlacement}:{
     proposal, undo, prompt, dialog, running, requestAnchor, structuring, switching, viewApplying,
     creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,
     onApplied:(action,result,actor)=>{
+      if(result.type==='folder'){
+        if((action.action==='rename'||action.action==='move')&&result.from)quickOpen.updatePath(result.from,result.path);
+        if(action.action==='trash')quickOpen.updatePath(result.path);
+      }
       const label=({create:'创建文件或文件夹',trash:'移入回收站',restore:'从回收站恢复',rename:'重命名',move:'移动',duplicate:'复制'} as Record<string,string>)[action.action];
       if(label&&result.path&&(action.action!=='rename'&&action.action!=='move'||result.from))recordHistory({actor,kind:'file',file:result.path,label,
         changes:{file:{action:action.action,path:result.path,id:result.id||action.id,from:result.from}}});
@@ -833,6 +844,10 @@ function WritingApp({initialPlacement,capturePlacement}:{
     setEntries, setRoot, setConfirm, setDialog, setFilter, setRenameRequest, setCollapsed,
     setTrashRevision, setInlineRequest, setOutline, setSelection, setWritingNodeId,
   });
+  async function openAndCount(path:string,newTab=false,reuseExisting=false){
+    await openExplorerFile(path,newTab,reuseExisting);
+    if(appAlive.current&&!switching.current&&[...sessions.current.values()].some(session=>session.disk?.path===path))quickOpen.visit(parentPath(path));
+  }
   async function openTrashedDocument(item:TrashRecord){
     const unavailable=()=>structuring.current||switching.current||viewApplying.current||!!requestAnchor.current&&running.current;
     const checkRoom=()=>{
@@ -1630,7 +1645,8 @@ function WritingApp({initialPlacement,capturePlacement}:{
           >
             <FileExplorer onRefresh={refresh} entries={entries} workspaceId={fileWorkspace.info.id} root={root} file={file} dirty={dirty} filter={filter} setFilter={setFilter} collapsed={collapsed} setCollapsed={setCollapsed} renameRequest={renameRequest}
               treeReady={!!root} onOpenRepositories={()=>workspace.open('repositories')}
-              onOpen={openExplorerFile} onOpenPath={openDocumentPath} onAction={manageFile} onPreflight={preflightFileActions} onReferenceBatch={addReferenceBatch}
+              onOpen={openAndCount} onOpenPath={openDocumentPath} onAction={manageFile} onPreflight={preflightFileActions} onReferenceBatch={addReferenceBatch}
+              onFolderVisit={path=>{if(!annotationTool)quickOpen.visit(path);}} onQuickOpenDrop={path=>setQuickOpenError(quickOpen.bind([path]))}
               onReferenceDrop={(source,destination)=>addReference(source,destination==='basis')} onAI={path=>{const entry=entries.flatMap(function walk(value):Entry[]{return [value,...(value.children||[]).flatMap(walk)];}).find(entry=>entry.path===path);if(entry)addReference({path,type:entry.type});}}/>
           </div>
           <input
@@ -1705,7 +1721,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
               }} editCandidate={editCandidate} editRefinementNote={editRefinementNote}
                 refineCandidate={instruction=>{if(p)void generate({mode:'edit',revision:{proposalId:p.id,instruction},allowEmptyPrompt:true});}} busy={busy}/>
               }
-          <EditorStatusBar status={session.disk?`自由写作 · ${session.dirty?'有未保存的修改':'已保存'}`:'未打开文档'} aiStatus={activeEditorId===id?(writingBusy?'AI 正在生成':p?stale?'建议已被改动，请核对':'预览中：✓ 保留 / ✗ 撤掉，未保存':undefined):session.context?.proposal?'1 条建议等待审阅':undefined} state={session.view?.state||session.state} eol={session.disk?.eol} bom={session.disk?.bom} preferences={statusPreferences} onSettings={()=>openSettings('appearance')}/>
+          <EditorStatusBar status={session.disk?`自由写作 · ${session.dirty?'有未保存的修改':'已保存'}`:'未打开文档'} aiStatus={activeEditorId===id?(writingBusy?'AI 正在生成':p?stale?'建议已被改动，请核对':'预览中：✓ 保留 / ✗ 撤掉，未保存':undefined):session.context?.proposal?'1 条建议等待审阅':undefined} state={session.view?.state||session.state} eol={session.disk?.eol} bom={session.disk?.bom} preferences={statusPreferences} plugins={statusPlugins} onSettings={()=>openSettings('appearance')}/>
           </>}
           {documentPanel.handles}
         </main></DesktopPanel>
@@ -1800,6 +1816,10 @@ function WritingApp({initialPlacement,capturePlacement}:{
             {rightPanel.handles}
           </aside></DesktopPanel>
         <PanelFrame chrome={chrome} id="repositories" title="仓库管理" className="repositories-workspace">{workspace.isOpen('repositories')&&<RepositoryPanel onSwitch={switchWorkspace} onRemove={removeRepository} onReturn={()=>workspace.close('repositories')}/>}</PanelFrame>
+        <PanelFrame chrome={chrome} id="quick-open" title="快速打开文档" className="quick-open-workspace">{workspace.isOpen('quick-open')&&
+          <QuickOpenPanel workspaceId={fileWorkspace.info.id} indexes={quickOpen} request={requestModel} modelConfigured={!config.demo}
+            onOpen={path=>openAndCount(path,false,true)} onClose={()=>workspace.close('quick-open')} dropError={quickOpenError} onDropError={setQuickOpenError}/>}
+        </PanelFrame>
         <PanelFrame chrome={chrome} id="toc" title="标题目录" className="toc-workspace"><TableOfContents key={activeEditorId+':'+file} file={file} items={outline} current={currentHeading?.from} onLocate={locate}
           onDraft={heading=>addChapterDraft({workspace:fileWorkspace.info.id,editor:activeEditorId,file,heading})}
           onDragSection={(heading,event)=>{event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData(CHAPTER_DRAG_TYPE,JSON.stringify({workspace:fileWorkspace.info.id,editor:activeEditorId,file,heading} satisfies ChapterDrag));}}/></PanelFrame>
@@ -1932,7 +1952,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
           onUndo={(actor,id)=>void historyTask(()=>replayHistory(actor,id,true))}
           onRedo={(actor,id)=>void historyTask(()=>replayHistory(actor,id,false))} conflict={historyConflict}/>
       </dialog>}
-      {settings && <SettingsPage panelIconDragPreferences={panelIconDragPreferences} annotationPreferences={annotationPreferences} aiButtonLayout={aiButtonLayout} aiResponsePreferences={aiResponsePreferences} config={config} initialSection={settingsSection} restoreKey={settingsRestoreKey} appearance={appearanceSettings} statusPreferences={statusPreferences} busy={configBusy}
+      {settings && <SettingsPage panelIconDragPreferences={panelIconDragPreferences} annotationPreferences={annotationPreferences} aiButtonLayout={aiButtonLayout} aiResponsePreferences={aiResponsePreferences} plugins={plugins} config={config} initialSection={settingsSection} restoreKey={settingsRestoreKey} appearance={appearanceSettings} statusPreferences={statusPreferences} busy={configBusy}
         historyLimits={history.summary.limits} onSaveHistoryLimits={async limits=>{humanHistory.flushAll();await history.setLimits(limits);}}
         onRequest={updateSettings} onProbe={(body:ModelProbeRequest,signal?:AbortSignal)=>requestApi<ModelProbeResult>(request,'/model-services/probe',body,signal)}
         onReload={async()=>{const next=await api<Config>('/config');setConfig(current=>next.revision>=current.revision?next:current);}} onClose={()=>setSettings(false)}/>}

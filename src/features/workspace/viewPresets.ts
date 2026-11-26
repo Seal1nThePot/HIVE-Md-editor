@@ -43,7 +43,7 @@ export function parseViewCollection(raw:string|null):ViewCollection {
   if(!result.success)throw new Error('保存的视图格式无效，已保留原记录。');
   const viewIds=new Set<string>();
   for(const view of result.data.views){
-    const editors=new Set(view.editors.map(item=>item.id)),known=new Set(['files','repositories','conversation','outline','toc','scratch','annotations','basis','properties','search','trash',...editors]);
+    const editors=new Set(view.editors.map(item=>item.id)),known=new Set(['files','quick-open','repositories','conversation','outline','toc','scratch','annotations','basis','properties','search','trash',...editors]);
     if(viewIds.has(view.id)||editors.size!==view.editors.length||!editors.has(view.activeEditor))throw new Error('保存的视图包含重复或缺失的编辑区。');
     viewIds.add(view.id);
     const active=[...dockedPanels(view.layout.tree),...view.layout.floatingGroups.flatMap(item=>item.panels)];

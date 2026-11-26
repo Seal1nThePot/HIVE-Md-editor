@@ -59,6 +59,10 @@
 | GET | `/api/outline` | `?file=` | `{key: description}`（旧版大纲备注） |
 | POST | `/api/outline` | `{file,key,description}` | 同上（无 revision 校验） |
 | GET | `/api/templates` | — | `{directory,sourceDirectory,templates,warnings}`（olive-gold 置顶、zh-CN 名称排序；读取失败的目录记入 warnings） |
+| GET | `/api/plugins` | — | `{directory,plugins,errors,limitReached,canOpenDirectory,canInstallSample}`。插件来自应用数据目录的 `plugins` 子目录。清单版本 1 支持 `editor.status` 的本地统计。 |
+| POST | `/api/plugins/enabled` | `{id,enabled}` | 原子保存启用状态后返回插件目录快照。未知、冲突或无效插件返回 404。 |
+| POST | `/api/plugins/sample` | `{}` | 添加未启用的选区行数示例，保留现有同名文件，返回插件目录快照。 |
+| POST | `/api/plugins/open` | `{}` | 桌面端请求系统打开插件目录，返回 `{ok:true}`。 |
 | GET | `/api/templates/:id` | 可选 `?colorsOnly=1` 或 `?iconPackRevision=<hash>` | `{template,directory,colors,revision,defaults,defaultsRevision,iconPack}`。仅配色请求省略 `iconPack`。图标包摘要匹配时返回 `iconPackUnchanged:true` 并省略包。 |
 | POST | `/api/templates/:id` | `{revision,colors}` | 保存配色（version 1 全量校验；`colors.before-save.json` 备份；临时文件+rename；`revision` 过期 → 409 `模板配色文件已被外部修改，请重新读取后再保存。`） |
 | POST | `/api/templates/:id/open` | — | `{ok,directory}`（仅 Windows。桌面端由 Electron 打开对应模板目录并确认系统调用结果，失败返回 503。独立后端调用 `explorer.exe`。） |
@@ -90,6 +94,7 @@
 | POST | `/api/ai-tools/repositories` | `{instruction,selection?,pendingName?,target:{workspaceId,revision}}` | `repository-list` 返回 `{repositories:[{id,name,path}]}`，`repository-created` 返回 `{repository,workspace}`，`repository-location-required` 返回 `{name,question}` |
 | POST | `/api/ai-tools/documents` | `{instruction,selection?,target:{workspaceId}}` | `folder-list` 返回 `{folder,entries:[{name,path,type}]}`，`document-create` 返回 `{parent,name,type}`，`document-trash` 返回 `{path}` |
 | POST | `/api/ai-tools/trash` | `{instruction,selection?,target:{workspaceId}}` | `trash-restore` 或 `trash-confirm-delete` 返回 `{items}`，条目沿用回收站记录 |
+| POST | `/api/ai-tools/quick-open` | `{workspaceId,limit,candidates:[{path,count}]}` | `{paths}`。至多 16 个当前仓库目录候选，模型建议限定在可用候选内，最多 4 项。应用索引前在窗口内确认。 |
 
 `server/ai-tools/` 集中维护标注窗口可调用的内置工具。笔记查找使用发送时的编辑器快照，支持未保存正文。模型收到查找要求和 `find_note` 工具参数定义，允许返回查找词、区分大小写与完整词匹配。查找在本机进行，响应最多含 100 项。行和列从 1 开始，`from` 和 `to` 是编辑器使用的 UTF-16 偏移，`to` 为结束边界。仓库切换后返回 409。模型不支持结构化调用或返回未提供的工具时返回 502。
 

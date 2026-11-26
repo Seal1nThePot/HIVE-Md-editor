@@ -17,7 +17,7 @@ export type FileAction={action:string;path?:string;parent?:string;name?:string;t
 export type FileResult={path:string;from?:string;type:'file'|'folder';id?:string;deletedAt?:string;warning?:string};
 type ReferenceDestination='basis'|'chat';
 type Props={entries:Entry[];workspaceId:string;root:string;file:string;dirty:boolean;filter:string;setFilter:(value:string)=>void;collapsed:Set<string>;setCollapsed:Dispatch<SetStateAction<Set<string>>>;
-  onFolderVisit?:(path:string)=>void;onRefresh?:()=>Promise<void>;onReferenceDrop?:(source:WorkspaceReferenceSource,destination:ReferenceDestination)=>void;onOpen:(path:string,newTab?:boolean)=>Promise<void>;onOpenPath?:(path:string)=>Promise<void>;onAction:(action:FileAction,options?:{quiet?:boolean})=>Promise<FileResult>;onPreflight?:(actions:FileAction[])=>Promise<void>;onReferenceBatch?:(sources:WorkspaceReferenceSource[])=>Promise<{path:string;ok:boolean;error?:string;warning?:string}[]>;onAI:(path:string)=>void;onOpenRepositories?:()=>void;treeReady?:boolean;renameRequest?:{path:string;key:string}};
+  onFolderVisit?:(path:string)=>void;onQuickOpenDrop?:(path:string)=>void;onRefresh?:()=>Promise<void>;onReferenceDrop?:(source:WorkspaceReferenceSource,destination:ReferenceDestination)=>void;onOpen:(path:string,newTab?:boolean)=>Promise<void>;onOpenPath?:(path:string)=>Promise<void>;onAction:(action:FileAction,options?:{quiet?:boolean})=>Promise<FileResult>;onPreflight?:(actions:FileAction[])=>Promise<void>;onReferenceBatch?:(sources:WorkspaceReferenceSource[])=>Promise<{path:string;ok:boolean;error?:string;warning?:string}[]>;onAI:(path:string)=>void;onOpenRepositories?:()=>void;treeReady?:boolean;renameRequest?:{path:string;key:string}};
 type Menu={x:number;y:number;entry?:Entry;sort?:boolean;more?:boolean};
 type Drop={path:string;where:'before'|'after'|'inside'};
 function sortIcon(mode:SortMode,direction:SortDirection):IconName {
@@ -25,13 +25,14 @@ function sortIcon(mode:SortMode,direction:SortDirection):IconName {
   if(mode==='name')return direction==='asc'?'file.sortAToZ':'file.sortZToA';
   return direction==='asc'?'file.sortOldest':'file.sortNewest';
 }
-export default function FileExplorer({entries,workspaceId,root,file,dirty,filter,setFilter,collapsed,setCollapsed,onOpen,onOpenPath,onAction,onAI,renameRequest,onReferenceDrop,onRefresh,onPreflight,onReferenceBatch,onOpenRepositories,onFolderVisit,treeReady=true}:Props){
+export default function FileExplorer({entries,workspaceId,root,file,dirty,filter,setFilter,collapsed,setCollapsed,onOpen,onOpenPath,onAction,onAI,renameRequest,onReferenceDrop,onRefresh,onPreflight,onReferenceBatch,onOpenRepositories,onFolderVisit,onQuickOpenDrop,treeReady=true}:Props){
   const {bindings}=useShortcutPreferences();
   const document=usePanelDocument(),window=document.defaultView!;
   const storage='hive.explorer.v1:'+workspaceId;
   const space=useFileWorkspace();
   const pastedPath=onOpenPath&&pastedDocumentPath(filter);
   const referenceDrop=useRef(onReferenceDrop);referenceDrop.current=onReferenceDrop;
+  const quickOpenDrop=useRef(onQuickOpenDrop);quickOpenDrop.current=onQuickOpenDrop;
   const [externalDrop,setExternalDrop]=useState(false),[importStatus,setImportStatus]=useState(''),[imageRevision,setImageRevision]=useState(0);
   const [imagesOpen,setImagesOpen]=useState(false);
   const [searchExpanded,setSearchExpanded]=useState(()=>!!filter),searchButton=useRef<HTMLButtonElement>(null);
@@ -177,6 +178,11 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       const destination=target.dataset.referenceDrop;
       if(destination==='basis'||destination==='chat')return {target,destination};
     }
+    function quickOpenAt(hit:Element|null) {
+      if(source?.type!=='folder'||!quickOpenDrop.current)return;
+      const target=hit?.closest<HTMLElement>('[data-quick-open-drop][data-reference-workspace]');
+      if(target?.dataset.referenceWorkspace===workspaceId)return target;
+    }
     function treeDropAt(hit:Element|null,y:number):Drop|null {
       const row=hit?.closest<HTMLElement>('.explorer-row'),tree=container.current?.querySelector('.explorer-tree');
       if(!row||!container.current?.contains(row))return tree?.contains(hit)?{path:'',where:'inside'}:null;
@@ -203,8 +209,9 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       if(!started&&Math.hypot(next.clientX-start.x,next.clientY-start.y)<5)return;
       started=true;skipClick.current=true;drag.current=path;next.preventDefault();
       const hit=document.elementFromPoint(next.clientX,next.clientY),reference=referenceAt(hit);
-      highlight(reference?.target);
-      if(reference){setDrop(null);return;}
+      const quickOpen=quickOpenAt(hit);
+      highlight(reference?.target||quickOpen);
+      if(reference||quickOpen){setDrop(null);return;}
       const tree=container.current?.querySelector('.explorer-tree');
       if(tree){
         const rect=tree.getBoundingClientRect();
@@ -224,6 +231,11 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       if(!started)return;
       if(epoch!==workspaceEpoch.current){drag.current=null;setDrop(null);return;}
       const hit=document.elementFromPoint(next.clientX,next.clientY),reference=referenceAt(hit);
+      if(quickOpenAt(hit)){
+        drag.current=null;setDrop(null);
+        quickOpenDrop.current?.(path);
+        return;
+      }
       const addReference=referenceDrop.current;
       if(reference&&source&&addReference){
         drag.current=null;setDrop(null);

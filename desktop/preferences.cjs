@@ -5,7 +5,7 @@ const exact = new Set(['hive.modelPicker.recent','hive.ai.references.v1','hive.e
 function allowed(key) {
   if (typeof key !== 'string') return false;
   if (exact.has(key)) return true;
-  if (key.length <= 4096 && ['hive.explorer.v1:', 'hive.views.v1:', 'hive.ai.references.v1:', 'hive.recentDocuments.v1:'].some(prefix => key.startsWith(prefix) && key.length > prefix.length)) return true;
+  if (key.length <= 4096 && ['hive.explorer.v1:', 'hive.views.v1:', 'hive.ai.references.v1:', 'hive.recentDocuments.v1:', 'hive.quickOpen.v1:'].some(prefix => key.startsWith(prefix) && key.length > prefix.length)) return true;
   if (!key.startsWith('hive.reasoning.') || key.length > 512) return false;
   try { const parts = JSON.parse(key.slice('hive.reasoning.'.length)); return Array.isArray(parts) && parts.length === 2 && parts.every(value => typeof value === 'string'); } catch { return false; }
 }

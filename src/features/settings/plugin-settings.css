@@ -1,0 +1,8 @@
+.plugin-settings .plugin-directory {display:grid;gap:5px;user-select:text;}
+.plugin-settings .plugin-directory code,.plugin-settings .plugin-problems {overflow-wrap:anywhere;}
+.plugin-settings .plugin-actions {display:flex;flex-wrap:wrap;gap:8px;margin:14px 0;}
+.plugin-settings .plugin-list {list-style:none;padding:0;margin:0;}
+.plugin-settings .plugin-list li {display:flex;justify-content:space-between;align-items:start;gap:12px;padding:12px 0;border-bottom:1px solid var(--hive-settings-border);}
+.plugin-settings .plugin-list li > div {min-width:0;overflow-wrap:anywhere;}
+.plugin-settings .plugin-list p {margin:4px 0;}
+.plugin-settings .plugin-list label {display:flex;gap:5px;align-items:center;white-space:nowrap;}

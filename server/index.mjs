@@ -11,9 +11,11 @@ import {resolveReferences} from './references.mjs';
 import {generationPayload} from './generation-options.mjs';
 import {probeModelService,sendChatCompletion,upstreamHttpError,upstreamJson} from './model-probe.mjs';
 import {templateStore} from './templates.mjs';
+import {pluginStore} from './plugins.mjs';
 import {desktopShell} from './desktop-shell.mjs';
 import { registerDocumentRoutes } from './document-routes.mjs';
 import { registerAiTools } from './ai-tools/index.mjs';
+import {registerQuickOpenSuggestions} from './ai-tools/quick-open.mjs';
 import { registerHistoryRoutes } from './history/history-routes.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -40,6 +42,8 @@ const templates = await templateStore(process.env.HIVE_TEMPLATES_DIR || path.joi
   sourceDirectory:process.env.HIVE_TEMPLATES_SOURCE || (!project.includes('.asar')?path.join(project,'templates'):undefined),
   openDirectory:desktopFiles?.openDirectory,
 });
+const plugins = pluginStore(path.join(process.env.HIVE_APP_DATA_DIR||local,'plugins'), local,
+  path.join(here,'plugin-examples','selection-lines.json'), desktopFiles?.openDirectory);
 const app = express();
 app.disable("x-powered-by");
 app.use("/api", (req, res, next) => {
@@ -56,6 +60,10 @@ app.use("/api", (req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "3mb" }));
+app.get('/api/plugins',async(_req,res)=>res.json(await plugins.list()));
+app.post('/api/plugins/enabled',async(req,res)=>res.json(await plugins.setEnabled(req.body)));
+app.post('/api/plugins/sample',async(_req,res)=>res.json(await plugins.installSample()));
+app.post('/api/plugins/open',async(_req,res)=>res.json(await plugins.open()));
 app.get('/api/templates',async(_req,res)=>res.json(await templates.list()));
 app.get('/api/templates/:id',async(req,res)=>{
   const record=await templates.read(req.params.id);
@@ -186,6 +194,7 @@ app.post("/api/model-services", async (req, res) => res.json(await modelSettings
 app.post("/api/model-services/remove", async (req, res) => res.json(await modelSettings.remove(req.body)));
 app.post("/api/model-services/reorder", async (req, res) => res.json(await modelSettings.reorder(req.body)));
 registerAiTools(app,{spaces,modelSettings});
+registerQuickOpenSuggestions(app,{spaces,modelSettings});
 app.post("/api/model-services/probe", async (req, res) => {
   const route = modelSettings.resolveProbe(req.body);
   const abort = new AbortController();
