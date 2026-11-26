@@ -111,12 +111,21 @@ async function runWorker(port, run, packageRoot) {
     await waitFor(() => runRenderer(window, selector => !!document.querySelector(selector) && !document.querySelector(selector).disabled, open), '打开仓库按钮');
     await click(open);
   };
-  const treeState = () => runRenderer(window, () => ({
-    rows: document.querySelectorAll('.explorer-tree [data-path]').length,
-    error: document.querySelector('.explorer-tree-error')?.textContent ?? null,
-    emptyAction: !!document.querySelector('.explorer-empty button'),
-    emptyNotice: document.querySelector('.explorer-empty [role="status"]')?.textContent ?? null,
-  }));
+  const treeState = () => runRenderer(window, () => {
+    const retry = document.querySelector('.explorer-tree-error button');
+    const bounds = retry?.getBoundingClientRect();
+    const panel = document.querySelector('#sidebar-panel-files').getBoundingClientRect();
+    const retryVisible = !!bounds && bounds.width > 0 && bounds.height > 0 && bounds.left >= panel.left &&
+      bounds.right <= panel.right && bounds.top >= panel.top && bounds.bottom <= panel.bottom &&
+      document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2) === retry;
+    return {
+      rows: document.querySelectorAll('.explorer-tree [data-path]').length,
+      error: document.querySelector('.explorer-tree-error')?.textContent ?? null,
+      emptyAction: !!document.querySelector('.explorer-empty button'),
+      emptyNotice: document.querySelector('.explorer-empty [role="status"]')?.textContent ?? null,
+      retryVisible, panelWidth: panel.width,
+    };
+  });
 
   try {
     await window.loadURL(base);
@@ -189,6 +198,7 @@ async function runWorker(port, run, packageRoot) {
     check('修复磁盘状态后，无需重启便可显示新文档', !!await waitRow(externalNote));
     check('初次读树失败时左栏显示持续的错误且避免误报空仓库', report.recovery.before.rows === 0 &&
       report.recovery.before.error?.includes('创建时间状态') && !report.recovery.before.emptyAction);
+    check('较长错误路径下，默认窄栏的重试按钮可见可点', report.recovery.before.retryVisible);
     check('轮询成功清除错误并为实际空仓库显示说明和入口', !report.recovery.after.error &&
       report.recovery.after.emptyAction && report.recovery.after.emptyNotice?.includes('没有可显示'));
     report.passed = true;

@@ -19,7 +19,9 @@
 .explorer-row.drop-before:before,.explorer-row.drop-after:after{content:'';position:absolute;height:2px;background:var(--gold);left:5px;right:5px;z-index:1}.explorer-row.drop-before:before{top:-2px}.explorer-row.drop-after:after{bottom:-2px}
 .drop-inside{outline:1px solid var(--gold);outline-offset:-1px;background:var(--gold-bg)}.explorer-root-drop{height:var(--explorer-root-drop-height);font-size:calc(10px * var(--text-scale,1));color:var(--muted);opacity:0;pointer-events:none;padding:calc(7px * var(--ui-scale,1))}.explorer-tree.drop-inside>.explorer-root-drop{opacity:1}
 .explorer-trash{align-self:flex-start;display:flex;gap:5px;align-items:center;background:none;border:0;color:var(--muted);padding:3px 5px;font:inherit;font-size:11px}.explorer-error{margin:0;padding:5px;display:flex;gap:5px;color:var(--gold);font-size:11px}.explorer-error button{margin-left:auto;background:none;border:0;color:inherit}
-.explorer-tree-error button{flex-shrink:0;cursor:pointer;text-decoration:underline}
+.explorer-tree-error{flex-direction:column;align-items:flex-start;overflow-wrap:anywhere}
+.explorer-tree-error span{align-self:stretch;max-height:10em;overflow:auto}
+.explorer-tree-error button{margin-left:0;cursor:pointer;text-decoration:underline}
 .explorer-scan-warnings{padding:5px;color:var(--gold);font-size:11px;overflow-wrap:anywhere}
 .explorer-scan-warnings summary{cursor:pointer}.explorer-scan-warnings ul{max-height:100px;overflow:auto;margin:5px 0;padding-inline-start:20px}
 .explorer-menu{position:fixed;z-index:18000;display:flex;flex-direction:column;padding:5px;min-width:240px;background:var(--hive-popup-bg,var(--panel));border:1px solid var(--hive-popup-border,var(--line));box-shadow:var(--hive-popup-shadow);border-radius:6px;color:var(--hive-popup-text,var(--text));font-size:12px}
