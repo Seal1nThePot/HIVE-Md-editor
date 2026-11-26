@@ -35,6 +35,11 @@ describe('live Markdown display',()=>{
     const text=hidden(state);expect(text).toContain('# ');expect(text.filter(value=>value==='**')).toHaveLength(2);expect(text.filter(value=>value==='~~')).toHaveLength(2);expect(text.filter(value=>value==='`')).toHaveLength(2);
     expect(previewPlan(state).styles.map(style=>style.className)).toEqual(expect.arrayContaining(['cm-preview-h1','cm-preview-strong','cm-preview-emphasis','cm-preview-strike','cm-preview-inline-code']));
   });
+  it('joins code with closing punctuation and retains its last grapheme when it wraps',()=>{
+    const state=create('字段 `P_cache_read`、链接 [维护记录](docs.md)。');
+    const joins=previewPlan(state).punctuation.map(range=>[state.sliceDoc(range.from,range.to),!!range.codeGroup]);
+    expect(joins).toEqual([['P_cache_read`、',true],['d`、',false],['录](docs.md)。',false]]);
+  });
   it('reveals only the edited line while keeping its formatting effects and other lines rendered',()=>{
     let state=create('# 标题\n\n**当前文字**\n\n## 另一标题');
     state=state.update({effects:setPreviewFocus.of(true),selection:{anchor:10}}).state;

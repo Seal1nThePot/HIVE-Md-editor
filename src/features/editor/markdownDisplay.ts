@@ -153,13 +153,14 @@ export const markdownPreview=StateField.define<DecorationSet>({
   provide:field=>EditorView.decorations.from(field),
 });
 const punctuationJoin=Decoration.mark({class:'cm-preview-punctuation-join'});
+const codePunctuationJoin=Decoration.mark({class:'cm-preview-code-punctuation-join'});
 const punctuationJoins=EditorView.outerDecorations.compute([displayModeField,previewFocus,'doc'],state=>{
   const mode=state.field(displayModeField);
   if(mode==='source')return Decoration.none;
   const active=mode==='preview'?[]:previewActiveLines(state,state.field(previewFocus).selection);
   return Decoration.set(previewPlan(state).punctuation
     .filter(item=>!active.some(line=>item.from<=line.to&&item.to>line.from))
-    .map(item=>punctuationJoin.range(item.from,item.to)),true);
+    .map(item=>(item.codeGroup?codePunctuationJoin:punctuationJoin).range(item.from,item.to)),true);
 });
 function activeLines(state:EditorState,selection:EditorSelection|null){return previewActiveLines(state,selection).map(line=>`${line.from}:${line.to}`).join(',');}
 class WideTableNotice extends WidgetType{
@@ -249,6 +250,14 @@ export const markdownDisplayTheme=EditorView.baseTheme({
     '--hive-code-block-bottom':'var(--hive-code-block-edge)',borderBottomLeftRadius:'5px',borderBottomRightRadius:'5px',
   },
   '.cm-preview-punctuation-join':{whiteSpace:'pre'},
+  '.cm-preview-code-punctuation-join':{display:'inline-block',maxWidth:'100%',textIndent:'0',whiteSpace:'pre-wrap'},
+  // The final-grapheme join divides the code mark into two adjacent spans.
+  '.cm-preview-code-punctuation-join:has(.cm-preview-punctuation-join) .cm-preview-inline-code:not(.cm-preview-code-punctuation-join .cm-preview-punctuation-join .cm-preview-inline-code)':{
+    paddingInlineEnd:'0',borderStartEndRadius:'0',borderEndEndRadius:'0',
+  },
+  '.cm-preview-code-punctuation-join .cm-preview-punctuation-join .cm-preview-inline-code':{
+    paddingInlineStart:'0',borderStartStartRadius:'0',borderEndStartRadius:'0',
+  },
   '.cm-preview-inline-code':{fontFamily:'Consolas, monospace',backgroundColor:'color-mix(in srgb, var(--hive-document-text) 5%, transparent)',borderRadius:'3px',padding:'1px 3px'},
   '.cm-preview-quote':{backgroundImage:'linear-gradient(var(--hive-surface-border), var(--hive-surface-border))',backgroundSize:'2px 100%',backgroundRepeat:'no-repeat',backgroundPosition:'max(0px, calc(clamp(12px, 6.4%, 50px) - 10px)) 0',color:'var(--hive-document-text, var(--text))'},
   '.cm-preview-link':{color:'var(--hive-document-text, var(--text))',textDecoration:'underline',textUnderlineOffset:'3px'},

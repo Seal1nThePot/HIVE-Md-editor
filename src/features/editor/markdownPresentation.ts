@@ -12,7 +12,8 @@ type Node=SyntaxNode;
 export type PreviewCell=Span&{text:string;virtual?:number;trailing?:boolean};
 export type PreviewReplacement=Span&{reveal:Span;block?:boolean;kind?:'bullet'|'task'|'image'|'rule'|'table'|'properties'|'math'|'mermaid';text?:string;src?:string;rows?:PreviewCell[][];columns?:number;rowEnds?:{to:number;trailing:boolean}[];tableOrdinal?:number;list?:'padding'|'marker'|'ordered-marker'|'task-marker'};
 export type PreviewStyle=Span&{className?:string;line?:boolean;align?:'left'|'center'|'right';title?:string;link?:string;linkReveal?:Span;list?:{depth:number;width:string;offset:number}};
-export type PreviewPlan={replacements:PreviewReplacement[];styles:PreviewStyle[];punctuation:Span[]};
+type PunctuationJoin=Span&{codeGroup?:true};
+export type PreviewPlan={replacements:PreviewReplacement[];styles:PreviewStyle[];punctuation:PunctuationJoin[]};
 const cache=new WeakMap<Text,PreviewPlan>();
 type ListLabel={text:string;width:string};
 type ListLayout=ListLabel&{depth:number;offset:number;ordered:boolean;marker:NonNullable<ReturnType<typeof listItemMarker>>};
@@ -69,7 +70,7 @@ function patchTableCell(tr:Transaction){
 export function previewPlan(state:EditorState):PreviewPlan{
   const existing=cache.get(state.doc);if(existing)return existing;
   let tableOrdinal=0;
-  const doc=state.doc,text=doc.toString(),hasMath=text.includes('$'),replacements:PreviewReplacement[]=[],styles:PreviewStyle[]=[],mathExcluded:SourceSpan[]=[],punctuation:Span[]=[];
+  const doc=state.doc,text=doc.toString(),hasMath=text.includes('$'),replacements:PreviewReplacement[]=[],styles:PreviewStyle[]=[],mathExcluded:SourceSpan[]=[],punctuation:PunctuationJoin[]=[];
   // Reference definitions can occur after their use and are scoped to this document.
   const references=new Map<string,string>();
   const referenceKey=(value:string)=>value.replace(/\\([\\[\]])/g,'$1').trim().replace(/\s+/g,' ').toLowerCase();
@@ -115,14 +116,19 @@ export function previewPlan(state:EditorState):PreviewPlan{
     const width='max(1.4em, '+(length+1)+'ch)';
     return new Map(markers.map((item,index)=>[item.from,{text:labels[index].label,width}]));
   }
-  function joinClosingPunctuation(from:number,to:number,after:number){
+  function joinClosingPunctuation(from:number,to:number,after:number,inlineCode?:true){
     const line=doc.lineAt(after);
     if(to<=from||to<line.from||after===line.to)return;
     const suffix=/^[，。！？、；：）》」』】〕］〉”’％…]+/.exec(text.slice(after,line.to));
     if(!suffix)return;
     const start=Math.max(from,line.from);
     const last=/\P{Mark}\p{Mark}*$/u.exec(text.slice(start,to).trimEnd());
-    if(last)punctuation.push({from:start+last.index,to:after+suffix[0].length});
+    if(!last)return;
+    const lastFrom=start+last.index,suffixTo=after+suffix[0].length;
+    // Keep code and punctuation together when they fit. For wrapped code the
+    // existing final-grapheme join also keeps the punctuation with the last line.
+    if(inlineCode)punctuation.push({from:start,to:suffixTo,codeGroup:true});
+    if(!inlineCode||lastFrom>start)punctuation.push({from:lastFrom,to:suffixTo});
   }
   function linkStyle(from:number,to:number,link?:string,reveal?:Span){
     styles.push({from,to,className:'cm-preview-link',title:link,link,linkReveal:reveal});
@@ -185,7 +191,7 @@ export function previewPlan(state:EditorState):PreviewPlan{
     if(node.name==='InlineCode'){
       const marks=children(node,'CodeMark');if(marks.length===2){
         styles.push({from:marks[0].to,to:marks[1].from,className:'cm-preview-inline-code'});
-        joinClosingPunctuation(marks[0].to,marks[1].from,node.to);
+        joinClosingPunctuation(marks[0].to,marks[1].from,node.to,true);
         for(const mark of marks)hide(mark.from,mark.to,span);
       }return;
     }
