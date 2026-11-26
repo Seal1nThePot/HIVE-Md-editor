@@ -73,6 +73,36 @@ async function checked(name, action) {
   finally { currentCase = undefined; }
 }
 
+function holdDocumentRead(filename) {
+  const helper = path.join(project, 'scripts', 'hold-workspace-tree-fixture-read.ps1');
+  const holder = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', helper, '-DocumentPath', filename], {
+    cwd: run, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: {...process.env, TEMP: run, TMP: run},
+  });
+  let output = '';
+  let completed;
+  const done = new Promise(resolve => {
+    holder.on('error', error => { output += error.message; });
+    holder.on('close', code => { completed = {code, output}; resolve(completed); });
+  });
+  holder.stdout.on('data', chunk => output += chunk);
+  holder.stderr.on('data', chunk => output += chunk);
+  return {
+    async waitFor(marker) {
+      const deadline = performance.now() + 10000;
+      while (!output.includes(marker) && !completed && performance.now() < deadline) await delay(20);
+      assert.ok(output.includes(marker), `${marker}: ${output}`);
+    },
+    async release() {
+      holder.stdin.end();
+      const timeout = new AbortController();
+      try {
+        if (!await Promise.race([done, delay(2000, null, {signal: timeout.signal})])) holder.kill();
+      } finally { timeout.abort(); }
+      return done;
+    },
+  };
+}
+
 try {
   for (let count = 0; count < 200 && !base; count++) {
     const match = /\{"type":"hive-ready","port":(\d+),"pid":(\d+)\}/.exec(report.stdout);
@@ -213,30 +243,37 @@ try {
   });
 
   await checked('A sync overtaken by a repository switch never labels the old tree as the new repository', async () => {
+    assert.equal(process.platform, 'win32', 'the switch gate requires a local Windows test volume');
     const previous = path.join(run, 'previous');
     const next = path.join(run, 'next');
-    await fs.mkdir(previous);
-    for (let index = 0; index < 1000; index++) await file(previous, `chapter-${index}/note.md`, 'old');
+    const note = 'note.md';
+    const held = await file(previous, note, 'old');
     await file(next, 'different.md', 'different');
     await open(next);
-    await api('/tree');
     await open(previous);
     const previousId = workspace.id;
-    let switched = false;
+    const gate = holdDocumentRead(held);
+    let sync;
+    let outcome;
     let syncFinished = false;
-    const inflight = request('/workspace/sync', {paths: ['chapter-0/note.md']}, previousId).then(result => {
-      syncFinished = true;
-      return result;
-    });
     try {
-      await delay(20);
+      await gate.waitFor('OPLOCK_READY');
+      // Wait for the backend to open this exact fixture before committing the switch.
+      sync = request('/workspace/sync', {paths: [note]}, previousId)
+        .then(response => ({response}), error => ({error})).finally(() => { syncFinished = true; });
+      await gate.waitFor('OPLOCK_BREAK');
+      currentCase.syncEnteredReadGate = true;
       workspace = await api('/workspace', {root: next, revision: workspace.revision}, previousId);
-      switched = !syncFinished;
+      assert.ok(!syncFinished, 'the old sync must still be blocked when the switch completes');
     } finally {
-      const result = await inflight;
-      assert.ok(switched, 'isolated switch completed before the old sync response');
-      assert.equal(result.status, 409, `response workspace=${result.value.workspace?.id}, prior workspace=${previousId}`);
+      currentCase.readGate = await gate.release();
+      outcome = await sync;
     }
+    assert.equal(currentCase.readGate.code, 0, currentCase.readGate.output);
+    if (outcome.error) throw outcome.error;
+    const result = outcome.response;
+    assert.equal(result.status, 409, `response workspace=${result.value.workspace?.id}, prior workspace=${previousId}`);
+    assert.match(result.value.error, /写作空间已在其他窗口切换/);
     const current = await api('/workspace/sync', {paths: []});
     assert.equal(current.workspace.id, workspace.id);
     assert.deepEqual(names(current.entries), ['different.md']);
