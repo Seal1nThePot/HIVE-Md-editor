@@ -2,7 +2,7 @@ import {createContext, useContext, useMemo, useRef, type ReactNode} from 'react'
 
 export type RepositoryInfo={id:string;root:string;name?:string};
 export type RepositoryAction={action:'add';root:string}|{action:'rename';id:string;name:string}|{action:'remove';id:string}|{action:'reorder';order:string[]};
-export type WorkspaceInfo={id:string;root:string;autoSave:boolean;revision:number;repositories:RepositoryInfo[]};
+export type WorkspaceInfo={id:string;root:string;defaultRepositoryId:string;autoSave:boolean;revision:number;repositories:RepositoryInfo[]};
 export const repositoryName=(root:string)=>root.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||root;
 export const repositoryLabel=(item:RepositoryInfo)=>item.name?.trim()||repositoryName(item.root);
 type Guard=()=>Promise<string|void>;

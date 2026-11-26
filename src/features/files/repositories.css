@@ -28,7 +28,9 @@
 .repository-card h3 { flex:1; min-width:0; margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); font-size:calc(14px * var(--text-scale,1)); }
 .repository-page .repository-rename { flex:none; width:24px; height:26px; padding:4px; color:var(--text); background:transparent; }
 .repository-current-badge { display:inline-flex; align-items:center; gap:3px; flex:none; padding:2px 4px; border-radius:4px; color:var(--hive-selection-text); background:var(--hive-selection-bg); font-size:calc(10px * var(--text-scale,1)); }
-.repository-path { margin:9px 0 10px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.5; font-size:calc(11px * var(--text-scale,1)); }
+.repository-path { display:flex; align-items:center; gap:6px; margin:9px 0 10px; color:var(--muted); white-space:nowrap; line-height:1.5; font-size:calc(11px * var(--text-scale,1)); }
+.repository-default-badge { flex:none; }
+.repository-path-value { min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .repository-card-actions { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
 .repository-order { display:flex; align-items:center; gap:1px; margin-left:auto; }
 .repository-order > button { width:26px; height:28px; padding:5px; color:var(--text); background:transparent; }

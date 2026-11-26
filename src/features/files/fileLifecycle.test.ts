@@ -85,7 +85,7 @@ describe('repository switching preserves save guards',()=>{
   it('flushes pending work and saves dirty sessions before opening another repository',async()=>{
     const t=setup(),session=t.add('editor','draft.md');t.edit(session);const events:string[]=[];
     t.opts.fileWorkspace.flush=async()=>{events.push('flush');};
-    t.opts.saveSession=async(id:string,required:boolean)=>{expect(id).toBe('editor');expect(required).toBe(true);events.push('save');return true;};
+    t.opts.saveSession=async(id:string,required:boolean)=>{expect(id).toBe('editor');expect(required).toBe(true);events.push('save');session.dirty=false;return true;};
     t.opts.fileWorkspace.update=async(patch:unknown)=>{expect(patch).toEqual({root:'other'});events.push('switch');};
     await t.actions().switchWorkspace('other');expect(events).toEqual(['flush','save','switch']);expect(t.opts.switching.current).toBe(false);
   });
@@ -99,6 +99,39 @@ describe('repository switching preserves save guards',()=>{
       await expect(t.actions().switchWorkspace('other')).rejects.toThrow();
       expect(t.opts.fileWorkspace.update).not.toHaveBeenCalled();expect(session.dirty).toBe(true);expect(t.opts.switching.current).toBe(false);
     }
+  });
+  it('saves the current manuscript before removing its repository through a single request',async()=>{
+    const t=setup(),session=t.add('editor','draft.md');t.edit(session);const events:string[]=[];
+    t.opts.fileWorkspace.flush=async()=>{events.push('flush');};
+    t.opts.saveSession=async()=>{events.push('save');session.dirty=false;return true;};
+    t.opts.fileWorkspace.update=vi.fn();
+    t.opts.fileWorkspace.manage=async(action:unknown)=>{expect(action).toEqual({action:'remove',id:'space'});events.push('remove');};
+    await t.actions().removeRepository('space');
+    expect(events).toEqual(['flush','save','remove']);
+    expect(t.opts.fileWorkspace.update).not.toHaveBeenCalled();
+  });
+  it('leaves the current repository intact when removing it fails a switch guard',async()=>{
+    for(const reason of ['disk conflict','pending edits','unsent AI draft','composition']){
+      const t=setup(),session=t.add('editor','draft.md');t.edit(session);
+      t.opts.fileWorkspace.manage=vi.fn();
+      if(reason==='disk conflict')t.opts.saveSession=async()=>false;
+      if(reason==='pending edits')t.opts.saveSession=async()=>true;
+      if(reason==='unsent AI draft')t.opts.hasUnsentChatDraft=()=>true;
+      if(reason==='composition')t.opts.fileWorkspace.flush=async()=>{throw new Error('请先完成当前输入法组词');};
+      await expect(t.actions().removeRepository('space')).rejects.toThrow();
+      expect(t.opts.fileWorkspace.manage).not.toHaveBeenCalled();
+      expect(session.dirty).toBe(true);
+      expect(t.opts.switching.current).toBe(false);
+    }
+  });
+  it('removes an inactive repository without saving or flushing the active one',async()=>{
+    const t=setup(),session=t.add('editor','draft.md');t.edit(session);
+    t.opts.fileWorkspace.flush=vi.fn();t.opts.saveSession=vi.fn();t.opts.fileWorkspace.manage=vi.fn();
+    await t.actions().removeRepository('inactive');
+    expect(t.opts.fileWorkspace.manage).toHaveBeenCalledWith({action:'remove',id:'inactive'});
+    expect(t.opts.fileWorkspace.flush).not.toHaveBeenCalled();
+    expect(t.opts.saveSession).not.toHaveBeenCalled();
+    expect(session.dirty).toBe(true);
   });
 });
 

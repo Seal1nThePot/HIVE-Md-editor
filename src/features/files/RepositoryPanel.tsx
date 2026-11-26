@@ -3,7 +3,7 @@ import {AlertCircle, ArrowDown, ArrowRight, ArrowUp, Check, FolderOpen, Icon, Pe
 import {repositoryLabel, useFileWorkspace} from './WorkspaceContext';
 import './repositories.css';
 
-export default function RepositoryPanel({onSwitch,onReturn}:{onSwitch:(root:string)=>Promise<void>;onReturn:()=>void}) {
+export default function RepositoryPanel({onSwitch,onRemove,onReturn}:{onSwitch:(root:string)=>Promise<void>;onRemove:(id:string)=>Promise<void>;onReturn:()=>void}) {
   const space=useFileWorkspace();
   const [root,setRoot]=useState(''),[query,setQuery]=useState(''),[busy,setBusy]=useState(false);
   const [feedback,setFeedback]=useState<{message:string;error?:boolean}|null>(null);
@@ -71,18 +71,19 @@ export default function RepositoryPanel({onSwitch,onReturn}:{onSwitch:(root:stri
     </div>
     <div className="repository-toolbar"><label className="repository-search"><Search size={15}/><input aria-label="搜索仓库" placeholder="搜索名称或路径…" value={query} onChange={event=>setQuery(event.target.value)}/></label></div>
     <div className="repository-grid" aria-label="仓库列表">{shown.map(item=>{
-      const current=item.id===space.info.id,index=repositories.findIndex(value=>value.id===item.id),name=repositoryLabel(item);
+      const current=item.id===space.info.id,isDefault=item.id===space.info.defaultRepositoryId;
+      const index=repositories.findIndex(value=>value.id===item.id),name=repositoryLabel(item);
       return <article className={'repository-card'+(current?' repository-current':'')} key={item.id} data-repository-id={item.id} aria-label={`仓库：${name}`}>
         <div className="repository-card-heading"><span className="repository-card-icon"><FolderOpen size={20}/></span><h3 title={name}>{name}</h3><button type="button" className="repository-rename" aria-label={`备注仓库名称：${name}`} title="备注名称" disabled={busy} onClick={()=>{setEditing({id:item.id,name:item.name||''});setFeedback(null);}}><Pencil size={15}/></button>{current&&<span className="repository-current-badge"><Check size={12}/>当前</span>}</div>
         {editing?.id===item.id&&<form className="repository-name-editor" onSubmit={event=>void rename(event)} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(!busy)setEditing(null);}}}>
           <label htmlFor={`repository-name-${item.id}`}>备注名称</label><input id={`repository-name-${item.id}`} aria-label="仓库备注名称" value={editing.name} maxLength={80} placeholder="留空使用文件夹名" autoFocus disabled={busy} onChange={event=>setEditing({...editing,name:event.target.value})}/>
           <p>仅修改应用中的名称，文件夹名保持不变。</p><div><button type="submit" className="repository-primary" disabled={busy}><Check size={14}/>保存</button><button type="button" className="repository-secondary" disabled={busy} onClick={()=>setEditing(null)}>取消</button></div>
         </form>}
-        <p className="repository-path" title={item.root}>{item.root}</p>
+        <p className="repository-path" title={item.root}>{isDefault&&<span className="repository-default-badge">默认根目录</span>}<span className="repository-path-value">{item.root}</span></p>
         <div className="repository-card-actions"><button type="button" className={current?'repository-secondary':'repository-primary'} disabled={busy} onClick={()=>{if(current)onReturn();else void run(()=>onSwitch(item.root));}}>{current?'返回写作':'打开仓库'}<ArrowRight size={14}/></button><div className="repository-order">
           <button type="button" aria-label={`上移仓库：${name}`} title="上移" disabled={busy||index===0||!!query.trim()} onClick={()=>move(item.id,-1)}><ArrowUp size={16}/></button>
           <button type="button" aria-label={`下移仓库：${name}`} title="下移" disabled={busy||index===repositories.length-1||!!query.trim()} onClick={()=>move(item.id,1)}><ArrowDown size={16}/></button>
-          <button type="button" aria-label={`从列表移除仓库：${name}`} title={current?'请先打开其他仓库再移出列表':'从列表移除，文件保留'} disabled={busy||current} onClick={()=>void run(()=>space.manage({action:'remove',id:item.id}),'已从列表移除，文件仍保留在原文件夹。')}><Icon name="repository.remove" size={16}/></button>
+          <button type="button" aria-label={`从列表移除仓库：${name}`} title={isDefault?'默认根目录不能移出仓库列表':current?'从列表移除并返回默认根目录，文件保留':'从列表移除，文件保留'} disabled={busy||isDefault} onClick={()=>void run(()=>onRemove(item.id),'已从列表移除，文件仍保留在原文件夹。')}><Icon name="repository.remove" size={16}/></button>
         </div></div>
       </article>;
     })}</div>

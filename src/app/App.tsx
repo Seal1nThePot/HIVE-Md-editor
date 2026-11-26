@@ -787,7 +787,7 @@ function WritingApp() {
     return retained;
   }
 
-  const { refresh, openFile, safeSwitch, openSaveAs, save, openBlankTab, createQuickNote, openExplorerFile, openDocumentPath, manageFile, preflightFileActions, reloadFromDisk, switchWorkspace, submitDialog, importFile } = useFileActions({
+  const { refresh, openFile, safeSwitch, openSaveAs, save, openBlankTab, createQuickNote, openExplorerFile, openDocumentPath, manageFile, preflightFileActions, reloadFromDisk, switchWorkspace, removeRepository, submitDialog, importFile } = useFileActions({
     api, appAlive, promptRef, hasUnsentChatDraft:()=>unsentDraft.current, dialogRef, uid, workspace, sessions, activeSession, activeTextSource,
     proposal, undo, prompt, dialog, running, requestAnchor, structuring, switching, viewApplying,
     creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,
@@ -1766,7 +1766,7 @@ function WritingApp() {
             {aiButtonLayout.layout.bottom.length?chatActions('bottom'):emptyPanelFooter("对话")}
             {rightPanel.handles}
           </aside></DesktopPanel>
-        <PanelFrame chrome={chrome} id="repositories" title="仓库管理" className="repositories-workspace">{workspace.isOpen('repositories')&&<RepositoryPanel onSwitch={switchWorkspace} onReturn={()=>workspace.close('repositories')}/>}</PanelFrame>
+        <PanelFrame chrome={chrome} id="repositories" title="仓库管理" className="repositories-workspace">{workspace.isOpen('repositories')&&<RepositoryPanel onSwitch={switchWorkspace} onRemove={removeRepository} onReturn={()=>workspace.close('repositories')}/>}</PanelFrame>
         <PanelFrame chrome={chrome} id="toc" title="标题目录" className="toc-workspace"><TableOfContents key={activeEditorId+':'+file} file={file} items={outline} current={currentHeading?.from} onLocate={locate}
           onDraft={heading=>addChapterDraft({workspace:fileWorkspace.info.id,editor:activeEditorId,file,heading})}
           onDragSection={(heading,event)=>{event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData(CHAPTER_DRAG_TYPE,JSON.stringify({workspace:fileWorkspace.info.id,editor:activeEditorId,file,heading} satisfies ChapterDrag));}}/></PanelFrame>

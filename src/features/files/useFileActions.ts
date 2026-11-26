@@ -433,12 +433,12 @@ export function useFileActions(options: FileActionsOptions) {
             })();
         }});
     }
-    async function switchWorkspace(root: string) {
+    async function withWorkspaceSwitch(commit:()=>Promise<void>) {
         if(structuring.current)throw new Error('文件正在整理，请稍后再切换写作空间。');
         if (viewApplying.current)
             throw new Error('视图正在应用，请稍后再切换写作空间。');
         if (switching.current)
-            return;
+            throw new Error('正在切换写作空间，请稍后重试。');
         switching.current = true;
         try {
             const checkDrafts=()=>{
@@ -455,11 +455,20 @@ export function useFileActions(options: FileActionsOptions) {
                 if (session.dirty && !await saveSession(session.id, true))
                     throw new Error('有文件未能保存，请先处理冲突或另存副本，再切换文件夹。');
             checkDrafts();
-            await fileWorkspace.update({ root });
+            if ([...sessions.current.values()].some(session=>session.dirty))
+                throw new Error('保存期间正文又有修改，请重试。');
+            await commit();
         }
         finally {
             switching.current = false;
         }
+    }
+    function switchWorkspace(root: string) {
+        return withWorkspaceSwitch(()=>fileWorkspace.update({root}));
+    }
+    function removeRepository(id: string) {
+        const remove=()=>fileWorkspace.manage({action:'remove',id});
+        return id===fileWorkspace.info.id?withWorkspaceSwitch(remove):remove();
     }
     function bindSavedFile(data:DiskFile,targetId:string){
         const session=sessions.current.get(targetId)!;
@@ -521,5 +530,5 @@ export function useFileActions(options: FileActionsOptions) {
         }catch(error){if(ticket.current())setError((error as Error).message);}
         finally{ticket.cancel();}
     }
-    return { beginRead,refresh, showFile, openFile, safeSwitch, openSaveAs, save, openBlankTab, openInLanding, createQuickNote, openExplorerFile, openDocumentPath, preflightFileActions, manageFile, reloadFromDisk, switchWorkspace, submitDialog, importFile };
+    return { beginRead,refresh, showFile, openFile, safeSwitch, openSaveAs, save, openBlankTab, openInLanding, createQuickNote, openExplorerFile, openDocumentPath, preflightFileActions, manageFile, reloadFromDisk, switchWorkspace, removeRepository, submitDialog, importFile };
 }

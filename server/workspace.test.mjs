@@ -102,11 +102,19 @@ it('migrates legacy scratch only for the original workspace',async()=>{
   await legacy.update({root:other,revision:0});
   await expect(fs.access(path.join(other,'自由草稿.md'))).rejects.toThrow();
 });
-it('migrates the legacy single workspace into the repository list without changing its preferences',async()=>{
+it('registers the default root alongside a legacy active workspace without changing its preferences',async()=>{
   await fs.writeFile(path.join(local,'workspace.json'),JSON.stringify({root:other,autoSave:false,revision:7}));
   const restarted=await workspaceStore(local,root),info=restarted.read();
-  expect(info).toMatchObject({root:await fs.realpath(other),autoSave:false,revision:7});
-  expect(info.repositories).toEqual([{id:info.id,root:info.root}]);
+  try{
+    expect(info).toMatchObject({root:await fs.realpath(other),defaultRepositoryId:spaces.read().id,autoSave:false,revision:7});
+    expect(info.repositories).toEqual([
+      {id:info.id,root:info.root},
+      {id:info.defaultRepositoryId,root:await fs.realpath(root)},
+    ]);
+    expect(await restarted.readRepositoryManifest(info.id)).toMatchObject({revision:7,repositories:[
+      {id:info.id,path:info.root},{id:info.defaultRepositoryId,path:await fs.realpath(root)},
+    ]});
+  }finally{await restarted.close();}
 });
 it('adds many repositories without switching or allocating document state, and deduplicates canonical paths',async()=>{
   const initial=spaces.read();
@@ -146,9 +154,66 @@ it('removes only a repository listing and preserves its files and metadata for r
   expect(await restarted.capture().outlines.read('kept.md')).toEqual({heading:'keep outline'});
   expect(restarted.read().repositories).toHaveLength(2);
 });
-it('rejects removing the current repository, invalid ordering and invalid additions without changing the registry',async()=>{
+it('protects the default repository while active and inactive',async()=>{
+  const initial=spaces.read(),id=initial.defaultRepositoryId;
+  expect(id).toBe(initial.id);
+  await expect(spaces.manage({action:'remove',id,revision:0})).rejects.toThrow('默认根目录不能移出仓库列表');
+  expect(spaces.read()).toEqual(initial);
+  const switched=await spaces.update({root:other,revision:0});
+  await expect(spaces.manage({action:'remove',id,revision:switched.revision})).rejects.toThrow('默认根目录不能移出仓库列表');
+  expect(spaces.read()).toEqual(switched);
+});
+it('removes the active repository and selects the default root in one revision',async()=>{
+  const first=spaces.read(),defaultId=first.defaultRepositoryId,third=path.join(temp,'C');
+  await fs.mkdir(third);
+  await spaces.capture().files.save({path:'same.md',text:'default text',baseline:null});
+  const added=await spaces.manage({action:'add',root:third,revision:0});
+  const thirdId=added.repositories[1].id;
+  const active=await spaces.update({root:other,autoSave:false,revision:1});
+  await spaces.capture().files.save({path:'same.md',text:'active text',baseline:null});
+  await spaces.capture().outlines.save('same.md','heading','kept outline');
+  const named=await spaces.manage({action:'rename',id:defaultId,name:'默认写作目录',revision:2});
+  const ordered=await spaces.manage({action:'reorder',order:[thirdId,active.id,defaultId],revision:named.revision});
+  const action={action:'remove',id:active.id,revision:ordered.revision};
+  await expect(spaces.manage({...action,revision:active.revision})).rejects.toHaveProperty('status',409);
+  expect(spaces.read()).toEqual(ordered);
+  const removed=await spaces.manage(action);
+  expect(removed).toEqual({
+    ...ordered,id:defaultId,root:first.root,revision:ordered.revision+1,
+    repositories:ordered.repositories.filter(entry=>entry.id!==active.id),
+  });
+  expect((await spaces.capture().files.read('same.md')).text).toBe('default text');
+  expect(await fs.readFile(path.join(other,'same.md'),'utf8')).toBe('active text');
+  expect(await spaces.readRepositoryManifest(defaultId)).toMatchObject({revision:removed.revision,repositories:[
+    {id:thirdId},{id:defaultId,name:'默认写作目录'},
+  ]});
+  const restarted=await workspaceStore(local,root);
+  try{
+    expect(restarted.read()).toEqual(removed);
+    await restarted.update({root:other,revision:removed.revision});
+    expect(await restarted.capture().outlines.read('same.md')).toEqual({heading:'kept outline'});
+  }finally{await restarted.close();}
+});
+it('keeps the active repository and registry if publishing its removal fails',async()=>{
+  const active=await spaces.update({root:other,revision:0});
+  const config=path.join(local,'workspace.json'),backup=config+'.backup';
+  const manifest=await spaces.readRepositoryManifest(active.id);
+  await fs.rename(config,backup);
+  await fs.mkdir(config);
+  try{
+    await expect(spaces.manage({action:'remove',id:active.id,revision:active.revision})).rejects.toThrow();
+    expect(spaces.read()).toEqual(active);
+    const published=JSON.parse(await fs.readFile(path.join(local,'repositories.json'),'utf8'));
+    expect(published).toEqual(manifest);
+  }finally{
+    await fs.rmdir(config);
+    await fs.rename(backup,config);
+  }
+  expect((await spaces.manage({action:'remove',id:active.id,revision:active.revision})).id).toBe(active.defaultRepositoryId);
+});
+it('rejects invalid ordering and additions without changing the registry',async()=>{
   const initial=spaces.read();
-  for(const action of [{action:'remove',id:initial.id},{action:'reorder',order:[]},{action:'reorder',order:['unknown']},{action:'add',root:path.join(temp,'missing')},{action:'add',root:'relative'},{action:'unknown'}]) {
+  for(const action of [{action:'remove',id:'unknown'},{action:'reorder',order:[]},{action:'reorder',order:['unknown']},{action:'add',root:path.join(temp,'missing')},{action:'add',root:'relative'},{action:'unknown'}]) {
     await expect(spaces.manage({...action,revision:0})).rejects.toThrow();
     expect(spaces.read()).toEqual(initial);
   }

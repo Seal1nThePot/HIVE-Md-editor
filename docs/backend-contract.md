@@ -38,9 +38,9 @@
 | 方法 | 路径 | 入参 | 出参 |
 | --- | --- | --- | --- |
 | GET | `/api/health` | — | `{app:"hive-writing-prototype",pid,project,ready}` |
-| GET | `/api/workspace` | — | `{id,root,autoSave,revision,repositories:[{id,root}]}`（恒含当前仓库） |
+| GET | `/api/workspace` | — | `{id,root,defaultRepositoryId,autoSave,revision,repositories:[{id,root,name?}]}`。列表包含当前仓库和默认文档根。 |
 | POST | `/api/workspace` | `{root,autoSave,revision}` | 同 GET；`revision` 过期 → 409 |
-| POST | `/api/workspace/repositories` | `{action:"add"\|"rename"\|"remove"\|"reorder", revision, …}` | 同 GET；`add` 须现有普通目录（拒符号链接/junction），`rename` 备注 ≤80 单行，`remove` 拒绝移除使用中的仓库，`reorder` 须全量 id；`revision` 过期 → 409 |
+| POST | `/api/workspace/repositories` | `{action:"add"\|"rename"\|"remove"\|"reorder", revision, …}` | 同 GET。`add` 须现有普通目录（拒符号链接/junction），`rename` 备注 ≤80 单行，`reorder` 须全量 id。`remove` 仅移出登记，保留文件与元数据。默认文档根禁止移出。移出当前仓库时同一事务切回默认文档根。`revision` 过期 → 409。 |
 | POST | `/api/workspace/sync` | `{paths: string[], baselines?: Record<path, sha256>, treeVersion?}`（paths ≤100，`baselines` 可选，兼容旧请求） | `{workspace,treeVersion,entries,files}`；服务端最多 4 个并发读文件；hash 与 `baselines[path]` 相同的文件只回 `{path,hash,unchanged:true}`，不带 `text`；不排队 |
 | POST | `/api/references/resolve` | `{sources,budget,currentFile?,overrides?}`，来源格式见 §10 | `{sources,files:[{path,source,characters,truncated,text,unsaved?}],warnings}` |
 | POST | `/api/references/attachments` | UTF-8 Markdown 原始字节（`application/octet-stream`，≤2 MB）和 `?name=` | `{type:"attachment",id,path}`，`path` 为显示文件名 |
