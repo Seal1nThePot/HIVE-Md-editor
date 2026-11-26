@@ -63,7 +63,8 @@ function annotationHit(target:Element,options:GestureOptions|undefined,ctrlKey=f
     element:tab,id:tabId,kind:'document-tab',label:options.labelForWindow?.(tabId)||tab.title||tab.textContent?.trim()||'正文',
   };
   if(!options?.enabled&&!ctrlKey)return;
-  if(options?.enabled&&(target.closest(annotationControls)||target.closest('[role="menu"],dialog,[role="dialog"]')))return;
+  const control=target.closest(annotationControls);
+  if(options?.enabled&&((control&&control!==tab)||target.closest('[role="menu"],dialog,[role="dialog"]')))return;
   if(options?.enabled&&options.stageWorkspaceTarget){
     const row=target.closest<HTMLElement>('.explorer-row[data-path]');
     const path=row?.dataset.path;
@@ -82,7 +83,8 @@ function annotationHit(target:Element,options:GestureOptions|undefined,ctrlKey=f
   const titleId=windowAnnotationTarget(target);
   const id=titleId||(options?.enabled?frame?.dataset.panelId:undefined);
   if(!id||!(ctrlKey&&titleId)&&!options?.canMarkWindow?.(id))return;
-  const element=panelElement(target,id);
+  const panel=panelElement(target,id);
+  const element=panel?.getClientRects().length?panel:tab||panel;
   if(element)return {element,id,kind:'window',label:options?.labelForWindow?.(id)||element.getAttribute('aria-label')||id};
 }
 
