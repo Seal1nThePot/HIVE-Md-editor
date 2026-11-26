@@ -18,7 +18,8 @@ import {useFileActions} from '../features/files/useFileActions';
 import {useViewSnapshots} from '../features/workspace/useViewSnapshots';
 import {PanelFrame,PanelControls,emptyPanelFooter,type PanelChrome} from '../features/workspace/PanelFrame';
 import {AppHeader} from './AppHeader';
-import {WindowAnnotationProvider,useWindowAnnotations,useWindowAnnotationGesture,type WindowMark} from '../features/annotations/windowAnnotations';
+import {WindowAnnotationProvider,useWindowAnnotations,useWindowAnnotationGesture,type WindowMark,type WorkspaceAnnotationTarget} from '../features/annotations/windowAnnotations';
+import {workspaceAnnotationAttachment} from '../features/annotations/workspaceAnnotationAttachment';
 import {useAnnotationActions} from '../features/annotations/useAnnotationActions';
 import HistoryPage,{type HistoryPageProps,type HistoryTab} from '../features/history/HistoryPage';
 import {historyTextChanges,historyTextPatch,planHistoryText} from '../features/history/historyText';
@@ -316,7 +317,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
     if(id==='properties'&&(searchInScratch||!propertyTargetAvailable.current))return mark;
     if(id==='outline'&&!/\.md$/i.test(session.disk.path))return mark;
     return {...mark,document:{sessionId:activeEditorId,file:session.disk.path}};
-  },{enabled:annotationTool,has:isMarkdownTab,stage:stageDocumentTab});
+  },{enabled:annotationTool,has:isMarkdownTab,stage:stageDocumentTab,canMarkWindow:isWindowTool,labelForWindow:panelLabel,stageWorkspaceTarget});
   // Several panels in the same native group share its document and annotation UI.
   const annotationOwners=new Map<string,Document>([['',document]]);
   for(const [id,popup] of desktopPanels.windows)annotationOwners.set(desktopPanels.owner(id),popup.document);
@@ -999,7 +1000,25 @@ function WritingApp({initialPlacement,capturePlacement}:{
   function stageDocumentTab(id:string){
     const session=sessions.current.get(id),state=session?.view?.state??session?.state;
     if(!isMarkdownTab(id)||!state)return;
-    stageAttachment({kind:'document',file:session?.disk?.path||'',label:panelLabel(id),text:state.doc.toString()});
+    const path=session?.disk?.path||'';
+    stageAttachment({kind:'document',file:path,label:panelLabel(id),text:state.doc.toString(),
+      reference:path?{workspaceId:fileWorkspace.info.id,path}:undefined});
+  }
+  function stageWorkspaceTarget(target:WorkspaceAnnotationTarget){
+    if(switching.current||closing.current)return;
+    void workspaceAnnotationAttachment(target,{
+      workspaceId:fileWorkspace.info.id,entries,repositories:fileWorkspace.info.repositories,request,
+      findOpenDocument:path=>{
+        const active=sessions.current.get(activeSession.current);
+        const matches=[...sessions.current.values()].filter(session=>session.disk?.path===path);
+        const session=active?.disk?.path===path?active:matches.find(candidate=>candidate.dirty)??matches[0];
+        return (session?.view?.state??session?.state)?.doc.toString();
+      },
+    }).then(attachment=>{
+      if(appAlive.current&&!switching.current&&!closing.current)stageAttachment(attachment);
+    }).catch(error=>{
+      if(appAlive.current&&!switching.current)setError(error instanceof Error?error.message:'无法添加标注。');
+    });
   }
   function stageEditorSelection(id:string,text:string,table?:{ordinal:number}){
     const file=sessions.current.get(id)?.disk?.path||'';
