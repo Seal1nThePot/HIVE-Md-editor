@@ -27,6 +27,7 @@ type FileActionsOptions = {
     appAlive?:RefObject<boolean>;
     promptRef?:RefObject<HTMLTextAreaElement|null>;
     hasUnsentChatDraft?:()=>boolean;
+    beforeWorkspaceCommit?:()=>((restoreFocus:boolean)=>void);
     dialogRef?:RefObject<Dialog|null>;
     uid: () => string;
     workspace: PanelWorkspaceApi;
@@ -454,10 +455,15 @@ export function useFileActions(options: FileActionsOptions) {
             for (const session of sessions.current.values())
                 if (session.dirty && !await saveSession(session.id, true))
                     throw new Error('有文件未能保存，请先处理冲突或另存副本，再切换文件夹。');
-            checkDrafts();
-            if ([...sessions.current.values()].some(session=>session.dirty))
-                throw new Error('保存期间正文又有修改，请重试。');
-            await commit();
+            const release = options.beforeWorkspaceCommit?.();
+            let committed = false;
+            try {
+                checkDrafts();
+                if ([...sessions.current.values()].some(session=>session.dirty))
+                    throw new Error('保存期间正文又有修改，请重试。');
+                await commit();
+                committed = true;
+            } finally { release?.(!committed); }
         }
         finally {
             switching.current = false;

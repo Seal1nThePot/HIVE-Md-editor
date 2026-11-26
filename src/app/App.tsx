@@ -128,6 +128,7 @@ import {ShortcutPreferencesProvider,useShortcutPreferences} from '../features/se
 import {matchesShortcut,shortcutLabel} from '../features/settings/shortcuts';
 import SettingsPage, {type SettingsSection} from "../features/settings/SettingsPage";
 import {usePlugins} from '../features/settings/usePlugins';
+import {freezeWorkspaceInput} from './freezeWorkspaceInput';
 import {initialConfig, parseModelChoice, selectedModelEntry, type Config, type ModelProbeRequest, type ModelProbeResult} from "../features/settings/modelConfig";
 import { useAppearance } from "../features/settings/useAppearance";
 import {useAnnotationPreferences} from '../features/settings/useAnnotationPreferences';
@@ -190,6 +191,8 @@ function WritingApp({initialPlacement,capturePlacement}:{
   capturePlacement:RefObject<(()=>RepositoryPanelPlacement)|null>;
 }) {
   const desktopPanels = useDesktopPanels();
+  const latestDesktop = useRef(desktopPanels);
+  latestDesktop.current = desktopPanels;
   const {bindings:shortcutBindings}=useShortcutPreferences();
   const {markedPanels,marks,remove:removeWindowMark}=useWindowAnnotations();
   const closing = useRef(false);
@@ -830,6 +833,13 @@ function WritingApp({initialPlacement,capturePlacement}:{
 
   const { refresh, openFile, safeSwitch, openSaveAs, save, openBlankTab, createQuickNote, openExplorerFile, openDocumentPath, manageFile, preflightFileActions, reloadFromDisk, switchWorkspace, removeRepository, submitDialog, importFile } = useFileActions({
     api, appAlive, promptRef, hasUnsentChatDraft:()=>unsentDraft.current, dialogRef, uid, workspace, sessions, activeSession, activeTextSource,
+    beforeWorkspaceCommit:()=>{
+      const desktop=latestDesktop.current;
+      const views=[...sessions.current.values()].flatMap(session=>session.view?[session.view]:[]);
+      if(scratchView.current)views.push(scratchView.current);
+      if(desktop.isComposing()||views.some(view=>view.composing))throw new Error('请先完成当前输入法组词，再切换文件夹。');
+      return freezeWorkspaceInput([document,...[...desktop.windows.values()].map(popup=>popup.document)],views);
+    },
     proposal, undo, prompt, dialog, running, requestAnchor, structuring, switching, viewApplying,
     creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,
     onApplied:(action,result,actor)=>{
