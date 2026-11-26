@@ -1,5 +1,5 @@
 import {floatingDropContent,pruneFloatingGroup,type FloatingGroup} from './floatingLayout';
-import { createRef, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type RefObject } from "react";
+import { createRef, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { dockedPanels, dockResizeEdges, measureDockTree, resizeDockSplit, PANEL_HEADER_HEIGHT, type DockEdge, type DockPlacementEdge, type Rect } from "./panelLayout";
 import { completeWorkspace, defaultWorkspace, detachWorkspacePanel, hideWorkspacePanel, openWorkspacePanel, placeWorkspacePanel, placeWorkspacePanelAtEdge, floatWorkspaceGroup, placeWorkspaceGroup, closeWorkspacePanelPreservingAutoHide, type WorkspaceLayout } from "./workspaceState";
@@ -18,9 +18,12 @@ import {visibleDockTree,visibleFloatingGroups,railDropAt} from './nativeDocking'
 import {useNativePanelDocking} from './useNativePanelDocking';
 import {NativeDragHandoff,minimizeNativePanel,openNativePanel,canDetachDocumentTab,returnNativeGroup} from './nativePanelState';
 import {PanelLifecycle,type PanelOperation} from './panelLifecycle';
-export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActivate?:(id:string)=>void,headerHeight=PANEL_HEADER_HEIGHT,lockGesture:PanelLockGesture='doubleClick') {
+
+export type PanelWorkspacePlacement={layout:WorkspaceLayout;bounds:Rect};
+export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActivate?:(id:string)=>void,headerHeight=PANEL_HEADER_HEIGHT,lockGesture:PanelLockGesture='doubleClick',initial?:PanelWorkspacePlacement) {
   const desktop=useDesktopPanels();
-  const [rawLayout,setLayout]=useState<WorkspaceLayout>(defaultWorkspace),[bounds,setBounds]=useState<Rect>({x:0,y:160,width:window.innerWidth,height:window.innerHeight-185}),
+  const [rawLayout,setLayout]=useState(()=>initial?.layout??defaultWorkspace()),
+    [bounds,setBounds]=useState(()=>initial?.bounds??{x:0,y:160,width:window.innerWidth,height:window.innerHeight-185}),
     [dragging,setDragging]=useState<string|null>(null),[dockFeedback,setDockFeedback]=useState<DockFeedback|null>(null);
   const [raisedDocked,setRaisedDocked]=useState<string|null>(null);
   const raisedDockedLayer=Math.max(panelLayers.floating,...Object.values(rawLayout.layers))+2;
@@ -64,10 +67,27 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
   const viewport=()=>({width:window.innerWidth,height:window.innerHeight});
   const fit=(rect:Rect,id?:string,source=latest.current)=>{const fitted=fitFloatingRect(rect,viewport());return id&&isFreelyMovableTool(source,id)?fitted:fitPanelInStage(fitted,boundsRef.current);};
   const refFor=(id:string)=>{if(!refs.current.has(id))refs.current.set(id,createRef<HTMLElement>());return refs.current.get(id)!;};
-  useEffect(()=>{
+  useLayoutEffect(()=>{
     const measure=()=>{
-      const rect=stage.current?.getBoundingClientRect();if(rect)setBounds({x:rect.x,y:rect.y,width:rect.width,height:rect.height});
-      update(old=>{let changed=false;const rects={...old.rects};for(const [id,value] of Object.entries(rects)){const next=fit(value,id);if(Object.keys(next).some(key=>next[key as keyof Rect]!==value[key as keyof Rect])){rects[id]=next;changed=true;}}return changed?{...old,rects}:old;});
+      const rect=stage.current?.getBoundingClientRect();
+      if(rect){
+        const {x,y,width,height}=rect,previous=boundsRef.current;
+        if(x!==previous.x||y!==previous.y||width!==previous.width||height!==previous.height){
+          boundsRef.current={x,y,width,height};
+          setBounds(boundsRef.current);
+        }
+      }
+      const current=latest.current,rects={...current.rects};
+      const resolvedDocked=new Set(dockedPanels(current.tree));
+      const floatingGroups=new Set(current.floatingGroups.map(group=>group.id));
+      let changed=false;
+      for(const [id,value] of Object.entries(rects)){
+        if(desktop.enabled&&(floatingGroups.has(id)||current.open.includes(id)&&
+          (current.autoHide?.[id]?autoHideIsNative(current,id):!resolvedDocked.has(id))))continue;
+        const next=fit(value,id);
+        if(Object.keys(next).some(key=>next[key as keyof Rect]!==value[key as keyof Rect])){rects[id]=next;changed=true;}
+      }
+      if(changed)update(old=>({...old,rects}));
     };
     const observer=new ResizeObserver(measure);if(stage.current)observer.observe(stage.current);measure();window.addEventListener('resize',measure);
     return()=>{observer.disconnect();window.removeEventListener('resize',measure);cleanup.current?.();};
@@ -492,13 +512,25 @@ export function usePanelWorkspace(stage: RefObject<HTMLDivElement|null>,onActiva
       draggedLabel={refFor(dragging).current?.getAttribute('aria-label')||'面板'}
       tabs={(tabGroups.find(group=>group.panels.includes(dockFeedback?.target?.id||''))?.panels.filter(id=>id!==dragging)||[dockFeedback?.target?.id||'']).map(id=>refFor(id).current?.getAttribute('aria-label')||'目标面板')}/>,document.body)}
   </>;
+  function captureLayout(){
+    const snapshot=structuredClone(latest.current);
+    for(const group of snapshot.floatingGroups){
+      const rect=desktop.rect(group.active);if(rect)snapshot.rects[group.id]=rect;
+    }
+    return snapshot;
+  }
   return {panel,beginTabDrag,beginGroupDrag,groupFloat,groupDock,prepareNativeFloat,floatNativePanel,returnNativePanel,canPullRail:(edge:'left'|'right')=>canDockAutoHideRail(layout,edge),dockAutoHideRail:pullAutoHideRail,closePreservingAutoHide,open,reveal,splitEditor,openDocumentTab,isPositionLocked:(id:string)=>isPanelPositionLocked(layout,id),togglePositionLock,locked:!!layout.locked,toggleLocked:()=>{cleanup.current?.();stopDocking();update(old=>({...old,locked:!old.locked}));},close:(id:string)=>hide(id,false),minimize:(id:string)=>hide(id,true),toggle:(id:string)=>layout.open.includes(id)?hide(id,false):open(id),isOpen:(id:string)=>layout.open.includes(id),chrome,
-    capture:()=>{
-      const snapshot=structuredClone(latest.current);
-      for(const group of snapshot.floatingGroups){
-        const rect=desktop.rect(group.active);if(rect)snapshot.rects[group.id]=rect;
+    capture:captureLayout,
+    capturePlacement:():PanelWorkspacePlacement=>{
+      const snapshot=captureLayout(),grouped=new Set(snapshot.floatingGroups.flatMap(group=>group.panels));
+      for(const id of desktop.windows.keys()){
+        if(grouped.has(id)||!snapshot.open.includes(id))continue;
+        const rect=desktop.rect(id);
+        if(!rect)continue;
+        snapshot.rects[id]=rect;
+        if(snapshot.autoHide?.[id])snapshot.autoHide[id]={...snapshot.autoHide[id],rect};
       }
-      return snapshot;
+      return {layout:snapshot,bounds:boundsRef.current};
     },
     restoreLayout:(saved:WorkspaceLayout)=>{
       if(latest.current.locked)throw new Error('请先解锁工作区位置，再应用其他视图。');

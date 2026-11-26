@@ -40,10 +40,12 @@ import {documentMatchesText} from '../features/editor/documentText';
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type FormEvent,
+  type RefObject,
 } from "react";
 import {WorkspaceProvider, useFileWorkspace, type WorkspaceInfo} from "../features/files/WorkspaceContext";
 import type {AnnotationContext} from '../features/editor/EditorContextMenu';
@@ -92,7 +94,9 @@ import Ribbon from "../features/ribbon/Ribbon";
 import WritingOutline from "../features/outline/WritingOutlineV2";
 import { targetForNode,type WritingNode } from "../features/outline/writingNodes";
 import { useWritingNodes } from "../features/outline/useWritingNodes";
-import { usePanelWorkspace } from "../features/workspace/usePanelWorkspace";
+import { usePanelWorkspace, type PanelWorkspacePlacement } from "../features/workspace/usePanelWorkspace";
+import { isEditorPanel, PRIMARY_EDITOR } from "../features/workspace/workspacePolicy";
+import { findPanelGroup, omitWorkspacePanels } from "../features/workspace/workspaceState";
 import PanelControl from "../features/workspace/PanelControl";
 import ViewControls from "../features/workspace/ViewControls";
 import PanelIconRail from "../features/workspace/PanelIconRail";
@@ -160,14 +164,27 @@ const railIcons:Record<string,typeof FileTextIcon>={
   basis:iconComponent('panel.basis'),search:iconComponent('editor.findReplace'),trash:Trash2,
 };
 
+type RepositoryPanelPlacement=PanelWorkspacePlacement & {activeEditor:string};
+
 export default function App() {
   useApplyTheme();
-  const [info,setInfo]=useState<WorkspaceInfo|null>(null),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
-  useEffect(()=>{let alive=true;fetch('/api/workspace').then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);if(alive){setInfo(data);setError('');}}).catch(error=>{if(alive)setError(error.message);});return()=>{alive=false;};},[attempt]);
-  if(!info)return <div className="workspace-loading" role="status">{error||'正在打开写作空间…'}{error&&<button onClick={()=>setAttempt(value=>value+1)}>重试</button>}</div>;
-  return <WorkspaceProvider key={info.id} info={info} onChange={setInfo}><ShortcutPreferencesProvider><WindowAnnotationProvider><DesktopPanelsProvider><WritingApp/></DesktopPanelsProvider></WindowAnnotationProvider></ShortcutPreferencesProvider></WorkspaceProvider>;
+  const [current,setCurrent]=useState<{info:WorkspaceInfo;placement?:RepositoryPanelPlacement}|null>(null);
+  const [error,setError]=useState(''),[attempt,setAttempt]=useState(0);
+  const capturePlacement=useRef<(()=>RepositoryPanelPlacement)|null>(null);
+  useEffect(()=>{let alive=true;fetch('/api/workspace').then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);if(alive){setCurrent({info:data});setError('');}}).catch(error=>{if(alive)setError(error.message);});return()=>{alive=false;};},[attempt]);
+  if(!current)return <div className="workspace-loading" role="status">{error||'正在打开写作空间…'}{error&&<button onClick={()=>setAttempt(value=>value+1)}>重试</button>}</div>;
+  const {info,placement}=current;
+  function changeWorkspace(next:WorkspaceInfo){
+    setCurrent({info:next,placement:next.id===info.id?placement:capturePlacement.current?.()});
+  }
+  return <WorkspaceProvider key={info.id} info={info} onChange={changeWorkspace}><ShortcutPreferencesProvider><WindowAnnotationProvider><DesktopPanelsProvider>
+    <WritingApp initialPlacement={placement} capturePlacement={capturePlacement}/>
+  </DesktopPanelsProvider></WindowAnnotationProvider></ShortcutPreferencesProvider></WorkspaceProvider>;
 }
-function WritingApp() {
+function WritingApp({initialPlacement,capturePlacement}:{
+  initialPlacement?:RepositoryPanelPlacement;
+  capturePlacement:RefObject<(()=>RepositoryPanelPlacement)|null>;
+}) {
   const desktopPanels = useDesktopPanels();
   const {bindings:shortcutBindings}=useShortcutPreferences();
   const {markedPanels,marks,remove:removeWindowMark}=useWindowAnnotations();
@@ -192,11 +209,27 @@ function WritingApp() {
   const panelIconDragPreferences=usePanelIconDragPreferences();
   const aiButtonLayout=useAIButtonLayout();
   const aiResponsePreferences=useAIResponsePreferences();
-  const workspace = usePanelWorkspace(workbenchRef, id => {if(sessions.current.has(id))activateEditor(id);},28*appearanceSettings.appearance.uiScale/100,appearanceSettings.appearance.panelLockGesture);
-  const sessions = useRef(new Map<string, EditorSession>([["editor", {id:"editor",disk:null,state:null,view:null,dirty:false,landing:true}]]));
+  const workspace = usePanelWorkspace(workbenchRef, id => {if(sessions.current.has(id))activateEditor(id);},28*appearanceSettings.appearance.uiScale/100,appearanceSettings.appearance.panelLockGesture,initialPlacement);
+  const [initialSessions]=useState(()=>new Map<string,EditorSession>(
+    [...new Set([PRIMARY_EDITOR,...(initialPlacement?.layout.open??[]),...(initialPlacement?.layout.minimized??[])])]
+      .filter(isEditorPanel)
+      .map(id=>[id,{id,disk:null,state:null,view:null,dirty:false,landing:true}]),
+  ));
+  const sessions = useRef(initialSessions);
   const [recentOpen,setRecentOpen]=useState(false),[newNoteBusy,setNewNoteBusy]=useState(false),[renameRequest,setRenameRequest]=useState<{path:string;key:string}>();
   const creatingNote=useRef(false);
-  const activeSession = useRef("editor"), syncingSessions = useRef(false);
+  const activeSession = useRef(initialPlacement?.activeEditor??PRIMARY_EDITOR), syncingSessions = useRef(false);
+  useLayoutEffect(()=>{
+    capturePlacement.current=()=>{
+      const placement=workspace.capturePlacement();
+      const layout=omitWorkspacePanels(placement.layout,id=>id!=='repositories'&&!id.startsWith(trashPreviewTabPrefix)&&!sessions.current.get(id)?.external);
+      const openEditors=layout.open.filter(isEditorPanel);
+      const primaryTab=findPanelGroup(layout.tree,PRIMARY_EDITOR)?.active??PRIMARY_EDITOR;
+      const activeEditor=[activeSession.current,primaryTab].find(id=>openEditors.includes(id))??openEditors[0]??PRIMARY_EDITOR;
+      // The repository owns the sessions. A retained editor slot starts on a blank landing page.
+      return {...placement,layout,activeEditor};
+    };
+  });
   const active = useMemo(() => activeEditor(sessions, activeSession), [sessions, activeSession]);
   const {view, disk, editorState} = active;
   const activeEditorId = activeSession.current;
