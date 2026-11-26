@@ -148,6 +148,22 @@ describe('annotated document and trash tools',()=>{
     expect(await fs.readFile(path.join(external,'新标题.md'),'utf8')).toBe('另一仓库的同名文件');
   });
 
+  it('lists the marked workspace trash without exposing file contents or mutation IDs',async()=>{
+    const file='查看标注回收站.md';
+    await fs.writeFile(path.join(documents,file),'回收站正文不属于列表');
+    const record=await explorer({action:'trash',path:file});
+    const listing=await trashPlan('list_trash',{},'查看回收站。');
+    expect(listing.status).toBe(200);
+    const data=await listing.json();
+    expect(data).toMatchObject({kind:'trash-list',offset:0,total:(await trashEntries()).length});
+    expect(data.entries).toContainEqual({path:file,type:'file',deletedAt:record.deletedAt});
+    expect(JSON.stringify(data)).not.toContain(record.id);
+    expect(JSON.stringify(data)).not.toContain('回收站正文不属于列表');
+    expect((await trashEntries()).map(item=>item.id)).toContain(record.id);
+    const stale=await plan('trash','list_trash',{},'查看另一仓库。','0'.repeat(24));
+    expect(stale.status).toBe(409);
+  });
+
   it('plans restore and requires the existing confirmation flow for an exactly resolved permanent deletion',async()=>{
     const names=['保留甲.md','恢复乙.md','确认丙.md'];
     const records=[];
@@ -180,7 +196,7 @@ describe('annotated document and trash tools',()=>{
     }
     const repeated=await trashPlan('confirm_trash_delete',{targets:[name]},'请求删除同名文件。');
     expect(repeated.status).toBe(409);
-    expect(requests.at(-1).body.tools.map(tool=>tool.function.name)).toEqual(['restore_trash','confirm_trash_delete']);
+    expect(requests.at(-1).body.tools.map(tool=>tool.function.name)).toEqual(['list_trash','restore_trash','confirm_trash_delete']);
     const wrong=await plan('trash','confirm_trash_delete',{targets:[name]},'来自另一仓库。','0'.repeat(24));
     expect(wrong.status).toBe(409);
     expect(requests).toHaveLength(1);

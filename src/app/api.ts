@@ -29,7 +29,9 @@ export function findAnnotatedNote(request: typeof fetch, input: NoteFindRequest,
 }
 
 type WorkspaceToolRequest = {instruction:string;selection?:ModelSelection;target:{workspaceId:string}};
-export type TrashToolResult = {kind:'trash-restore'|'trash-confirm-delete';items:TrashRecord[]};
+export type TrashToolResult =
+    | {kind:'trash-list';entries:Pick<TrashRecord,'path'|'type'|'deletedAt'|'missing'>[];total:number;offset:number;nextOffset?:number}
+    | {kind:'trash-restore'|'trash-confirm-delete';items:TrashRecord[]};
 export type DocumentsToolResult =
     | {kind:'folder-list';folder:string;entries:{path:string;name:string;type:'file'|'folder'}[]}
     | {kind:'document-create';parent:string;name:string;type:'file'|'folder'}
