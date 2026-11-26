@@ -62,3 +62,5 @@
 .repository-empty { display:grid; justify-items:center; gap:12px; padding:30px 12px; color:var(--muted); }
 .repository-empty button { color:var(--text); border:1px solid var(--hive-input-border); }
 @container (max-width:340px) { .repository-masthead { margin-bottom:12px; } .repository-search { flex-basis:100%; } }
+
+.repository-card{position:relative}.repository-card.repository-dragging{opacity:.55}.repository-card.repository-drop-before::before,.repository-card.repository-drop-after::after{content:"";position:absolute;inset:-5px 0 auto;height:3px;background:var(--hive-accent);pointer-events:none}.repository-card.repository-drop-after::after{inset:auto 0 -5px}.repository-path-value,.repository-card h3{user-select:text}
