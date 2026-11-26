@@ -1834,7 +1834,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
             {aiButtonLayout.layout.bottom.length?chatActions('bottom'):emptyPanelFooter("对话")}
             {rightPanel.handles}
           </aside></DesktopPanel>
-        <PanelFrame chrome={chrome} id="repositories" title="仓库管理" className="repositories-workspace">{workspace.isOpen('repositories')&&<RepositoryPanel onSwitch={switchWorkspace} onRemove={removeRepository} onReturn={()=>workspace.close('repositories')}/>}</PanelFrame>
+        <PanelFrame chrome={chrome} id="repositories" title="仓库管理" className="repositories-workspace">{workspace.isOpen('repositories')&&<RepositoryPanel annotationMode={annotationTool} onSwitch={switchWorkspace} onRemove={removeRepository} onReturn={()=>workspace.close('repositories')}/>}</PanelFrame>
         <PanelFrame chrome={chrome} id="quick-open" title="快速打开文档" className="quick-open-workspace">{workspace.isOpen('quick-open')&&
           <QuickOpenPanel workspaceId={fileWorkspace.info.id} indexes={quickOpen} request={requestModel} modelConfigured={!config.demo}
             onOpen={path=>openAndCount(path,false,true)} onClose={()=>workspace.close('quick-open')} dropError={quickOpenError} onDropError={setQuickOpenError}/>}
