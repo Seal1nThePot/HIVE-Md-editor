@@ -1550,6 +1550,13 @@ function WritingApp({initialPlacement,capturePlacement}:{
         const moved=await manageFile({action:'trash',path:result.path},{quiet:true,actor:'ai'});
         return '已移入回收站 '+result.path+'。'+(moved.warning||'');
       }
+      case 'trash-list':{
+        if(mark.id!=='trash')throw new Error('回收站结果与已标注窗口不一致，请重试。');
+        if(!result.total)return '当前仓库的回收站为空。';
+        const entries=result.entries.map(item=>`- ${item.path}${item.type==='folder'?'/':''}${item.missing?'（回收项已缺失）':''}`);
+        const next=result.nextOffset===undefined?[]:[`另有条目，可从第 ${result.nextOffset+1} 项继续查看。`];
+        return [`当前仓库回收站共有 ${result.total} 项。`,...entries,...next].join('\n');
+      }
       case 'trash-restore':{
         const outcomes:string[]=[];
         for(const item of result.items){
