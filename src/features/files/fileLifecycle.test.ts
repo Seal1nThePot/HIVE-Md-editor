@@ -299,6 +299,26 @@ describe('file read authority and local history',()=>{
     const pending=t.actions().submitDialog({preventDefault(){}} as any);t.edit(session);write.resolve({hash:'copy-hash'});await pending;
     expect(session.disk?.path).toBe('same.md');expect(session.state!.doc.toString()).toBe('original UNSAVED');expect(t.opts.api).toHaveBeenCalledTimes(1);
   });
+  it('normalizes an accepted save-as copy only in its target session and preserves its prior undo',async()=>{
+    const t=setup(),original='1. First\n4. Second\n',formatted='1. First\n2. Second\n';
+    const session=t.add('editor','original.md',original),sibling=t.add('other','original.md',original);
+    t.edit(session,'\nDone');
+    t.setDialog({kind:'saveAs',value:'copy.md',title:'copy'});
+    const write=deferred();
+    t.setHandler(async(url,body:any)=>{
+      if(url==='/file'){expect(body.text).toBe(formatted+'\nDone');return write.promise;}
+      if(url.startsWith('/file?'))return data('copy.md',formatted+'\nDone','copy-hash');
+      return {root:'synthetic',entries:[]};
+    });
+    const pending=t.actions().submitDialog({preventDefault(){}} as any);
+    expect(session.state!.doc.toString()).toBe(original+'\nDone');
+    write.resolve({hash:'copy-hash'});await pending;
+    expect(session.state!.doc.toString()).toBe(formatted+'\nDone');
+    expect(session.disk?.path).toBe('copy.md');expect(session.dirty).toBe(false);
+    expect(sibling.state!.doc.toString()).toBe(original);expect(sibling.disk?.path).toBe('original.md');
+    expect(undo({state:session.state!,dispatch:tr=>{session.state=tr.state;}})).toBe(true);
+    expect(session.state!.doc.toString()).toBe(formatted);
+  });
   it('captures an import target before File.text resolves and keeps the newly active editor intact',async()=>{
     const t=setup(),first=t.add('editor','old.md'),other=t.add('other','other.md'),fileText=deferred<string>();
     t.setHandler(async(url)=>url==='/file'?{hash:'imported'}:url.startsWith('/file?')?data('import.md','IMPORTED','imported'):{root:'synthetic',entries:[]});

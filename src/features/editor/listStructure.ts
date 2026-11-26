@@ -12,7 +12,7 @@ function quoteDepth(item:SyntaxNode){
 }
 
 /** After the existing enclosing quote markers, including their optional separator. */
-function quotePrefixEnd(text:string,depth:number){
+export function quotePrefixEnd(text:string,depth:number){
   let end=0;
   for(let quote=0;quote<depth;quote++){
     const prefix=/^[ \t]*>[ \t]?/.exec(text.slice(end));
@@ -20,6 +20,17 @@ function quotePrefixEnd(text:string,depth:number){
     end+=prefix[0].length;
   }
   return end;
+}
+
+export function orderedListMarkers(doc:Text,items:readonly SyntaxNode[]){
+  const markers=items.flatMap(item=>{
+    const mark=item.name==='ListItem'?item.getChild('ListMark'):null;
+    return mark?[{item,mark,raw:doc.sliceString(mark.from,mark.to)}]:[];
+  });
+  const first=markers[0]?.raw;
+  if(!first)return [];
+  const start=Number(first.slice(0,-1)),delimiter=first.at(-1);
+  return markers.map((value,index)=>({...value,label:String(start+index)+delimiter}));
 }
 
 export function listItemMarker(doc:Text,item:SyntaxNode,quotes=quoteDepth(item)){

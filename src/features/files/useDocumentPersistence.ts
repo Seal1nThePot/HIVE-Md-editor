@@ -9,9 +9,10 @@ import type { WorkspaceInfo } from './WorkspaceContext';
 import { diskSyncDecision } from './fileSync';
 import {documentMatchesText} from '../editor/documentText';
 import {beginFileActivity,type FileActivityUpdate} from './fileOperations';
-import type {Transaction} from '@codemirror/state';
+import {Transaction} from '@codemirror/state';
 import {documentSyncBaselines,pollAfterCompletion,workspaceTreeSync} from './workspaceSync';
 import { writeDocument,writeExternalDocument } from './writeDocument';
+import {listNormalizationEvent,normalizeOrderedLists} from '../editor/normalizeOrderedLists';
 
 const sessionDisk = (session?: EditorSession) => session?.external?.disk ?? session?.disk;
 
@@ -33,10 +34,11 @@ type PersistenceOptions = {
     redraw: () => void;
     appAlive?:RefObject<boolean>;
     onStoredChange?:(id:string,transaction:Transaction)=>void;
+    applyFormatting?:(session:EditorSession,transaction:Transaction)=>void;
 };
 export function useDocumentPersistence({
     api, workspace, sessions, switching, structuring, fileBusy, tick, autoSave,
-    pendingProposal, setFileBusy, setEntries, setError, inform, redraw, appAlive, onStoredChange,
+    pendingProposal, setFileBusy, setEntries, setError, inform, redraw, appAlive, onStoredChange, applyFormatting,
 }: PersistenceOptions) {
     const savingPaths = useRef(new Set<string>()), syncRunning = useRef(false);
     const treeSync=workspaceTreeSync(setEntries,workspace),lifecycle=useRef(0);
@@ -54,6 +56,17 @@ export function useDocumentPersistence({
     function clearReadFailure(path:string) {
         const failure=readFailures.current.get(path);
         if(failure?.owner===treeSync.owner()&&conflicts.current[path]===failure.message)setConflict(path,'');
+    }
+    function applySavedFormatting(session:EditorSession,transaction:Transaction,baseline:string){
+        if(applyFormatting)applyFormatting(session,transaction);
+        else if(session.view)session.view.dispatch(transaction);
+        else {
+            session.state=transaction.state;
+            session.contentVersion=(session.contentVersion||0)+1;
+            session.dirty=!documentMatchesText(transaction.newDoc,baseline);
+            mapStoredSessionContext(session.context,transaction);
+            if(!session.external)onStoredChange?.(session.id,transaction);
+        }
     }
     async function saveSession(id: string, quiet = false): Promise<boolean> {
         const session = sessions.current.get(id);
@@ -77,13 +90,19 @@ export function useDocumentPersistence({
         const workspaceEpoch = treeSync.owner();
         const isCurrentWorkspace = () =>
             appAlive?.current !== false && sessions.current === owner && treeSync.owner() === workspaceEpoch;
-        const snapshot = state.doc.toString();
         const owners = new Map([...owner.values()]
             .filter(other => sessionDisk(other)?.path === source.path)
             .map(other => [other.id, { session: other, disk: sessionDisk(other) }]));
         savingPaths.current.add(source.path);
         const release=quiet?()=>{}:beginFileActivity(sessions,(busy,openingFile)=>{if(appAlive?.current!==false)setFileBusy(busy,openingFile);});
         try {
+            const {changes,skipped}=normalizeOrderedLists(state);
+            if(!changes.empty&&[...owners.values()].some(other=>other.session.view?.composing)){
+                if(!quiet)setError('请先完成输入法组词，再保存有序列表。');
+                return false;
+            }
+            const savedDoc=changes.apply(state.doc);
+            const snapshot=savedDoc.toString();
             const document = {
                 path: source.path, text: snapshot, baseline: source.hash, eol: source.eol, bom: source.bom,
             };
@@ -91,8 +110,7 @@ export function useDocumentPersistence({
             if (!isCurrentWorkspace())
                 return true;
 
-            // Acknowledge the captured snapshot. Edits made while saving stay dirty.
-            let adopted = false;
+            const matching:EditorSession[]=[];
             for (const other of owner.values()) {
                 const disk = sessionDisk(other);
                 if (disk?.path !== source.path)
@@ -103,17 +121,36 @@ export function useDocumentPersistence({
                     : disk.hash === source.hash && disk.text === source.text;
                 if (!sameBaseline)
                     continue;
+                matching.push(other);
+            }
+            let formatFailed=false;
+            // Publish formatting only after the write succeeds, using each latest
+            // selection and history. New edits and ongoing IME stay in the buffer.
+            if(!changes.empty&&!matching.some(other=>other.view?.composing||pendingProposal?.(other.id))){
+                for(const other of matching){
+                    const current=other.view?.state??other.state;
+                    if(!current?.doc.eq(state.doc))continue;
+                    try{
+                        applySavedFormatting(other,current.update({
+                            changes,userEvent:listNormalizationEvent,annotations:Transaction.addToHistory.of(false),
+                        }),source.text);
+                    }catch{formatFailed=true;}
+                }
+            }
+            // Always adopt the committed snapshot. Edits made while saving stay dirty.
+            for(const other of matching){
                 const saved = { ...source, text: snapshot, hash: result.hash };
                 if(other.external)other.external.disk=saved;
                 else other.disk=saved;
-                other.dirty = !(other.view?.state ?? other.state)?.doc.eq(state.doc);
-                adopted = true;
+                other.dirty = !(other.view?.state ?? other.state)?.doc.eq(savedDoc);
             }
-            if (adopted)
+            if (matching.length)
                 setConflict(source.path, '');
             redraw();
-            if (result.warning || !quiet)
-                inform(result.warning ?? '已保存到本机。');
+            const formattingNote=skipped?'部分有序列表保留原编号，以维持 Markdown 层级和语法。':'';
+            const currentNote=formatFailed?'序号已保存，编辑器中的文稿仍待同步。':'';
+            const warning=[result.warning,formattingNote,currentNote].filter(Boolean).join(' ');
+            if(warning||!quiet)inform(warning||'已保存到本机。');
             return true;
         }
         catch (error) {

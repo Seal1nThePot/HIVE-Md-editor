@@ -14,6 +14,7 @@ import {type ChatAnnotationBatch,type ChatMessageDetails,type Message} from '../
 import {trashPreviewTabPrefix,type EditorSession} from '../features/editor/editorSessionTypes';
 import type {Dialog} from '../features/editor/editorDialogTypes';
 import {useDocumentPersistence} from '../features/files/useDocumentPersistence';
+import {listNormalizationEvent} from '../features/editor/normalizeOrderedLists';
 import {useFileActions} from '../features/files/useFileActions';
 import {useViewSnapshots} from '../features/workspace/useViewSnapshots';
 import {PanelFrame,PanelControls,emptyPanelFooter,type PanelChrome} from '../features/workspace/PanelFrame';
@@ -449,7 +450,8 @@ function WritingApp({initialPlacement,capturePlacement}:{
     try{
       for(const other of sessions.current.values()){
         if(other===session||other.disk?.path!==session.disk?.path||!other.state?.doc.eq(transaction.startState.doc))continue;
-        const effect={changes:transaction.changes,userEvent:'input.shared-document'};
+        const annotations=transaction.isUserEvent(listNormalizationEvent)?Transaction.addToHistory.of(false):undefined;
+        const effect={changes:transaction.changes,userEvent:'input.shared-document',annotations};
         if(other.view)other.view.dispatch(effect);
         else applyStored(other,other.state.update(effect),false);
       }
@@ -480,7 +482,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
   const {savingPaths,fileConflicts,saveSession,applyDiskFile}=useDocumentPersistence({
     api, appAlive, workspace: fileWorkspace.info, sessions, switching, structuring,
     fileBusy, tick, autoSave: fileWorkspace.info.autoSave, pendingProposal,
-    setFileBusy, setEntries, setError, inform, redraw, onStoredChange: handleStoredChange,
+    setFileBusy, setEntries, setError, inform, redraw, onStoredChange: handleStoredChange,applyFormatting:applyNoteTransaction,
   });
   const onUpdate = useCallback((update: ViewUpdate) => {
     annotations.map("document", update);
@@ -573,8 +575,10 @@ function WritingApp({initialPlacement,capturePlacement}:{
       try {
         for (const other of sessions.current.values()) {
           if (other.id === id || other.disk?.path !== session.disk.path || !other.state?.doc.eq(update.startState.doc)) continue;
-          if (other.view) other.view.dispatch({changes:update.changes,userEvent:"input.shared-document"});
-          else {const transaction=other.state.update({changes:update.changes,userEvent:'input.shared-document'});other.state=transaction.state;other.contentVersion=(other.contentVersion||0)+1;other.dirty=!documentMatchesText(other.state.doc,other.disk.text);mapStoredSessionContext(other.context,transaction);handleStoredChange(other.id,transaction,activeSession.current!==id);}
+          const annotations=update.transactions.some(transaction=>transaction.isUserEvent(listNormalizationEvent))?Transaction.addToHistory.of(false):undefined;
+          const effect={changes:update.changes,userEvent:'input.shared-document',annotations};
+          if (other.view) other.view.dispatch(effect);
+          else {const transaction=other.state.update(effect);other.state=transaction.state;other.contentVersion=(other.contentVersion||0)+1;other.dirty=!documentMatchesText(other.state.doc,other.disk.text);mapStoredSessionContext(other.context,transaction);handleStoredChange(other.id,transaction,activeSession.current!==id);}
         }
       } finally { syncingSessions.current = false; }
     }
@@ -847,7 +851,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
       };
     },
     proposal, undo, prompt, dialog, running, requestAnchor, structuring, switching, viewApplying,
-    creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,
+    creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,applyFormatting:applyNoteTransaction,
     onApplied:(action,result,actor)=>{
       if(result.type==='folder'){
         if((action.action==='rename'||action.action==='move')&&result.from)quickOpen.updatePath(result.from,result.path);

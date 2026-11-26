@@ -1,6 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import type {DependencyList,EffectCallback} from 'react';
 import {EditorState} from '@codemirror/state';
+import {history,undo,undoDepth} from '@codemirror/commands';
 import {useDocumentPersistence} from './useDocumentPersistence';
 import type {EditorSession} from '../editor/editorSessionTypes';
 import type {DiskFile} from '../../shared/fileTypes';
@@ -38,7 +39,7 @@ function fixture(){
         replayEffects:()=>{for(const slot of hooks.slots)if(slot?.create){slot.cleanup?.();slot.cleanup=slot.create()||undefined;}},
         response:(files:unknown[],extra:object={})=>({workspace:options.workspace,treeVersion:'opaque',files,...extra})};
 }
-afterEach(()=>{for(const slot of hooks.slots)slot?.cleanup?.();vi.useRealTimers();vi.clearAllMocks();});
+afterEach(()=>{for(const slot of hooks.slots)slot?.cleanup?.();vi.useRealTimers();vi.clearAllMocks();vi.unstubAllGlobals();});
 
 it('adopts the committed baseline when only the file-time record failed', async () => {
     const t = fixture();
@@ -52,6 +53,70 @@ it('adopts the committed baseline when only the file-time record failed', async 
     expect(t.session.dirty).toBe(false);
     expect(t.options.inform).toHaveBeenCalledWith(warning);
     expect(t.options.setError).not.toHaveBeenCalled();
+});
+
+it('writes a normalized snapshot and maps the stored selection and prior undo after success',async()=>{
+    const t=fixture(),raw='1. Alpha\n3. Charlie\n';
+    t.session.state=EditorState.create({doc:raw,extensions:history()}).update({
+        changes:{from:raw.length,insert:'\nNew paragraph'},selection:{anchor:raw.length+6},userEvent:'input.type',
+    }).state;
+    t.session.dirty=true;
+    const before=t.session.state,pending=deferred<unknown>();
+    t.options.api.mockReturnValueOnce(pending.promise);
+    const saving=t.result.saveSession('editor',true);
+    expect(t.options.api).toHaveBeenCalledWith('/file',expect.objectContaining({text:'1. Alpha\n2. Charlie\n\nNew paragraph',baseline:'baseline'}));
+    expect(t.session.state).toBe(before);
+    pending.resolve({path:'draft.md',hash:'normalized'});
+    await expect(saving).resolves.toBe(true);
+    expect(t.session.state?.doc.toString()).toBe(t.session.disk?.text);
+    expect(t.session.state?.selection.main.anchor).toBe(before.selection.main.anchor);
+    expect(undoDepth(t.session.state!)).toBe(1);
+    expect(t.session.dirty).toBe(false);
+    expect(undo({state:t.session.state!,dispatch:tr=>{t.session.state=tr.state;}})).toBe(true);
+    expect(t.session.state?.doc.toString()).toBe('1. Alpha\n2. Charlie\n');
+});
+
+it('keeps the editor and undo untouched after a save failure and preserves concurrent edits after a retry',async()=>{
+    const t=fixture(),raw='1) First\n4) Second\n';
+    t.session.state=EditorState.create({doc:raw,extensions:history()}).update({
+        changes:{from:raw.length,insert:'\nBefore save'},userEvent:'input.type',
+    }).state;
+    t.session.dirty=true;
+    const original=t.session.state;
+    t.options.api.mockRejectedValueOnce(new Error('Disk conflict'));
+    await expect(t.result.saveSession('editor',true)).resolves.toBe(false);
+    expect(t.session.state).toBe(original);
+    expect(t.session.disk?.hash).toBe('baseline');
+    expect(undoDepth(t.session.state)).toBe(1);
+    const pending=deferred<unknown>();
+    t.options.api.mockReturnValueOnce(pending.promise);
+    const saving=t.result.saveSession('editor',true);
+    t.session.state=original.update({changes:{from:original.doc.length,insert:'\nWhile saving'},userEvent:'input.type'}).state;
+    pending.resolve({path:'draft.md',hash:'normalized'});
+    await expect(saving).resolves.toBe(true);
+    expect(t.session.disk?.text).toBe('1) First\n2) Second\n\nBefore save');
+    expect(t.session.state?.doc.toString()).toBe(raw+'\nBefore save\nWhile saving');
+    expect(t.session.dirty).toBe(true);
+});
+
+it('autosaves and writes an editable external Markdown through the same normalization',async()=>{
+    const t=fixture(),raw='9) First\n1) Second\n',expected='9) First\n10) Second\n';
+    t.session.state=EditorState.create({doc:raw});t.session.dirty=true;
+    t.options.autoSave=true;t.options.tick++;t.render();
+    t.options.api.mockResolvedValueOnce({path:'draft.md',hash:'auto'});
+    await vi.advanceTimersByTimeAsync(900);
+    expect(t.session.state?.doc.toString()).toBe(expected);
+    expect(t.session.disk?.text).toBe(expected);
+    const external=vi.fn(async()=>({path:'D:/external.md',hash:'external'}));
+    vi.stubGlobal('window',{hiveDesktop:{saveLocalMarkdown:external}});
+    t.session.disk=null;
+    t.session.external={editable:true,disk:{...disk(raw),path:'D:/external.md',eol:'CRLF',bom:true}};
+    t.session.state=EditorState.create({doc:raw});t.session.dirty=true;
+    await expect(t.result.saveSession('editor')).resolves.toBe(true);
+    expect(external).toHaveBeenCalledWith({path:'D:/external.md',text:expected,baseline:'baseline',eol:'CRLF',bom:true});
+    expect(t.session.external.disk.text).toBe(expected);
+    expect(t.session.state?.doc.toString()).toBe(expected);
+    expect(t.session.dirty).toBe(false);
 });
 
 it('ignores a save receipt after switching repositories with the same open path', async () => {

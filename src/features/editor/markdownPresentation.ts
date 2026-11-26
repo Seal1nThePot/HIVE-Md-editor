@@ -6,7 +6,7 @@ import {markdownTree} from './markdownParse';
 import {scanMath,mergeSourceSpans,outsideMath,type SourceSpan} from './mathSyntax';
 import {paragraphTypographyStyles} from '../typography/paragraphTypography';
 import {fencedCodeBody} from './codeHighlight';
-import {listItemMarker} from './listStructure';
+import {listItemMarker,orderedListMarkers} from './listStructure';
 
 type Span={from:number;to:number};
 type Node=SyntaxNode;
@@ -106,16 +106,11 @@ export function previewPlan(state:EditorState):PreviewPlan{
     hide(to-spaces,to,reveal,{list:'padding'});
   };
   function orderedLabels(items:Node[]){
-    const markers=items.flatMap(item=>{
-      const mark=item.name==='ListItem'?item.getChild('ListMark'):null;
-      return mark?[{from:item.from,raw:text.slice(mark.from,mark.to)}]:[];
-    });
+    const markers=orderedListMarkers(doc,items);
     if(!markers.length)return new Map<number,ListLabel>();
-    const first=markers[0].raw,start=Number(first.slice(0,-1)),delimiter=first.at(-1);
-    const labels=markers.map(({raw},index)=>({raw,label:String(start+index)+delimiter}));
-    const length=labels.reduce((max,entry)=>Math.max(max,entry.raw.length,entry.label.length),0);
+    const length=markers.reduce((max,entry)=>Math.max(max,entry.raw.length,entry.label.length),0);
     const width='max(1.4em, '+(length+1)+'ch)';
-    return new Map(markers.map((item,index)=>[item.from,{text:labels[index].label,width}]));
+    return new Map(markers.map(entry=>[entry.item.from,{text:entry.label,width}]));
   }
   function joinClosingPunctuation(from:number,to:number,after:number,inlineCode?:true){
     const line=doc.lineAt(after);

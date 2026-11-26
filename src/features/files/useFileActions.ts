@@ -6,6 +6,9 @@ import {workspaceTreeSync} from './workspaceSync';
 import {isImagePath} from './fileKinds';
 import {localDocumentError,writeDocument} from './writeDocument';
 import {isDrivePath} from './localDocumentPath';
+import {Transaction,type ChangeSet} from '@codemirror/state';
+import {listNormalizationEvent,normalizeOrderedLists} from '../editor/normalizeOrderedLists';
+import {mapStoredSessionContext} from '../editor/storedDocumentChanges';
 import type { Dispatch, FormEvent, RefObject, SetStateAction } from 'react';
 import { flushSync } from 'react-dom';
 import type { ApiClient } from '../../shared/api';
@@ -49,6 +52,7 @@ type FileActionsOptions = {
     saveSession: (id: string, quiet?: boolean) => Promise<boolean>;
     finalizeTrashedSessions: (sessions: EditorSession[], safe: (session: EditorSession) => boolean) => number;
     applyDiskFile: (data: DiskFile) => void;
+    applyFormatting?:(session:EditorSession,transaction:Transaction)=>void;
     annotations: ReturnType<typeof useTextAnnotations>;
     references: ReturnType<typeof useReferenceSources>;
     bindings: (id: string) => { onUpdate: any };
@@ -476,10 +480,25 @@ export function useFileActions(options: FileActionsOptions) {
         const remove=()=>fileWorkspace.manage({action:'remove',id});
         return id===fileWorkspace.info.id?withWorkspaceSwitch(remove):remove();
     }
-    function bindSavedFile(data:DiskFile,targetId:string){
+    function bindSavedFile(data:DiskFile,targetId:string,formatting?:ChangeSet){
         const session=sessions.current.get(targetId)!;
-        session.disk=data;session.dirty=false;session.landing=false;session.contentVersion=(session.contentVersion||0)+1;
-        redraw();
+        const state=session.view?.state??session.state;
+        session.disk=data;session.landing=false;session.contentVersion=(session.contentVersion||0)+1;
+        try{
+            if(state&&formatting&&!formatting.empty){
+                // Bind the copy first so its change does not mirror to tabs of the old file.
+                const transaction=state.update({
+                    changes:formatting,userEvent:listNormalizationEvent,annotations:Transaction.addToHistory.of(false),
+                });
+                if(options.applyFormatting)options.applyFormatting(session,transaction);
+                else if(session.view)session.view.dispatch(transaction);
+                else {session.state=transaction.state;mapStoredSessionContext(session.context,transaction);}
+            }
+        }finally{
+            const current=session.view?.state??session.state;
+            session.dirty=!!current&&!documentMatchesText(current.doc,data.text);
+            redraw();
+        }
     }
     async function submitDialog(event:FormEvent){
         event.preventDefault();
@@ -507,15 +526,22 @@ export function useFileActions(options: FileActionsOptions) {
                 if(!path.endsWith('.md'))path+='.md';
                 const state=target?.view?.state ?? target?.state;
                 if(dialog.kind==='saveAs'&&!state)throw new Error('没有可另存的正文，当前内容仍保留。');
-                const text=dialog.kind==='saveAs'?state!.doc.toString():`# ${path.split('/').at(-1)!.replace(/\.md$/i,'')}\n\n`;
+                const normalization=dialog.kind==='saveAs'&&state?normalizeOrderedLists(state):undefined;
+                const formatting=normalization?.changes;
+                if(formatting&&!formatting.empty&&target?.view?.composing)throw new Error('请先完成输入法组词，再另存有序列表。');
+                const text=formatting?formatting.apply(state!.doc).toString():`# ${path.split('/').at(-1)!.replace(/\.md$/i,'')}\n\n`;
                 if(!allowed())return;
                 const saved=await writeDocument(api,{path,text,baseline:null,eol:source?.eol||'LF',bom:false});
                 completed = saved.warning ?? completed;
+                if(normalization?.skipped)completed+=' 部分有序列表保留原编号，以维持 Markdown 层级和语法。';
                 if(!allowed())return;
                 const data=await api<DiskFile>('/file?path='+encodeURIComponent(path));
                 if(!allowed())return;
                 if(data.hash!==saved.hash)throw new Error('新文件在读取前发生外部变化，当前正文未替换，请从文件列表核对。');
-                if(dialog.kind==='saveAs')bindSavedFile(data,targetId);else showFile(data,targetId);
+                if(dialog.kind==='saveAs'){
+                    if(formatting&&!formatting.empty&&target?.view?.composing)throw new Error('副本已保存。请先完成输入法组词再打开副本。');
+                    bindSavedFile(data,targetId,formatting);
+                }else showFile(data,targetId);
             }
             if(!scope())return;
             await refresh();if(!scope()||!dialogUnchanged())return;setDialog(null);inform(completed);
