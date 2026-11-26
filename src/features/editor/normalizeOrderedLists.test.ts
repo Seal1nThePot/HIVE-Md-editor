@@ -44,4 +44,11 @@ describe('normalize saved ordered lists',()=>{
     const task='1. [x] Done\n7. [ ] Next\n';
     expect(normalize(task)).toMatchObject({text:'1. [x] Done\n2. [ ] Next\n',skipped:false});
   });
+
+  it('pads a shrinking marker when a shorter content column would absorb adjacent root blocks',()=>{
+    const doc='1. A\n10. B\n   continuation\n\n   - root item\n\n   ```md\n   1. literal\n   ```';
+    const result=normalize(doc);
+    expect(result).toMatchObject({text:doc.replace('10. B','2.  B'),skipped:false});
+    expect(result.structure).toBe(result.oldStructure);
+  });
 });
