@@ -14,7 +14,8 @@ export function openPanelContextMenu(document:Document,id:string,x:number,y:numb
     if(button){const event=new document.defaultView!.MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:2});button.dispatchEvent(event);}
   },0);
 }
-export default function PanelControl({ label, panelId, floating, onToggleFloat, onOpen, onClose, onMinimize, collapseEdge, primary=false, movable=true, canDock=true, actions=[], memberActions, detached=false, floatAction, actionsOnly=false }: {
+export default function PanelControl({ label, panelId, floating, onToggleFloat, onOpen, onClose, onMinimize, collapseEdge, primary=false, movable=true, canDock=true, actions=[], memberActions, detached=false, floatAction, actionsOnly=false, onCloseCurrent=onClose, closeCurrentDisabled=primary }: {
+  onCloseCurrent?:()=>void;closeCurrentDisabled?:boolean;
   panelId?:string;
   label: string; floating: boolean;
   onToggleFloat: () => void; onOpen:()=>void;onClose: () => void;
@@ -69,7 +70,7 @@ export default function PanelControl({ label, panelId, floating, onToggleFloat, 
   },[open, document, window]);
   return <div className="panel-controls" data-no-drag onPointerDown={event=>event.stopPropagation()} onDoubleClick={event=>event.stopPropagation()}>
     {!actionsOnly&&(!primary||detached)&&<button type="button" className="panel-mini-button" aria-label={`收纳${label}面板`} title="收纳到主窗口侧栏" onClick={onMinimize}><CollapseIcon size={11}/></button>}
-    {!actionsOnly&&!detached&&floating&&<button type="button" className="panel-mini-button panel-close-button" aria-label={`关闭${label}面板`} title="关闭面板" onClick={onClose}><X size={11}/></button>}
+
     <button type="button" ref={button} className="panel-mini-button panel-menu-button" data-panel-menu-id={panelId} data-panel-control aria-label={`${label}面板功能`}
       title="面板功能 · 单击展开" aria-haspopup="menu" aria-expanded={open}
       onClick={()=>{setContextAnchor(null);setOpen(value=>!value);}}
@@ -77,6 +78,7 @@ export default function PanelControl({ label, panelId, floating, onToggleFloat, 
       >
       <Menu size={11}/>
     </button>
+    <button type="button" className="panel-mini-button panel-close-button" aria-label={`关闭${label}面板`} disabled={closeCurrentDisabled} title={closeCurrentDisabled?'主编辑区需保持打开':'关闭当前面板'} onClick={onCloseCurrent}><X size={11}/></button>
     {open&&createPortal(<div ref={menu} className="panel-action-rail vertical" role="menu" aria-label={`${label}面板操作`} style={{left:position.x,top:position.y,width:position.width,maxHeight:position.height}}
       onContextMenu={event=>event.preventDefault()}
       onKeyDown={event=>{
