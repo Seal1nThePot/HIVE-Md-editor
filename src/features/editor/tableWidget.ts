@@ -72,10 +72,18 @@ function tableColumns(table:HTMLTableElement,controller:Controller){
   }
   if(group.children.length!==defaults.length)return;
   const window=controller.root.ownerDocument.defaultView!;
-  const rootStyle=window.getComputedStyle(controller.root);
+  // WidgetType.toDOM runs while root is detached. Seed its first layout from the
+  // attached editor so CodeMirror never measures an artificial minimum-width table.
+  const attached=controller.root.isConnected;
+  const content=controller.view.contentDOM;
+  const rootStyle=window.getComputedStyle(attached?controller.root:content);
   const tableStyle=window.getComputedStyle(table);
   const fontSize=Number.parseFloat(rootStyle.fontSize)||16;
-  const available=Math.max(0,controller.root.clientWidth-(Number.parseFloat(tableStyle.marginLeft)||0)-(Number.parseFloat(tableStyle.marginRight)||0)-1);
+  const viewportWidth=attached?controller.root.clientWidth:content.clientWidth;
+  const pageMargin=Math.max(12,Math.min(50,viewportWidth*.064));
+  const marginLeft=attached?Number.parseFloat(tableStyle.marginLeft)||pageMargin:pageMargin;
+  const marginRight=attached?Number.parseFloat(tableStyle.marginRight)||pageMargin:pageMargin;
+  const available=Math.max(0,viewportWidth-marginLeft-marginRight-1);
   const widths=fitTableWidths(defaults,controller.sizes.widths,available,fontSize).map(width=>`${width}px`);
   for(let col=0;col<widths.length;col++){
     const column=group.children[col] as HTMLElement;
