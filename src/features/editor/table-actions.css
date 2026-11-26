@@ -29,7 +29,7 @@
 .cm-table-context-menu button:disabled{opacity:.45;cursor:default}
 .cm-editor .cm-table-widget textarea{height:auto;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere}
 .cm-table-status:empty{display:none}
-.cm-editor :is(.cm-table-widget,.cm-table-sticky) .cm-table-cell-preview{min-height:24px;white-space:pre-wrap;overflow-wrap:anywhere}
+.cm-editor :is(.cm-table-widget,.cm-table-sticky) .cm-table-cell-preview{min-height:1.35em;white-space:pre-wrap;overflow-wrap:anywhere}
 .cm-editor .cm-table-widget .cm-table-cell-preview{user-select:text;cursor:text;outline-offset:2px}
 .cm-editor .cm-table-widget .cm-table-cell-preview::selection,.cm-editor .cm-table-widget .cm-table-cell-preview ::selection{background:var(--hive-editor-selection-background);color:var(--hive-editor-selection-text)}
 .cm-editor :is(.cm-table-widget,.cm-table-sticky) .cm-table-cell-preview code{font-family:monospace;background:color-mix(in srgb, currentColor 9%, transparent);border-radius:3px;padding:0 2px}

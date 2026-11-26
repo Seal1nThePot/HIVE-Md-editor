@@ -28,6 +28,11 @@ describe('typography display preferences',()=>{
     expect(normalizeTypography({version:1,preset:'novel',maxWidth:Infinity,lineHeight:-2,paragraphSpacing:9,firstLineIndent:'true'})).toEqual({...applyTypographyPreset('novel'),lineHeight:1.2,paragraphSpacing:2});
     expect(normalizeTypography({version:1,preset:'__proto__'}).preset).toBe('original');
   });
+  it('defaults legacy tables to compact and preserves independent density through prose presets',()=>{
+    expect(normalizeTypography({version:1}).tableDensity).toBe('compact');
+    expect(normalizeTypography({version:1,tableDensity:'standard'}).tableDensity).toBe('standard');
+    expect(applyTypographyPreset('novel','standard').tableDensity).toBe('standard');
+  });
   it('supports customizing and restoring each complete preset independently',()=>{
     for(const preset of ['original','novel','brief','article'] as const){const base=applyTypographyPreset(preset);expect(isTypographyCustomized(base)).toBe(false);expect(isTypographyCustomized({...base,maxWidth:base.maxWidth+10})).toBe(true);expect(applyTypographyPreset(preset)).toEqual(base);}
   });
