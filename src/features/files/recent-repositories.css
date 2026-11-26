@@ -31,4 +31,12 @@
 .recent-repositories-menu > button[aria-current=true] { font-weight: 600; }
 .recent-repositories-menu > button > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-repositories-menu > button > svg { flex: none; }
-.recent-repositories-menu > .recent-repositories-manage { border-top: 1px solid var(--hive-popup-border,var(--line)); border-radius: 0 0 4px 4px; margin-top: 4px; }
+.recent-repositories-menu > .recent-repositories-manage {
+  gap: 4px;
+  min-height: calc(28px * var(--ui-scale,1));
+  padding-block: 3px;
+  border-top: 1px solid var(--hive-popup-border,var(--line));
+  border-radius: 0 0 4px 4px;
+  margin-top: 3px;
+}
+.recent-repositories-manage > span { letter-spacing: -0.02em; }
