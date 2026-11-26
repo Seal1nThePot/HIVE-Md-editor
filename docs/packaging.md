@@ -1,6 +1,18 @@
-# HIVE 0.1.6 桌面封装（2026-11-19）
+# HIVE 0.1.9 桌面封装
 
-> 本版交付 Electron 45 的 Windows x64 文件夹包。用 `npm run desktop:folder` 构建到 `release/win-unpacked`，用项目根目录的 `启动HIVE.cmd` 启动，以本版独立资料目录运行。发布验证见 [实施记录](../架构意见-0.1.5实测与0.1.6结构约束.md)。
+`npm run desktop:folder` 生成 Windows x64 目录包。默认输出为项目同级 `.work/019-csharp-backend/release/win-unpacked`。目录中运行 `HIVE markdown editor.exe`。发行包包含 .NET 运行时。完整命令见 [运行手册](runbook.md)。
+
+`resources/app.asar` 包含 Electron 外壳和前端构建资源。`resources/backend` 包含 C# 自包含程序和 `app` 资源目录。C# 从该目录加载前端、模板、图标、示例清单和构建记录。源码中的 JavaScript 服务模块用于旧行为对照和回归测试。
+
+Electron 主进程直接启动 `resources/backend/Hive.Backend.exe`。Kestrel 绑定 IPv4 环回随机端口，并向标准输出发送包含端口与 PID 的 `hive-ready`。偏好、仓库外文稿和更新通过私有 JSON 管道调用。文件夹选择与系统资源管理器仍由 Electron 提供。开发模式另由 Vite 托管前端，`/api` 代理给相同的 C# 服务。
+
+界面偏好由 `preload.cjs` 收集和恢复，`NativeData.cs` 验证与原子写入。退出时先等渲染端保存和偏好写入，再通知 C# 服务关闭。服务收到关闭消息或管道 EOF 时停止。桌面资料默认沿用 `%APPDATA%\HIVE`，隔离运行可设 `HIVE_DESKTOP_USER_DATA`。
+
+0.1.9 更新包包含 `app.asar` 和完整后端资源。首次由 0.1.8 切换时使用完整目录包。后续更新细节见 [构建记录与更新](build-info.md)。
+
+## 0.1.6 封装与窗口协议记录
+
+以下是 0.1.6 封装与窗口协议的历史记录。当前构建和服务启动以本页开头及运行手册为准。
 
 ## 1. 目录与命令
 

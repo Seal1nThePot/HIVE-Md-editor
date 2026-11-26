@@ -48,16 +48,14 @@ HIVE 是面向写作与笔记的桌面 Markdown 编辑器。把现有文件夹�
 
 ## 从源码运行
 
-发布标签保留了与 Windows 包对应的源码。使用 Node.js 22.12 或更新版本。
+公开发行标签保留了对应 Windows 包的源码。本仓库的 0.1.9 开发分支使用 Node.js 24 和 .NET 11 SDK。从当前检出目录运行下列命令。
 
 ```powershell
-git clone --branch v0.1.8 https://github.com/Seal1nThePot/HIVE-Md-editor.git
-cd HIVE-Md-editor
 npm ci
 npm run desktop:dev
 ```
 
-执行 `npm run desktop:folder` 可生成 Windows 目录包。 [架构说明](docs/architecture.md) · [更新日志](docs/CHANGELOG.md)
+执行 `npm run desktop:folder` 可生成 Windows x64 目录包。运行包自带 .NET 运行时。 [运行手册](docs/runbook.md) · [架构说明](docs/architecture.md) · [更新日志](docs/CHANGELOG.md)
 
 ## 许可证
 

@@ -4,10 +4,11 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
-import {fork,spawn} from 'node:child_process';
+import {spawn} from 'node:child_process';
+import {launchBackend,workspaceBuildPaths} from '../desktop/backendProcess.mjs';
 
 const project=fileURLToPath(new URL('../',import.meta.url));
-const output=path.resolve(project,process.env.HIVE_EDITOR_OUTPUT||'delivery/editor-enhancements-20261118');
+const output=path.resolve(process.env.HIVE_EDITOR_OUTPUT||path.join(workspaceBuildPaths(project).work,'evidence','editor'));
 const require=createRequire(import.meta.url),packaged=process.env.HIVE_EDITOR_PACKAGE;
 const prefix=packaged?'packaged-app':'built-app';
 
@@ -83,11 +84,9 @@ if(process.argv.includes('--worker')){
     await fs.writeFile(path.join(root,'另一篇.md'),'# 第二篇\n\n第二篇独有内容。\n');
     await fs.writeFile(path.join(root,'验收.md'),'# 正文功能验收\n\n![[图片 中文.png]]\n\n- [ ] 验收待办\n\n| 标题甲 | 标题乙 |\n| :--- | ---: |\n| 内容甲 | 内容乙 |\n\n$$\n\\begin{aligned}\na &= b + c \\\\\n  &= d + e\n\\end{aligned}\n$$\n\n验收结束。\n');
     const packageRoot=packaged?path.resolve(packaged,'win-unpacked'):null;
-    const executable=packageRoot?path.join(packageRoot,'HIVE markdown editor.exe'):process.execPath;
-    const backend=packageRoot?path.join(packageRoot,'resources/app.asar/server/index.mjs'):path.join(project,'server/index.mjs');
-    server=fork(backend,['--production'],{execPath:executable,cwd:project,silent:true,windowsHide:true,env:{...process.env,...(packaged?{ELECTRON_RUN_AS_NODE:'1'}:{}),HIVE_PORT:'0',HIVE_DOCUMENTS:root,HIVE_STATE_DIR:path.join(temporary,'state'),HIVE_API_KEY:''}});
-    server.stdout.on('data',data=>serverLog+=data);server.stderr.on('data',data=>serverLog+=data);
-    const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Server startup timeout')),15000);server.once('error',error=>{clearTimeout(timer);reject(error);});server.once('exit',code=>{clearTimeout(timer);reject(new Error('Server exited '+code+'\n'+serverLog));});server.on('message',message=>{if(message?.type==='hive-ready'){clearTimeout(timer);resolve(message.port);}});});
+    const resources=packageRoot?path.join(packageRoot,'resources'):undefined;
+    server=launchBackend({root:project,resources,env:{HIVE_PORT:'0',HIVE_DOCUMENTS:root,HIVE_STATE_DIR:path.join(temporary,'state'),HIVE_API_KEY:''},onLine:line=>serverLog+=line+'\n',onError:line=>serverLog+=line});
+    const {port}=await server.ready;
     const environment={...process.env};delete environment.ELECTRON_RUN_AS_NODE;
     const child=spawn((await import('electron')).default,[fileURLToPath(import.meta.url),'--worker',String(port),temporary],{cwd:project,windowsHide:true,env:environment,stdio:['ignore','pipe','pipe']});
     let log='';child.stdout.on('data',data=>{log+=data;process.stdout.write(data);});child.stderr.on('data',data=>{log+=data;process.stderr.write(data);});
@@ -96,7 +95,7 @@ if(process.argv.includes('--worker')){
     assert.equal(code,0,'Complete app validation failed');
   }finally{
     await fs.writeFile(path.join(output,prefix+'-server.log'),serverLog);
-    if(server&&server.exitCode===null)await new Promise(resolve=>{server.once('exit',resolve);server.kill();});
+    await server?.stop();
     const resolved=path.resolve(temporary);assert.equal(path.dirname(resolved),path.resolve(output));assert.ok(path.basename(resolved).startsWith('.app-check-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:100});
   }
 }

@@ -4,11 +4,13 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
-import {fork,spawn} from 'node:child_process';
+import {spawn} from 'node:child_process';
+import {launchBackend,workspaceBuildPaths} from '../desktop/backendProcess.mjs';
 const project=fileURLToPath(new URL('../',import.meta.url)),require=createRequire(import.meta.url);
 const pkg=JSON.parse(await fs.readFile(path.join(project,'package.json'),'utf8'));
-const output=path.resolve(process.env.HIVE_VERIFY_OUTPUT||path.join(project,'.runtime/checks'));
-const packaged=process.argv.includes('--package'),bundle=path.resolve(process.env.HIVE_VERIFY_BUNDLE||path.join(project,'release')),prefix=packaged?'packaged':'source';
+const paths=workspaceBuildPaths(project);
+const output=path.resolve(process.env.HIVE_VERIFY_OUTPUT||path.join(paths.work,'evidence','ui'));
+const packaged=process.argv.includes('--package'),bundle=path.resolve(process.env.HIVE_VERIFY_BUNDLE||paths.release),prefix=packaged?'packaged':'source';
 async function worker(){
   const {app,BrowserWindow}=require('electron');app.setPath('userData',path.join(process.argv.at(-1),'profile'));app.disableHardwareAcceleration();await app.whenReady();
   const win=new BrowserWindow({show:false,focusable:false,skipTaskbar:true,width:1600,height:1050,webPreferences:{offscreen:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
@@ -307,12 +309,13 @@ else{
     await fs.writeFile(path.join(docs,'编辑显示验收.md'),['正文 <mark>主题高亮</mark>。','',fence+'csharp','log 1','','log 2',fence,'','代码后正文。'].join('\n'));
     const paragraph='这是用于整合验证的中文与 English mixed text，数字 12345、标点和很长的网址 https://example.org/research/2026/notes?language=English&version=12345 都保持原文。';
     await fs.writeFile(path.join(docs,'整合验收.md'),'# 整合验收\n\n> **最终入口：** '+paragraph.repeat(2)+'\n\n![[示例 图.png]]\n\n- [ ] 整合待办\n\n| 标题甲 | 标题乙 |\n| :--- | ---: |\n| 内容甲 | 内容乙 |\n\n这是本轮合成资料，不含用户文稿。\n');
-    const appRoot=packaged?path.join(bundle,'win-unpacked'):null,backend=appRoot?path.join(appRoot,'resources/app.asar/server/index.mjs'):path.join(project,'server/index.mjs');
-    server=fork(backend,['--production'],{execPath:appRoot?path.join(appRoot,'HIVE markdown editor.exe'):process.execPath,cwd:project,silent:true,windowsHide:true,env:{...process.env,...(appRoot?{ELECTRON_RUN_AS_NODE:'1'}:{}),HIVE_PORT:'0',HIVE_DOCUMENTS:docs,HIVE_STATE_DIR:path.join(temp,'state'),HIVE_API_KEY:''}});server.stdout.on('data',v=>serverLog+=v);server.stderr.on('data',v=>serverLog+=v);
-    const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Integrated backend timeout')),15000);server.once('error',reject);server.once('exit',code=>{clearTimeout(timer);reject(new Error('Integrated backend exited '+code+'\n'+serverLog));});server.on('message',m=>{if(m?.type==='hive-ready'){clearTimeout(timer);resolve(m.port);}});});
+    const resources=packaged?path.join(bundle,'win-unpacked','resources'):undefined;
+    server=launchBackend({root:project,resources,env:{HIVE_PORT:'0',HIVE_DOCUMENTS:docs,HIVE_STATE_DIR:path.join(temp,'state'),HIVE_API_KEY:''},onLine:line=>serverLog+=line+'\n',onError:line=>serverLog+=line});
+    const backend=await server.ready;
+    const {port}=backend;
     const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
     const hostFlags=env.HIVE_TEST_ELECTRON_NO_SANDBOX==='1'?['--no-sandbox']:[];
     const child=spawn((await import('electron')).default,[...hostFlags,fileURLToPath(import.meta.url),'--integrated-worker',...(packaged?['--package']:[]),String(port),temp],{cwd:project,windowsHide:true,env,stdio:['ignore','pipe','pipe']});let log='';child.stdout.on('data',v=>log+=v);child.stderr.on('data',v=>log+=v);
     const code=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{child.kill();reject(new Error('Integrated UI timeout'));},45000);child.once('error',reject);child.once('exit',code=>{clearTimeout(timer);resolve(code);});});await fs.writeFile(path.join(output,prefix+'-app.log'),log);console.log(log);assert.equal(code,0);
-  }finally{await fs.writeFile(path.join(output,prefix+'-server.log'),serverLog);if(server&&server.exitCode===null)await new Promise(resolve=>{server.once('exit',resolve);server.kill();});const resolved=path.resolve(temp);assert.equal(path.dirname(resolved),path.resolve(output));assert.ok(path.basename(resolved).startsWith('.app-check-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
+  }finally{await fs.writeFile(path.join(output,prefix+'-server.log'),serverLog);await server?.stop();const resolved=path.resolve(temp);assert.equal(path.dirname(resolved),path.resolve(output));assert.ok(path.basename(resolved).startsWith('.app-check-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 }

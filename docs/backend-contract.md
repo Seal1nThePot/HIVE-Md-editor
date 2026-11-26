@@ -1,10 +1,14 @@
 # 后端契约
 
-## 0.1.6 文档保存与同步
+## 0.1.9 服务入口与兼容格式
 
-`server/index.mjs` 装配本机来源校验、写作空间上下文及同仓库请求队列。`server/document-routes.mjs` 接收正文、草稿、目录和同步请求，并把写入交给仓库的 `fileStore`。
+`backend/Program.cs` 装配 Kestrel、本机来源校验、写作空间上下文和请求队列。`Workspaces.cs` 管理仓库注册、切换和外置仓库清单。`Files.cs` 负责正文、草稿、目录快照和同步，`Explorer.cs` 负责结构操作和回收站。`Metadata.cs` 使用现有标注、写作大纲和创建时间 JSON 文件。历史记录、图片和参考附件分别由 `History.cs`、`Media.cs` 和 `References.cs` 管理。
 
-正文保存先核对磁盘基线，再写同目录暂存文件。发布前复查磁盘内容，已有文件用 `rename`，新文件用不覆盖同名目标的 `link`。最后一次复查与替换之间仍有外部写入的竞态窗口。
+`Models.cs`、`Generation.cs` 和 `AiTools.cs` 处理模型配置、生成和工具请求。模型配置与密钥沿用原状态目录及文件格式。主题和插件由 `CatalogService.cs` 及其存储模块实现。桌面主进程通过私有进程管道调用外部文稿、偏好和更新，保留现有渲染端 IPC 名称。桌面文件打开与保存需通过主窗口主 frame，仓库外保存还需有本次进程内打开记录和有效磁盘基线。
+
+## 文档保存与同步
+
+正文保存先核对磁盘基线，再写同目录暂存文件。发布前复查磁盘内容，已有文件使用原子替换，新文件使用不覆盖同名目标的硬链接。最后一次复查与替换之间仍有外部写入的竞态窗口。
 
 `POST /api/file` 和 `POST /api/scratch` 返回 `{path,hash}`。正文发布成功后若时间记录更新失败，响应额外带 `warning`。前端接受此次写入的基线，保存期间产生的编辑继续留在内存并保持未保存。
 
@@ -14,20 +18,18 @@
 
 `GET /api/tree` 返回完整的当前快照；`?refresh=1` 强制校验磁盘，复用仍在进行的扫描。`files.list()` 保持即时扫描兼容语义，供显式搜索与旧接口使用。扫描、保存与元数据写入沿用同仓库事务队列。
 
-`file-index.mjs` 管理单个在途更新、有界索引、目录监听和 60 秒兜底；变化使快照失效，下次请求重建过滤范围内的树，当前未实现逐目录补丁。`file-probe.mjs` 只为同步缓存属性/哈希，最多 100 项，30 秒重验内容，不缓存正文、不替代保存前检查。`file-times.mjs` 复用最多 16 MiB 状态文件的解析结果，磁盘签名变化或失败时失效。
+`Files.cs` 管理仓库扫描、目录监听和 60 秒兜底。变化使快照失效，下次请求重建过滤范围内的树。同步探测最多缓存 100 项属性与哈希，30 秒重验内容。保存始终重新核对磁盘基线。`FileTimes.cs` 复用最多 16 MiB 创建时间状态文件的解析结果，磁盘签名变化或读写失败时失效。
 
-切换仓库停止旧监听、释放索引与时间状态缓存；已捕获的请求仍只访问原仓库。退出等待 spaces.close() 回收资源。以下为前序协议说明，历史行数不作为当前定位依据。
+切换仓库停止旧监听并释放索引和同步探测缓存。已捕获的请求继续访问原仓库。退出时停止监听并回收服务资源。
 
-本地服务使用一个 Express 5 进程，由 `server/index.mjs` 启动。业务状态保存在磁盘，进程内保留队列、锁、API Key、回收站清理令牌与文件创建时间缓存。
-
-模块划分：`workspace.mjs` 组装各 store（`files` / `explorer` / `annotations` / `writing-nodes` / `outlines` / `spaces` / `model-config`），`trash-retention.mjs` 由 explorer 挂载，`file-times.mjs` 由 files 挂载，`references.mjs` 与 `generation-options.mjs` 是无状态纯函数，直接挂在路由上。
+本地 HTTP 服务绑定 `127.0.0.1`。命令行入口 `server/index.mjs` 启动同一个 C# 可执行程序，开发模式下另开 Vite 提供前端热更新。生产桌面直接启动包内 C# 可执行程序。磁盘保存业务状态，C# 进程管理队列、锁、模型密钥和回收站清理令牌。
 
 ## 1. 前置条件（每个 `/api/*` 请求都会过）
 
 1. **本机限定**：`Host` 必须是 `127.0.0.1:<port>` 或 `localhost:<port>`，否则 403 `只允许本机访问。`
 2. **来源校验**：带 `Origin` 时必须同源，否则 403 `请求来源不匹配。`
 3. **不缓存**：统一 `Cache-Control: no-store`。
-4. **JSON 上限 3 MB**：`express.json({limit:"3mb"})`（图片上传走 `express.raw`，另有 12 MB 上限）。
+4. **请求上限**。JSON 为 3 MiB，图片原始字节为 12 MiB，参考附件为 2,000,000 字节。
 5. **写作空间上下文**：路径首段属于 `workspaceRoutes`（`writing-outline / annotations / scratch / outline / tree / file / folder / rename / workspace / explorer / images / references`）时，按 `x-hive-workspace` 头取空间，过期即 409 `写作空间已在其他窗口切换。`
 6. **POST 串行化**：同一空间内的 POST（`/workspace/sync` 除外）在服务端排队，前一个响应结束才处理下一个——结构操作与元数据保存不会互相插队。
 
@@ -37,7 +39,7 @@
 
 | 方法 | 路径 | 入参 | 出参 |
 | --- | --- | --- | --- |
-| GET | `/api/health` | — | `{app:"hive-writing-prototype",pid,project,ready}` |
+| GET | `/api/health` | — | `{app:"hive-writing-prototype",pid,project,ready,backend:"dotnet"}`，PID 属于真实 C# 进程 |
 | GET | `/api/workspace` | — | `{id,root,defaultRepositoryId,autoSave,revision,repositories:[{id,root,name?}]}`。列表包含当前仓库和默认文档根。 |
 | POST | `/api/workspace` | `{root,autoSave,revision}` | 同 GET；`revision` 过期 → 409 |
 | POST | `/api/workspace/repositories` | `{action:"add"\|"rename"\|"remove"\|"reorder", revision, …}` | 同 GET。`add` 须现有普通目录（拒符号链接/junction），`rename` 备注 ≤80 单行，`reorder` 须全量 id。`remove` 仅移出登记，保留文件与元数据。默认文档根禁止移出。移出当前仓库时同一事务切回默认文档根。`revision` 过期 → 409。 |

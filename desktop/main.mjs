@@ -1,20 +1,16 @@
 import { app, BrowserWindow, dialog, ipcMain, screen, Menu, shell } from 'electron';
-import { fork } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import preferencesModule from './preferences.cjs';
+import { launchBackend } from './backendProcess.mjs';
 import windowPolicy from './windowPolicy.cjs';
 import {createPanelReadyHandler} from './panelReady.cjs';
 import {createPanelGeometry,createPanelRectHandler} from './panelGeometry.cjs';
 import {createTooltipManager} from './tooltipManager.cjs';
-import {resolveTemplateSource} from './templateSource.cjs';
 import {createRepositoryPicker} from './repositoryPicker.cjs';
-import {createAboutHandlers} from './about.cjs';
 import {createFileRevealHandler} from './fileReveal.cjs';
-import {createLocalUpdate,markUpdateReady} from './localUpdate.cjs';
+import { createUpdateBridge } from './updateBridge.cjs';
 import {dockIconPayload} from '../shared/iconPack.mjs';
 import {createExternalHttpLinkHandler} from './externalLinks.mjs';
-import {createLocalDocumentHandlers} from './localDocuments.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appIcon = path.join(root, 'assets', 'brand', 'hive.png');
@@ -27,7 +23,7 @@ app.setPath('userData', process.env.HIVE_DESKTOP_USER_DATA
   : path.join(app.getPath('appData'), 'HIVE'));
 const preload = path.join(root, 'desktop', 'preload.cjs');
 const handleExplorerRequest=createFileRevealHandler({shell});
-let service, mainWindow, origin, rendererReady = false, closePending = false, exiting = false, stoppingService = false;
+let service, devFront, mainWindow, origin, rendererReady = false, closePending = false, exiting = false;
 const childWindowSizes = new Map([
   ['outline-node-editor', {width:540,height:480,minWidth:350,minHeight:300}],
   ['custom-color-settings', {width:680,height:680,minWidth:400,minHeight:320}],
@@ -44,7 +40,7 @@ let panelDrag = null;
 let appActive = true, appBlurTimer;
 let closeTimer;
 let updateClose;
-let preferenceStore, initialPreferences = {};
+let preferenceWrites = Promise.resolve(), initialPreferences = {};
 let startupThemeReady, mainWindowPresented = false;
 let dockWindow, dockData = null, dockLoaded = false;
 let dockGlyphs=dockIconPayload(),sentDockGlyphs;
@@ -154,15 +150,7 @@ function secureWindow(window, primary = false, entry = '') {
   });
 }
 async function stopService() {
-  if (!service || service.exitCode !== null || service.signalCode !== null) return;
-  stoppingService = true;
-  await new Promise(resolve => {
-    const child = service;
-    const timer = setTimeout(() => { child.kill(); resolve(); }, 3000);
-    child.once('exit', () => { clearTimeout(timer); resolve(); });
-    if (child.connected) child.send({ type: 'hive-shutdown' }, error => { if (error) child.kill(); });
-    else child.kill();
-  });
+  await Promise.all([devFront?.close(), service?.stop()]);
 }
 async function completeExit() {
   if (exiting) return;
@@ -170,56 +158,67 @@ async function completeExit() {
   cancelPanelDrag();
   exiting = true;
   for (const window of BrowserWindow.getAllWindows()) window.destroy();
-  try { await preferenceStore?.flush(); } catch (error) { console.error('Unable to save UI preferences:', error); }
+  await preferenceWrites;
   await stopService();
   app.quit();
 }
-function startService() {
-  return new Promise((resolve, reject) => {
-    const userData = app.getPath('userData');
-    const templateSource=resolveTemplateSource({projectRoot:root,executablePath:app.getPath('exe'),portableDirectory:process.env.PORTABLE_EXECUTABLE_DIR,override:process.env.HIVE_TEMPLATES_SOURCE});
-    service = fork(path.join(root, 'server', 'index.mjs'), process.env.HIVE_DESKTOP_DEV === '1' && !app.isPackaged ? [] : ['--production'], {
-      execPath: process.execPath, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', HIVE_DESKTOP_SHELL:'1', HIVE_PORT: '0', HIVE_APP_DATA_DIR:userData, HIVE_STATE_DIR: path.join(userData, 'state'), HIVE_DOCUMENTS: path.join(userData, 'documents'), HIVE_TEMPLATES_DIR: path.join(userData, 'templates'), HIVE_TEMPLATES_SOURCE:templateSource||'' },
-    });
-    let settled = false;
-    const timeout = setTimeout(() => fail(new Error('本地服务启动超时。')), 30000);
-    function fail(error) { if (settled) return; settled = true; clearTimeout(timeout); service.kill(); reject(error); }
-    service.stdout.resume();
-    service.stderr.on('data', chunk => console.error(String(chunk)));
-    service.on('error', fail);
-    service.on('exit', code => {
-      if (!settled) fail(new Error(`本地服务退出 (${code})`));
-      else if (!stoppingService && !exiting) {
-        mainWindow?.webContents.send('hive:service-error');
-        dialog.showErrorBox(`${appName} 本地服务已停止`, '请保留当前窗口并备份未保存的内容。保存与文件操作暂不可用。');
-      }
-    });
-    const shellService=service;
-    service.on('message', message => {
-      if(message?.type==='hive-reveal-file'||message?.type==='hive-open-directory'){
-        void handleExplorerRequest(message).then(reply=>{if(shellService.connected)shellService.send(reply,()=>{});});
-        return;
-      }
-      if (message?.type === 'hive-startup-error' && typeof message.message === 'string') { fail(new Error(message.message)); return; }
-      if (message?.type !== 'hive-ready' || settled) return; settled = true; clearTimeout(timeout); resolve(message.port);
-    });
+async function startService() {
+  const userData = app.getPath('userData');
+  service = launchBackend({
+    root, resources: app.isPackaged ? process.resourcesPath : undefined,
+    env: {
+      HIVE_DESKTOP_SHELL: '1', HIVE_DESKTOP_PACKAGED: app.isPackaged ? '1' : '0', HIVE_PORT: '0', HIVE_APP_DATA_DIR: userData,
+      HIVE_STATE_DIR: path.join(userData, 'state'), HIVE_DOCUMENTS: path.join(userData, 'documents'),
+      HIVE_TEMPLATES_DIR: path.join(userData, 'templates'), HIVE_DESKTOP_EXE: app.getPath('exe'),
+      HIVE_UPDATE_APP_EXE: process.execPath, HIVE_UPDATE_ELECTRON: process.versions.electron,
+      HIVE_UPDATE_PARENT_PID: String(process.pid),
+      HIVE_UPDATE_PACKAGED: app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE ? '1' : '0',
+    },
+    onNative(message, send) {
+      if (message?.type === 'hive-reveal-file' || message?.type === 'hive-open-directory')
+        void handleExplorerRequest(message).then(send);
+      if (message?.type === 'hive-update-progress') localUpdate.onProgress(message.progress);
+    },
   });
+  service.emitter.on('exit', (_code, _signal, stopped) => {
+    if (stopped || exiting || !mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('hive:service-error');
+    dialog.showErrorBox(`${appName} 本地服务已停止`, '请保留当前窗口并备份未保存的内容。保存与文件操作暂不可用。');
+  });
+  const { port } = await service.ready;
+  if (process.env.HIVE_DESKTOP_DEV === '1' && !app.isPackaged) {
+    const { devFrontend } = await import('../scripts/devFrontend.mjs');
+    devFront = await devFrontend(root, port, 0);
+  }
+  return devFront?.port ?? port;
 }
 const isMainSender = event => !!mainWindow && event.sender === mainWindow.webContents;
 const isMainOrigin = event => isMainSender(event) && sameOrigin(event.senderFrame?.url);
 const isMainFrame = event => isMainOrigin(event) && event.senderFrame === mainWindow.webContents.mainFrame;
-const about = createAboutHandlers({isMainOrigin:isMainFrame, app, shell, root, versions:process.versions, platform:process.platform, arch:process.arch, development:process.env.HIVE_DESKTOP_DEV === '1' && !app.isPackaged});
-ipcMain.handle('hive:about-info', about.getAboutInfo);
+ipcMain.handle('hive:about-info', async event => {
+  if (!isMainFrame(event)) throw new Error('无权执行此操作');
+  const build = await service.request('about-info');
+  const { electron, chrome, node } = process.versions;
+  const { platform, arch } = process;
+  const packaged = app.isPackaged;
+  return { ...build, runtime: { mode: packaged ? 'desktop-package' : 'desktop-development', platform, arch, electron, chrome, node, packaged } };
+});
 ipcMain.handle('hive:open-external-http-link', createExternalHttpLinkHandler({isMainFrame, shell}));
-const localDocuments = createLocalDocumentHandlers(isMainFrame);
-ipcMain.handle('hive:open-local-markdown', localDocuments.open);
-ipcMain.handle('hive:save-local-markdown', localDocuments.save);
-ipcMain.handle('hive:open-app-data-directory', about.openAppDataDirectory);
-const localUpdate = createLocalUpdate({
-  app, dialog, isMainOrigin: isMainFrame, resources: process.resourcesPath,
-  sourceFile: path.join(app.getPath('userData'), 'update-source.json'),
-  runtime: { electron: process.versions.electron, platform: process.platform, arch: process.arch },
+function requestDocument(event, operation, input) {
+  if (!isMainFrame(event)) throw new Error('无法从此窗口访问本地文稿。');
+  return service.request(operation, input);
+}
+ipcMain.handle('hive:open-local-markdown', (event, path, root) => requestDocument(event, 'open-local-markdown', { path, root }));
+ipcMain.handle('hive:save-local-markdown', (event, input) => requestDocument(event, 'save-local-markdown', input));
+ipcMain.handle('hive:open-app-data-directory', async event => {
+  if (!isMainFrame(event)) throw new Error('无权执行此操作');
+  try {
+    if (await shell.openPath(app.getPath('userData'))) throw new Error();
+  } catch { throw new Error('无法打开应用数据目录，请检查系统权限后重试。'); }
+});
+const localUpdate = createUpdateBridge({
+  request: (method, input) => service.request(method, input),
+  dialog, isMainOrigin: isMainFrame,
   sendProgress: (event, progress) => {
     if (!event.sender.isDestroyed() && isMainFrame(event)) event.sender.send('hive:update-progress-event', progress);
   },
@@ -297,9 +296,9 @@ ipcMain.on('hive:startup-theme-ready', (event, background) => {
   if (typeof background === 'string' && /^#[a-f0-9]{6}$/i.test(background)) startupThemeReady(background);
 });
 ipcMain.on('hive:preferences-save', (event, values) => {
-  if (!isMainOrigin(event) || !preferenceStore) return;
-  try { preferenceStore.save(values).catch(error => console.error('Unable to save UI preferences:', error)); }
-  catch (error) { console.error('Invalid UI preferences:', error.message); }
+  if (!isMainFrame(event) || !service) return;
+  preferenceWrites = preferenceWrites.then(() => service.request('preferences-save', values))
+    .catch(error => console.error('Unable to save UI preferences:', error.message));
 });
 ipcMain.on('hive:close-ready', event => { if (isMainSender(event)) rendererReady = true; });
 function cancelUpdateClose() {
@@ -428,9 +427,8 @@ else {
     try {
       Menu.setApplicationMenu(null);
       if (process.env.HIVE_DESKTOP_USER_DATA) console.log('HIVE displays:', JSON.stringify(screen.getAllDisplays().map(({id,bounds,workArea,scaleFactor}) => ({id,bounds,workArea,scaleFactor}))));
-      preferenceStore = preferencesModule.preferenceStore(path.join(app.getPath('userData'), 'ui-preferences.json'));
-      initialPreferences = await preferenceStore.read();
       const port = await startService(); origin = `http://127.0.0.1:${port}`;
+      initialPreferences = await service.request('preferences-read');
       mainWindow = new BrowserWindow({ width: 1280, height: 800, minWidth: 640, minHeight: 420, frame: false, resizable: true, thickFrame: true, backgroundColor: '#18181b', show: false, icon: appIcon, webPreferences });
       secureWindow(mainWindow, true, `${origin}/`);
       mainWindow.on('move', updateDockOverlay);
@@ -469,7 +467,7 @@ else {
         const [, background] = await Promise.all([startupWindow.loadURL(origin), themedFrame]);
         if (exiting || startupWindow.isDestroyed()) return;
         startupWindow.setBackgroundColor(background);
-        await markUpdateReady(process.resourcesPath);
+        await localUpdate.markReady();
         mainWindowPresented = true;
         startupWindow.show();
         const toolbar=panelWindows.get('global-toolbar');
