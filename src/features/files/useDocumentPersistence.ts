@@ -10,7 +10,7 @@ import { diskSyncDecision } from './fileSync';
 import {documentMatchesText} from '../editor/documentText';
 import {beginFileActivity,type FileActivityUpdate} from './fileOperations';
 import {Transaction} from '@codemirror/state';
-import {documentSyncBaselines,pollAfterCompletion,workspaceTreeSync} from './workspaceSync';
+import {documentSyncBaselines,pollAfterCompletion,workspaceTreeSync,type WorkspaceTreeReport,type WorkspaceTreeWarning} from './workspaceSync';
 import { writeDocument,writeExternalDocument } from './writeDocument';
 import {listNormalizationEvent,normalizeOrderedLists} from '../editor/normalizeOrderedLists';
 
@@ -29,6 +29,7 @@ type PersistenceOptions = {
     pendingProposal?: (id: string) => boolean;
     setFileBusy: FileActivityUpdate;
     setEntries: Dispatch<SetStateAction<Entry[]>>;
+    reportTree: (report: WorkspaceTreeReport) => void;
     setError: (message: string) => void;
     inform: (message: string) => void;
     redraw: () => void;
@@ -38,7 +39,7 @@ type PersistenceOptions = {
 };
 export function useDocumentPersistence({
     api, workspace, sessions, switching, structuring, fileBusy, tick, autoSave,
-    pendingProposal, setFileBusy, setEntries, setError, inform, redraw, appAlive, onStoredChange, applyFormatting,
+    pendingProposal, setFileBusy, setEntries, reportTree, setError, inform, redraw, appAlive, onStoredChange, applyFormatting,
 }: PersistenceOptions) {
     const savingPaths = useRef(new Set<string>()), syncRunning = useRef(false);
     const treeSync=workspaceTreeSync(setEntries,workspace),lifecycle=useRef(0);
@@ -211,24 +212,26 @@ export function useDocumentPersistence({
         syncRunning.current = true;
         const owner=sessions.current,generation=lifecycle.current;
         const valid=()=>lifecycle.current===generation&&sessions.current===owner&&appAlive?.current!==false&&!switching.current&&!structuring.current&&treeSync.current(ticket);
+        type SyncResponse = {
+            entries?: Entry[];
+            treeVersion: string;
+            warnings?: WorkspaceTreeWarning[];
+            workspace: WorkspaceInfo;
+            files: (DiskFile | { path: string; error: string } | { path: string; hash: string; unchanged: true })[];
+        };
         try {
             const {paths,baselines,knownBaselines}=documentSyncBaselines(owner.values());
-            const data = await api<{
-                entries?: Entry[];
-                treeVersion: string;
-                workspace: WorkspaceInfo;
-                files: (DiskFile | {
-                    path: string;
-                    error: string;
-                } | {
-                    path: string;
-                    hash: string;
-                    unchanged: true;
-                })[];
-            }>('/workspace/sync', { paths, baselines: knownBaselines,...(ticket.treeVersion===undefined?{}:{treeVersion:ticket.treeVersion}) });
+            let data: SyncResponse;
+            try {
+                data = await api<SyncResponse>('/workspace/sync', { paths, baselines: knownBaselines,...(ticket.treeVersion===undefined?{}:{treeVersion:ticket.treeVersion}) });
+            } catch(error) {
+                if(valid())reportTree({error:(error as Error).message});
+                return;
+            }
             if(!valid()||!treeSync.current(ticket,data.workspace))return;
             treeSync.accept(ticket,data.treeVersion);
-            if(data.entries!==undefined)setEntries(data.entries);
+            if(data.entries!==undefined&&(ticket.treeVersion===undefined||data.treeVersion!==ticket.treeVersion))setEntries(data.entries);
+            reportTree({warnings:data.warnings});
             for (const remote of data.files) {
                 if (savingPaths.current.has(remote.path))
                     continue;

@@ -23,7 +23,7 @@ function setup(){
   const opts:any={sessions:{current:new Map<string,EditorSession>([['editor',{id:'editor',disk:null,state:null,view:null,dirty:false}]])},activeSession:{current:'editor'},activeTextSource:{current:'document'},proposal:{current:null},undo:{current:[]},appAlive:{current:true},promptRef:{current:{value:''}},dialogRef:{current:null},prompt:'',dialog:null,
     running:{current:false},requestAnchor:{current:null},structuring:{current:false},switching:{current:false},viewApplying:{current:false},creatingNote:{current:false},savingPaths:{current:new Set()},fileWorkspace:{info:{id:'space',root:'synthetic'},flush:async()=>{},update:async()=>{}},annotations:{syncEditor:noop},references:{remap:noop},uid:(()=>{let value=0;return()=>String(++value);})(),stop:noop,redraw:noop,inform:noop,
     setFileBusy:(value:boolean,opening:boolean)=>{busy.push(value);openingFile.push(opening);},setError:(value:string)=>errors.push(value),setConfirm:(value:any)=>{confirm=value;},setDialog:(value:any)=>{dialog=value;opts.dialogRef.current=value;},bindings:(id:string)=>{if(!callbacks.has(id))callbacks.set(id,vi.fn());return {onUpdate:callbacks.get(id)!};}};
-  for(const name of ['setNewNoteBusy','setEntries','setRoot','setFilter','setRenameRequest','setCollapsed','setTrashRevision','setInlineRequest','setOutline','setSelection','setWritingNodeId'])opts[name]=noop;
+  for(const name of ['setNewNoteBusy','setEntries','reportTree','setFilter','setRenameRequest','setCollapsed','setTrashRevision','setInlineRequest','setOutline','setSelection','setWritingNodeId'])opts[name]=noop;
   const active=activeEditor(opts.sessions,opts.activeSession);
   const activate=(id:string)=>{opts.activeSession.current=id;};
   opts.workspace={isOpen:(id:string)=>open.has(id),open:(id:string)=>{open.add(id);activate(id);},openDocumentTab:(id:string)=>{open.add(id);activate(id);},close:(id:string)=>open.delete(id),openIds:['editor']};
@@ -57,7 +57,7 @@ describe('forced tree refresh lifecycle',()=>{
     expect([...t.opts.sessions.current.values()].some((session:any)=>session.imagePath)).toBe(false);
   });
   it('forces a scan, retains its cursor, and supports repeated refreshes without a render',async()=>{
-    const t=setup();t.opts.setEntries=vi.fn();t.opts.setRoot=vi.fn();
+    const t=setup();t.opts.setEntries=vi.fn();
     const entries=[{path:'one.md',name:'one.md',type:'file'}];
     t.setHandler(async()=>({root:'synthetic',entries,treeVersion:'forced'}));
     const actions=t.actions();await actions.refresh();await actions.refresh();
@@ -66,17 +66,18 @@ describe('forced tree refresh lifecycle',()=>{
     expect(workspaceTreeSync(t.opts.setEntries,t.opts.fileWorkspace.info).beginSync()?.treeVersion).toBe('forced');
   });
   it('drops a refresh from an earlier repository and rejects stale callbacks after a round trip',async()=>{
-    const t=setup(),pending=deferred();t.opts.setEntries=vi.fn();t.opts.setRoot=vi.fn();t.setHandler(()=>pending.promise);
+    const t=setup(),pending=deferred();t.opts.setEntries=vi.fn();t.opts.reportTree=vi.fn();t.setHandler(()=>pending.promise);
     const oldInfo=t.opts.fileWorkspace.info,oldActions=t.actions(),refresh=oldActions.refresh();
     t.opts.fileWorkspace.info={id:'another',root:'other'};t.actions();
     pending.resolve({root:'synthetic',entries:[],treeVersion:'old'});await refresh;
-    expect(t.opts.setEntries).not.toHaveBeenCalled();expect(t.opts.setRoot).not.toHaveBeenCalled();
+    expect(t.opts.setEntries).not.toHaveBeenCalled();expect(t.opts.reportTree).not.toHaveBeenCalled();
     t.opts.fileWorkspace.info=oldInfo;t.actions();await oldActions.refresh();
     expect(t.opts.api).toHaveBeenCalledTimes(1);
   });
   it('releases a failed refresh so regular polling can continue',async()=>{
-    const t=setup();t.setHandler(async()=>{throw new Error('offline');});
+    const t=setup();t.opts.reportTree=vi.fn();t.setHandler(async()=>{throw new Error('offline');});
     await expect(t.actions().refresh()).rejects.toThrow('offline');
+    expect(t.opts.reportTree).toHaveBeenCalledExactlyOnceWith({error:'offline'});
     expect(workspaceTreeSync(t.opts.setEntries,t.opts.fileWorkspace.info).beginSync()).toEqual({epoch:expect.any(Number),treeVersion:undefined});
   });
 });

@@ -2,7 +2,7 @@ import {beginFileActivity,beginFileRead,type FileActivityUpdate} from './fileOpe
 import {checkFileOperations} from './fileOperationChecks';
 import {documentMatchesText} from '../editor/documentText';
 import {diskSyncDecision} from './fileSync';
-import {workspaceTreeSync} from './workspaceSync';
+import {workspaceTreeSync,type WorkspaceTreeReport,type WorkspaceTreeWarning} from './workspaceSync';
 import {isImagePath} from './fileKinds';
 import {localDocumentError,writeDocument} from './writeDocument';
 import {isDrivePath} from './localDocumentPath';
@@ -63,7 +63,7 @@ type FileActionsOptions = {
     setFileBusy: FileActivityUpdate;
     setNewNoteBusy: (busy: boolean) => void;
     setEntries: Dispatch<SetStateAction<Entry[]>>;
-    setRoot: (root: string) => void;
+    reportTree: (report: WorkspaceTreeReport) => void;
     setConfirm: (value: { text: string; action: () => void }) => void;
     setDialog: (value: Dialog | null) => void;
     setFilter: (value: string) => void;
@@ -86,7 +86,7 @@ export function useFileActions(options: FileActionsOptions) {
         api, uid, workspace, sessions, activeSession, activeTextSource, proposal, undo, prompt, dialog,
         running, requestAnchor, structuring, switching, viewApplying, creatingNote, savingPaths,
         fileWorkspace, saveSession, applyDiskFile, annotations, references, bindings, stop, redraw, inform,
-        setError, setFileBusy, setNewNoteBusy, setEntries, setRoot, setConfirm, setDialog, setFilter,
+        setError, setFileBusy, setNewNoteBusy, setEntries, reportTree, setConfirm, setDialog, setFilter,
         setRenameRequest, setCollapsed, setTrashRevision, setInlineRequest, setOutline, setSelection, setWritingNodeId,
     } = options;
     const treeSync=workspaceTreeSync(setEntries,fileWorkspace.info),treeOwner=treeSync.owner();
@@ -111,14 +111,17 @@ export function useFileActions(options: FileActionsOptions) {
     const requireRead=(ticket:ReturnType<typeof beginRead>)=>{if(ticket.valid())return true;if(ticket.current())setError('等待读取时标签或正文已变化，当前内容仍保留，请重新打开。');return false;};
     const refresh = async () => {
         if(!scope()||!treeSync.owns(fileWorkspace.info,treeOwner))return;
-        const identity=fileWorkspace.info.id,root=fileWorkspace.info.root,owner=sessions.current;
+        const owner=sessions.current;
         const ticket=treeSync.beginRefresh();
+        const valid=()=>scope()&&sessions.current===owner&&treeSync.owns(fileWorkspace.info,treeOwner);
         try {
-            const data = await api<{ root: string; entries: Entry[];treeVersion?:string }>('/tree?refresh=1');
-            if(!scope()||sessions.current!==owner||fileWorkspace.info.id!==identity||fileWorkspace.info.root!==root)return;
-            if(!treeSync.finishRefresh(ticket,data.treeVersion))return;
+            const data = await api<{ entries: Entry[]; treeVersion?: string; warnings?: WorkspaceTreeWarning[] }>('/tree?refresh=1');
+            if(!valid()||!treeSync.finishRefresh(ticket,data.treeVersion))return;
             setEntries(data.entries);
-            setRoot(data.root);
+            reportTree({warnings:data.warnings});
+        } catch(error) {
+            if(valid()&&treeSync.finishRefresh(ticket))reportTree({error:(error as Error).message});
+            throw error;
         } finally {treeSync.finishRefresh(ticket);}
     };
     function reconcileKnownFile(data:DiskFile){

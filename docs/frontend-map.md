@@ -61,9 +61,12 @@
 
 1. CodeMirror 文档变化由对应会话更新正文与 `dirty`，界面根据活动会话重新读取。
 2. 自动保存启用时，900ms 后通过 `writeDocument` 提交快照。冲突时保留内存内容。成功回执只确认写入的快照，文件时间记录失败可附带警告。
-3. 同步请求完成 2s 后再次发送 `POST /api/workspace/sync {paths, baselines, treeVersion}`。逐文件比较基线、本地文本和磁盘，判定 `unchanged`、`adopt` 或 `conflict`。同哈希响应省略正文，同目录版本响应省略 `entries`。服务端最多并发读取 4 份文档。
+3. 同步请求完成 2s 后再次发送 `POST /api/workspace/sync {paths, baselines, treeVersion}`。逐文件比较基线、本地文本和磁盘，判定 `unchanged`、`adopt` 或 `conflict`。同哈希响应省略正文。C# 服务每次返回 `entries`，前端按目录版本更新已有树，并接受旧后端省略目录的响应。服务端最多并发读取 4 份文档。
 4. 结构操作（新建/改名/移动/复制/回收站/还原/清理）走 `POST /api/explorer` 与 `/api/explorer/trash/*`。
 5. 桌面版退出前先等待 `fileWorkspace.flush()`，再逐会话执行 `saveSession(id, true)`。
+6. 首次打开或主动重试使用 `GET /api/tree?refresh=1`。文档栏保留最后成功的目录，显示当前仓库的读取失败或子项权限提示。成功刷新或轮询清除读取错误，也能确认空仓库的状态。过期仓库或过期刷新响应不能更新当前文档栏。
+
+包内联动验收用 `node scripts/verify-csharp-repositories.mjs "<包目录>"`，以 `HIVE_VERIFY_OUTPUT` 指定隔离记录目录。脚本运行包内 C#、前端资产和仓库选择 IPC。隐藏窗口使用受控的系统目录选择结果，验证添加和切换、左栏正文与嵌套目录、磁盘轮询，以及故障后恢复。
 
 ## 6. 生成与建议生命周期
 

@@ -61,6 +61,7 @@ import FilePicker from '../features/files/FilePicker';
 import {readRecentDocuments,rememberRecentDocument} from '../features/files/recentDocuments';
 import NewTabPage,{NewTabButton} from '../features/editor/NewTabPage';
 import {flattenEntries,parentPath,type Entry} from "../features/files/explorerState";
+import {applyWorkspaceTreeReport,initialWorkspaceTreeStatus,type WorkspaceTreeReport} from "../features/files/workspaceSync";
 import QuickOpenPanel from '../features/files/QuickOpenPanel';
 import {useQuickOpen} from '../features/files/useQuickOpen';
 import { EditorView, type ViewUpdate } from "@codemirror/view";
@@ -297,8 +298,9 @@ function WritingApp({initialPlacement,capturePlacement,toolbarStore}:{
     importRef = useRef<HTMLInputElement>(null),
     messagesEnd = useRef<HTMLDivElement>(null);
   const [entries, setEntries] = useState<Entry[]>([]),
-    [root, setRoot] = useState(""),
     [tick, setTick] = useState(0);
+  const [treeStatus,setTreeStatus]=useState(initialWorkspaceTreeStatus);
+  const reportTree=useCallback((report:WorkspaceTreeReport)=>setTreeStatus(current=>applyWorkspaceTreeReport(current,report)),[]);
   const quickOpen=useQuickOpen(fileWorkspace.info.id,entries);
   const [quickOpenError,setQuickOpenError]=useState('');
   useEffect(()=>{if(file)rememberRecentDocument(fileWorkspace.info.id,file);},[fileWorkspace.info.id,file]);
@@ -487,7 +489,7 @@ function WritingApp({initialPlacement,capturePlacement,toolbarStore}:{
   const {savingPaths,fileConflicts,saveSession,applyDiskFile}=useDocumentPersistence({
     api, appAlive, workspace: fileWorkspace.info, sessions, switching, structuring,
     fileBusy, tick, autoSave: fileWorkspace.info.autoSave, pendingProposal,
-    setFileBusy, setEntries, setError, inform, redraw, onStoredChange: handleStoredChange,applyFormatting:applyNoteTransaction,
+    setFileBusy, setEntries, reportTree, setError, inform, redraw, onStoredChange: handleStoredChange,applyFormatting:applyNoteTransaction,
   });
   const onUpdate = useCallback((update: ViewUpdate) => {
     annotations.map("document", update);
@@ -867,7 +869,7 @@ function WritingApp({initialPlacement,capturePlacement,toolbarStore}:{
         changes:{file:{action:action.action,path:result.path,id:result.id||action.id,from:result.from}}});
     },
     annotations, references, bindings, stop, redraw, inform, setError, setFileBusy, setNewNoteBusy,
-    setEntries, setRoot, setConfirm, setDialog, setFilter, setRenameRequest, setCollapsed,
+    setEntries, reportTree, setConfirm, setDialog, setFilter, setRenameRequest, setCollapsed,
     setTrashRevision, setInlineRequest, setOutline, setSelection, setWritingNodeId,
   });
   async function openAndCount(path:string,newTab=false,reuseExisting=false){
@@ -1139,7 +1141,7 @@ function WritingApp({initialPlacement,capturePlacement,toolbarStore}:{
   useEffect(() => {
     let cancelled = false;
     const onError=(error:Error)=>{if(!cancelled)setError(error.message);};
-    void refresh().catch(onError);
+    void refresh().catch(()=>{/* The file tree retains its own error state. */});
     void api<Config>('/config').then(next=>{if(!cancelled)setConfig(current=>next.revision>=current.revision?next:current);}).catch(onError);
     return () => {
       cancelled = true;
@@ -1702,8 +1704,8 @@ function WritingApp({initialPlacement,capturePlacement,toolbarStore}:{
             id="sidebar-panel-files"
             aria-label="文档列表"
           >
-            <FileExplorer onRefresh={refresh} entries={entries} workspaceId={fileWorkspace.info.id} root={root} file={file} dirty={dirty} filter={filter} setFilter={setFilter} collapsed={collapsed} setCollapsed={setCollapsed} renameRequest={renameRequest}
-              treeReady={!!root} onOpenRepositories={()=>workspace.open('repositories')}
+            <FileExplorer onRefresh={refresh} entries={entries} workspaceId={fileWorkspace.info.id} root={fileWorkspace.info.root} file={file} dirty={dirty} filter={filter} setFilter={setFilter} collapsed={collapsed} setCollapsed={setCollapsed} renameRequest={renameRequest}
+              treeStatus={treeStatus} onOpenRepositories={()=>workspace.open('repositories')}
               onOpen={openAndCount} onOpenPath={openDocumentPath} onAction={manageFile} onPreflight={preflightFileActions} onReferenceBatch={addReferenceBatch}
               onFolderVisit={path=>{if(!annotationTool)quickOpen.visit(path);}} onQuickOpenDrop={path=>setQuickOpenError(quickOpen.bind([path]))}
               onReferenceDrop={(source,destination)=>addReference(source,destination==='basis')} onAI={path=>{const entry=entries.flatMap(function walk(value):Entry[]{return [value,...(value.children||[]).flatMap(walk)];}).find(entry=>entry.path===path);if(entry)addReference({path,type:entry.type});}}/>

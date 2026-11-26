@@ -24,13 +24,13 @@ vi.mock('react',async original=>({
     },
 }));
 
-function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(yes=>{resolve=yes;});return {promise,resolve};}
+function deferred<T>(){let resolve!:(value:T)=>void,reject!:(error:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 const disk=(text='original',hash='baseline'):DiskFile=>({path:'draft.md',text,hash,eol:'LF',bom:false});
 function fixture(){
     vi.useFakeTimers();hooks.slots=[];hooks.cursor=0;hooks.effects=[];
     const session:EditorSession={id:'editor',disk:disk(),state:EditorState.create({doc:'original'}),view:null,dirty:false};
     const options={api:vi.fn<(...args:any[])=>Promise<any>>(),workspace:{id:'a',root:'first'},sessions:{current:new Map([['editor',session]])},switching:{current:false},structuring:{current:false},fileBusy:false,tick:0,autoSave:false,
-        setFileBusy:vi.fn(),setEntries:vi.fn(),setError:vi.fn(),inform:vi.fn(),redraw:vi.fn(),appAlive:{current:true}};
+        setFileBusy:vi.fn(),setEntries:vi.fn(),reportTree:vi.fn(),setError:vi.fn(),inform:vi.fn(),redraw:vi.fn(),appAlive:{current:true}};
     let result!:ReturnType<typeof useDocumentPersistence>;
     const render=()=>{hooks.cursor=0;hooks.effects=[];result=useDocumentPersistence(options);for(const effect of hooks.effects)effect();return result;};
     render();
@@ -143,11 +143,38 @@ it('sends the learned tree version and processes disk updates without replacing 
     await vi.advanceTimersByTimeAsync(2000);
     expect(t.options.api.mock.calls[0][1]).toEqual({paths:['draft.md'],baselines:{'draft.md':'baseline'}});
     expect(t.options.setEntries).toHaveBeenCalledExactlyOnceWith(entries);
-    t.options.api.mockResolvedValueOnce(t.response([disk('external','new-hash')],{treeVersion:'v1'}));
+    t.options.api.mockResolvedValueOnce(t.response([disk('external','new-hash')],{entries:[...entries],treeVersion:'v1'}));
     await vi.advanceTimersByTimeAsync(2000);
     expect(t.options.api.mock.calls[1][1].treeVersion).toBe('v1');
     expect(t.options.setEntries).toHaveBeenCalledTimes(1);
     expect(t.session.state?.doc.toString()).toBe('external');expect(t.session.disk?.hash).toBe('new-hash');
+});
+it('keeps the last successful tree on failure and reports the next successful scan', async ()=>{
+    const t=fixture(), entries=[{path:'draft.md',name:'draft.md',type:'file'}];
+    const warnings=[{path:'locked',message:'Permission denied'}];
+    t.options.api.mockResolvedValueOnce(t.response([],{entries,warnings,treeVersion:'v1'}));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(t.options.reportTree).toHaveBeenLastCalledWith({warnings});
+    t.options.api.mockRejectedValueOnce(new Error('directory offline'));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(t.options.reportTree).toHaveBeenLastCalledWith({error:'directory offline'});
+    expect(t.options.setEntries).toHaveBeenCalledExactlyOnceWith(entries);
+    expect(t.options.setError).not.toHaveBeenCalled();
+    t.options.api.mockResolvedValueOnce(t.response([],{entries,treeVersion:'v1'}));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(t.options.reportTree).toHaveBeenLastCalledWith({warnings:undefined});
+    expect(t.options.setEntries).toHaveBeenCalledTimes(1);
+});
+it('does not display a late error from the previous repository',async()=>{
+    const t=fixture(), pending=deferred<unknown>();
+    t.options.api.mockReturnValueOnce(pending.promise);
+    await vi.advanceTimersByTimeAsync(2000);
+    t.options.workspace={id:'b',root:'second'};
+    t.render();
+    pending.reject(new Error('repository switched'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.options.reportTree).not.toHaveBeenCalled();
+    expect(t.options.setError).not.toHaveBeenCalled();
 });
 it('preserves dirty local text and reports conflict when a response omits entries',async()=>{
     const t=fixture();t.session.state=EditorState.create({doc:'local edits'});t.session.dirty=true;

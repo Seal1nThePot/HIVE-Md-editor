@@ -231,7 +231,7 @@ sequenceDiagram
 | --- | --- | --- |
 | `editor/tableWidget.ts` `cellContent` | 取单元格文本用 `doc.sliceString(from,to)`，`doc` 传 `EditorState.doc`（`Text`），不传 `doc.toString()` | 每个单元格展开一遍全文，大文档内存峰值翻倍 |
 | `annotations/annotationCache.ts` `pruneAnnotationCache` | 只淘汰 `!==active && !busy && !loading && !error && seq===savedSeq` 的记录，上限 12 条 / 4 MiB | 放宽过滤会丢用户标注；完全不裁剪则切文档越切越涨 |
-| `server/document-routes.mjs` `/api/workspace/sync` | 请求可带 `baselines` 与 `treeVersion`；hash 相同回 `unchanged` 不带正文；目录快照版本未变时省略 `entries`；最多 4 并发读 | 每次轮询重复返回全文和目录 |
+| `backend/Program.cs` `/api/workspace/sync` | 请求可带 `baselines` 与 `treeVersion`。hash 相同回 `unchanged` 并省略正文。服务返回当前目录快照，前端只在版本变化后替换已显示的目录。最多 4 并发读 | 每次轮询重复处理全文和目录 |
 | `server/file-index.mjs` | 每仓库 ≤1 个在途扫描、每批 ≤16 任务；缓存 ≤25000 条 / 路径字符 ≤4M；监听只标记失效，60s 兜底才重扫 | 目录扫描堆积或缓存无界，大仓库越用越慢 |
 | `server/file-probe.mjs` | 在途外部修改检查 ≤100 份、30s 重验、文档关闭即移除 | 每次轮询全量 stat，句柄与内存随文档数增长 |
 | `server/file-times.mjs` | 磁盘状态文件 ≤16MiB；整体签名不变直接复用 | 大仓库每次保存都全量解析 JSON |

@@ -2,6 +2,18 @@ import type {EditorSession} from '../editor/editorSessionTypes';
 
 type WorkspaceIdentity={id:string;root:string};
 type TreeTicket={epoch:number;treeVersion?:string};
+export type WorkspaceTreeWarning = { path: string; message: string };
+export type WorkspaceTreeReport = { error: string } | { warnings?: WorkspaceTreeWarning[] };
+export type WorkspaceTreeStatus = { ready: boolean; error: string; warnings: WorkspaceTreeWarning[] };
+export const initialWorkspaceTreeStatus: WorkspaceTreeStatus = { ready: false, error: '', warnings: [] };
+
+export function applyWorkspaceTreeReport(current: WorkspaceTreeStatus, report: WorkspaceTreeReport): WorkspaceTreeStatus {
+    if ('error' in report) return current.error === report.error ? current : { ...current, error: report.error };
+    const warnings = report.warnings ?? [];
+    if (current.ready && !current.error && current.warnings.length === warnings.length &&
+        current.warnings.every((warning, index) => warning.path === warnings[index].path && warning.message === warnings[index].message)) return current;
+    return { ready: true, error: '', warnings };
+}
 
 /** One cursor per mounted file tree. A repository switch never reuses its predecessor's cursor. */
 export class WorkspaceTreeSync {

@@ -12,12 +12,13 @@ import ImageLibrary from './ImageLibrary';
 import type {WorkspaceReferenceSource} from '../chat/referenceSources';
 import {useFileWorkspace} from './WorkspaceContext';
 import {pastedDocumentPath} from './localDocumentPath';
+import type {WorkspaceTreeStatus} from './workspaceSync';
 
 export type FileAction={action:string;path?:string;parent?:string;name?:string;type?:'file'|'folder';id?:string};
 export type FileResult={path:string;from?:string;type:'file'|'folder';id?:string;deletedAt?:string;warning?:string};
 type ReferenceDestination='basis'|'chat';
-type Props={entries:Entry[];workspaceId:string;root:string;file:string;dirty:boolean;filter:string;setFilter:(value:string)=>void;collapsed:Set<string>;setCollapsed:Dispatch<SetStateAction<Set<string>>>;
-  onFolderVisit?:(path:string)=>void;onQuickOpenDrop?:(path:string)=>void;onRefresh?:()=>Promise<void>;onReferenceDrop?:(source:WorkspaceReferenceSource,destination:ReferenceDestination)=>void;onOpen:(path:string,newTab?:boolean)=>Promise<void>;onOpenPath?:(path:string)=>Promise<void>;onAction:(action:FileAction,options?:{quiet?:boolean})=>Promise<FileResult>;onPreflight?:(actions:FileAction[])=>Promise<void>;onReferenceBatch?:(sources:WorkspaceReferenceSource[])=>Promise<{path:string;ok:boolean;error?:string;warning?:string}[]>;onAI:(path:string)=>void;onOpenRepositories?:()=>void;treeReady?:boolean;renameRequest?:{path:string;key:string}};
+type Props={entries:Entry[];workspaceId:string;root:string;file:string;dirty:boolean;filter:string;setFilter:(value:string)=>void;collapsed:Set<string>;setCollapsed:Dispatch<SetStateAction<Set<string>>>;treeStatus:WorkspaceTreeStatus;
+  onFolderVisit?:(path:string)=>void;onQuickOpenDrop?:(path:string)=>void;onRefresh?:()=>Promise<void>;onReferenceDrop?:(source:WorkspaceReferenceSource,destination:ReferenceDestination)=>void;onOpen:(path:string,newTab?:boolean)=>Promise<void>;onOpenPath?:(path:string)=>Promise<void>;onAction:(action:FileAction,options?:{quiet?:boolean})=>Promise<FileResult>;onPreflight?:(actions:FileAction[])=>Promise<void>;onReferenceBatch?:(sources:WorkspaceReferenceSource[])=>Promise<{path:string;ok:boolean;error?:string;warning?:string}[]>;onAI:(path:string)=>void;onOpenRepositories?:()=>void;renameRequest?:{path:string;key:string}};
 type Menu={x:number;y:number;entry?:Entry;sort?:boolean;more?:boolean};
 type Drop={path:string;where:'before'|'after'|'inside'};
 function sortIcon(mode:SortMode,direction:SortDirection):IconName {
@@ -25,7 +26,7 @@ function sortIcon(mode:SortMode,direction:SortDirection):IconName {
   if(mode==='name')return direction==='asc'?'file.sortAToZ':'file.sortZToA';
   return direction==='asc'?'file.sortOldest':'file.sortNewest';
 }
-export default function FileExplorer({entries,workspaceId,root,file,dirty,filter,setFilter,collapsed,setCollapsed,onOpen,onOpenPath,onAction,onAI,renameRequest,onReferenceDrop,onRefresh,onPreflight,onReferenceBatch,onOpenRepositories,onFolderVisit,onQuickOpenDrop,treeReady=true}:Props){
+export default function FileExplorer({entries,workspaceId,root,file,dirty,filter,setFilter,collapsed,setCollapsed,onOpen,onOpenPath,onAction,onAI,renameRequest,onReferenceDrop,onRefresh,onPreflight,onReferenceBatch,onOpenRepositories,onFolderVisit,onQuickOpenDrop,treeStatus}:Props){
   const {bindings}=useShortcutPreferences();
   const document=usePanelDocument(),window=document.defaultView!;
   const storage='hive.explorer.v1:'+workspaceId;
@@ -44,6 +45,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
   const [selected,setSelected]=useState(''),[scope,setScope]=useState(''),[menu,setMenu]=useState<Menu|null>(null),[rename,setRename]=useState<{path:string;value:string}|null>(null),[pendingOperation,setOperation]=useState<'open'|'manage'|null>(null),[error,setError]=useState(''),[warning,setWarning]=useState('');
   useEffect(()=>{if(filter)setSearchExpanded(true);},[filter]);
   const busy=pendingOperation!==null;
+  const treeReady=treeStatus.ready&&!treeStatus.error;
   const [selection,setSelection]=useState<Set<string>>(new Set()),anchor=useRef(''),[batch,setBatch]=useState<{kind:'move'|'trash';entries:Entry[]}|null>(null),[batchResult,setBatchResult]=useState<string[]>([]);
   const foldersSeen=useRef<{workspace:string;paths:Set<string>}>({workspace:workspaceId,paths:new Set()});
   const [move,setMove]=useState<Entry|null>(null),[moveParent,setMoveParent]=useState(''),[deleting,setDeleting]=useState<Entry|null>(null),[drop,setDrop]=useState<Drop|null>(null);
@@ -344,10 +346,21 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
     {warning&&<p className="explorer-error" role="status">操作已完成：{warning}<button type="button" aria-label="关闭文件操作警告" onClick={()=>setWarning('')}><X size={12}/></button></p>}
     {error&&<p className="explorer-error" role="alert">{error}<button type="button" aria-label="关闭文件操作提示" onClick={()=>setError('')}><X size={12}/></button></p>}
     {importStatus&&<p className="explorer-import-status" role="status">{importStatus}<button type="button" aria-label="关闭导入结果" onClick={()=>setImportStatus('')}><X size={12}/></button></p>}
+    {treeStatus.error&&<div className="explorer-error explorer-tree-error" role="alert"><span>读取文档列表失败。{treeStatus.error}</span>
+      {onRefresh&&<button type="button" disabled={busy} onClick={()=>void run(()=>onRefresh().catch(()=>{}))}>重试读取</button>}
+    </div>}
+    {treeStatus.warnings.length>0&&<details className="explorer-scan-warnings">
+      <summary>已跳过 {treeStatus.warnings.length} 个无法读取的文件或文件夹</summary>
+      <ul>{treeStatus.warnings.map(warning=><li key={warning.path}>{warning.path} · {warning.message}</li>)}</ul>
+    </details>}
     <div className={'explorer-tree '+(drop?.path===''?'drop-inside':'')}>
       <div role="tree" aria-multiselectable="true" aria-label="文件和文件夹">{row(entries)}</div>
+      {!treeStatus.ready&&!treeStatus.error&&<p className="empty-note" role="status">正在读取文档列表…</p>}
       {treeReady&&!entries.length&&!scope&&!filter
-        ? onOpenRepositories&&<div className="explorer-empty"><button type="button" disabled={busy} onClick={onOpenRepositories}>打开仓库管理</button></div>
+        ? <div className="explorer-empty"><div>
+          <p role="status">{treeStatus.warnings.length?'暂无可读取的文档或文件夹。':'仓库中没有可显示的文档或文件夹。'}</p>
+          {onOpenRepositories&&<button type="button" disabled={busy} onClick={onOpenRepositories}>打开仓库管理</button>}
+        </div></div>
         : treeReady&&!view.matching.size&&<p className="empty-note">{pastedPath?'按 Enter 打开 Markdown 文稿。':filter?'没有匹配的文件。':'从一份新文档开始。'}</p>}
       <div className="explorer-root-drop">拖到空白处移至根目录</div>
     </div>
