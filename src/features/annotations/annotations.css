@@ -2,6 +2,29 @@
   position: relative;
   margin-right: 3px;
 }
+[data-window-annotation-preview] {
+  outline: 2px solid var(--hive-accent);
+  outline-offset: -2px;
+}
+.window-annotation-target-caption {
+  position: fixed;
+  z-index: 19001;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(290px, calc(100vw - 12px));
+  padding: 4px 7px;
+  border: 1px solid var(--hive-accent);
+  border-radius: 4px;
+  background: var(--hive-popup-bg);
+  color: var(--hive-popup-text);
+  box-shadow: var(--hive-popup-shadow);
+  font-size: var(--ui-description);
+  pointer-events: none;
+}
+.window-annotation-target-caption > svg { flex: none; }
+.window-annotation-target-caption > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .window-tool-targets {
   display: flex;
   flex-wrap: wrap;
