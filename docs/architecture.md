@@ -1,4 +1,8 @@
-# HIVE 0.1.6 架构图（2026-11-19）
+# HIVE 0.1.9 架构
+
+生产桌面由 Electron 主进程启动自包含 `Hive.Backend.exe`。C# 后端负责本地 HTTP、仓库及持久化、模型与流式生成、工具、主题与插件、外部文稿、偏好和更新。Electron 保留原生窗口、对话框、preload IPC 和系统外壳调用。React 编辑器继续持有编辑状态、撤销历史、未保存内容及窗口归属。
+
+本地 HTTP 和数据格式见 [后端契约](backend-contract.md)。包内文件、开发入口和退出协议见 [桌面封装](packaging.md)。
 
 > 本文描述当前分层、数据流与状态归属。文档保存与同步的协议见 [后端契约](backend-contract.md)。
 
@@ -35,30 +39,30 @@ flowchart TB
     WS --> CTX
   end
 
-  subgraph S["Node 进程 · Express 5"]
+  subgraph S["Hive.Backend.exe · C# / ASP.NET Core"]
     GUARD["Host/Origin 校验 · Cache-Control: no-store"]
     QUEUE["每写作空间 POST 串行队列"]
-    DOCROUTES["document-routes.mjs · 正文 / 草稿 / 目录 / 同步"]
-    SPACE["workspace.mjs · 空间上下文 + 各 store 组合 + 仓库管理"]
-    FILES["files.mjs · Markdown 读写/改名/事务"]
-    FIDX["file-index.mjs · 目录快照 / treeVersion / 监听 / 60s 兜底"]
-    FPROBE["file-probe.mjs · 在途外部修改检查（≤100 份 / 30s）"]
-    EXPL["explorer.mjs · 新建/改名/移动/复制/回收站/搜索"]
-    IMG["images.mjs · 图片落盘与预览"]
-    IMP["imports.mjs · 导入的图片/"]
-    REF2["references.mjs · 参考资料解析（≤32 项 / 6 万字符）"]
-    META["metadata-paths.mjs · 结构改动后重映射标注/大纲"]
-    ANN["annotations.mjs"]
-    NODES["writing-nodes.mjs"]
-    OUTL["outlines.mjs"]
-    TPL["templates.mjs · 主题模板与配色（source 同步 + 修订校验）"]
-    MODEL["model-config.mjs · 服务/模型（密钥存 state/keys.json，见 backend-contract §9）"]
-    MCAP["model-capabilities.mjs · 上游能力映射（推理档 / 输入类型）"]
-    MPROBE["model-probe.mjs · 模型列表探测 / 测试生成"]
-    GENOPT["generation-options.mjs · 推理档位与请求预算"]
-    TRASH["trash-retention.mjs · 保留期预览 / 两步清理 / 行内永久删除"]
-    TIMES["file-times.mjs · 创建时间身份校验"]
-    DESK["desktop-shell.mjs · 桌面外壳进程信号"]
+    DOCROUTES["Program.cs · 正文 / 草稿 / 目录 / 同步"]
+    SPACE["Workspaces.cs · 空间上下文 / 仓库管理"]
+    FILES["Files.cs · Markdown 读写 / 改名 / 事务"]
+    FIDX["Files.cs · 目录快照 / treeVersion / 监听 / 60 秒兜底"]
+    FPROBE["Files.cs · 外部修改检查（≤100 项 / 30 秒）"]
+    EXPL["Explorer.cs · 新建 / 改名 / 移动 / 复制 / 回收站 / 搜索"]
+    IMG["Media.cs · 图片落盘与预览"]
+    IMP["Media.cs · 图片与 Markdown 导入"]
+    REF2["References.cs · 参考资料解析（≤32 项 / 6 万字符）"]
+    META["Metadata.cs · 结构改动后重映射标注和大纲"]
+    ANN["Metadata.cs · 标注"]
+    NODES["Metadata.cs · 写作大纲"]
+    OUTL["Metadata.cs · 大纲描述"]
+    TPL["CatalogService.cs · 模板、图标、配色与插件"]
+    MODEL["Models.cs · 服务与模型配置"]
+    MCAP["Models.cs · 上游能力映射"]
+    MPROBE["Generation.cs · 模型目录探测与测试生成"]
+    GENOPT["Generation.cs · 推理档位与请求预算"]
+    TRASH["Explorer.cs · 回收站预览与清理"]
+    TIMES["FileSystemIdentity.cs · 创建时间身份校验"]
+    DESK["ShellBridge.cs · 私有进程管道"]
     GENR["/api/generate · SSE 代理"]
     GUARD --> QUEUE --> SPACE
     QUEUE --> DOCROUTES
@@ -89,12 +93,12 @@ flowchart TB
   subgraph D["Electron 外壳（desktop/main.mjs，363 行；desktop 共 19 个非测试文件）"]
     MAIN["主进程 · 起服务子进程 / 无边框主窗 / 关闭与退出协议 / 放行面板窗"]
     PRE["preload.cjs · window.hiveDesktop（关闭、窗口命令、面板回搬、偏好）"]
-    PREF["preferences.cjs · ui-preferences.json（白名单 + 原子写）"]
+    PREF["preload → NativeData.cs · 界面偏好"]
     WPOL["windowPolicy.cjs · 精确入口首次导航放行 + 窗口命令白名单 + 子窗禁最大化"]
     GEOM["panelGeometry.cjs · 子窗坐标换算与夹取"]
     PREADY["panelReady.cjs · 子窗就绪登记"]
     REPICK["repositoryPicker.cjs · 仓库目录选择对话框"]
-    TSRC["templateSource.cjs · 打包内模板目录定位"]
+    TSRC["DesktopPaths.cs · 源模板目录定位"]
     TIP["tooltipManager / tooltip-overlay · 桌面提示浮层"]
     DOCK["dock-overlay.cjs · 面板拖拽停靠预览"]
     FREV["fileReveal.cjs · 在资源管理器定位文件"]
@@ -114,7 +118,7 @@ flowchart TB
     MAIN --> PANEL
   end
 
-  MAIN -->|"fork（ELECTRON_RUN_AS_NODE=1, HIVE_PORT=0）"| GUARD
+  MAIN -->|"spawn Hive.Backend.exe（HIVE_PORT=0）"| GUARD
   MAIN -->|"hive-ready / hive-shutdown"| SPACE
   PRE -->|"hive:close-* / hive:panel-close / hive:panel-ready / hive:window-command"| MAIN
   DP -.->|"portal 容器 DOM 搬移（同源 document）"| PANEL
@@ -146,7 +150,7 @@ flowchart TB
 | 编辑器视图层 | `features/editor/Editor.tsx` | CodeMirror 实例、扩展装配（`makeState`）、上下文菜单与插入对话框的挂载点 | 不决定保存策略 |
 | 功能层 | `features/{files,chat,outline,scratch,annotations,settings,ribbon,theme,typography}` | 每个面板的交互与本地状态 | 不直接拼 URL（统一走 `useFileWorkspace().request`） |
 | 传输层 | `features/files/WorkspaceContext.tsx` | `request(path, init)` 前缀 `/api` 并注入 `X-Hive-Workspace`，`register()` 登记切换前拦截 | 不解释业务错误 |
-| 服务层 | `server/index.mjs`、`server/document-routes.mjs` | 本地服务装配、工作区请求队列、SSE 代理与错误映射。正文、草稿、目录和同步的路由交给文档模块 | 不直接碰文件系统细节（走 store） |
+| 服务层 | `backend/Program.cs`、`ShellBridge.cs` | HTTP 装配、工作区请求队列、流式路由接入、错误映射与私有进程通信 | 业务落盘由对应 C# 模块处理 |
 | 存储层 | `server/{files,workspace,explorer,images,imports,references,annotations,writing-nodes,outlines,model-config,model-capabilities,model-probe,templates,file-index,file-probe,generation-options,metadata-paths,trash-retention,file-times}.mjs` | 原子写、锁、revision/hash 冲突检测、路径重映射、保留期清理 | 不做 HTTP 语义 |
 
 ## 3. 面板清单
@@ -175,7 +179,7 @@ sequenceDiagram
   participant A as App.tsx
   participant G as writingGeneration
   participant C as shared/core.ts
-  participant S as server/index.mjs
+  participant S as Hive.Backend.exe
   participant M as model-config.mjs
   participant L as 模型端点
   U->>A: 选模式 + 写指令 + 发送
@@ -227,7 +231,7 @@ sequenceDiagram
 | --- | --- | --- |
 | `editor/tableWidget.ts` `cellContent` | 取单元格文本用 `doc.sliceString(from,to)`，`doc` 传 `EditorState.doc`（`Text`），不传 `doc.toString()` | 每个单元格展开一遍全文，大文档内存峰值翻倍 |
 | `annotations/annotationCache.ts` `pruneAnnotationCache` | 只淘汰 `!==active && !busy && !loading && !error && seq===savedSeq` 的记录，上限 12 条 / 4 MiB | 放宽过滤会丢用户标注；完全不裁剪则切文档越切越涨 |
-| `server/document-routes.mjs` `/api/workspace/sync` | 请求可带 `baselines` 与 `treeVersion`；hash 相同回 `unchanged` 不带正文；目录快照版本未变时省略 `entries`；最多 4 并发读 | 每次轮询重复返回全文和目录 |
+| `backend/Program.cs` `/api/workspace/sync` | 请求可带 `baselines` 与 `treeVersion`。hash 相同回 `unchanged` 并省略正文。服务返回当前目录快照，前端只在版本变化后替换已显示的目录。最多 4 并发读 | 每次轮询重复处理全文和目录 |
 | `server/file-index.mjs` | 每仓库 ≤1 个在途扫描、每批 ≤16 任务；缓存 ≤25000 条 / 路径字符 ≤4M；监听只标记失效，60s 兜底才重扫 | 目录扫描堆积或缓存无界，大仓库越用越慢 |
 | `server/file-probe.mjs` | 在途外部修改检查 ≤100 份、30s 重验、文档关闭即移除 | 每次轮询全量 stat，句柄与内存随文档数增长 |
 | `server/file-times.mjs` | 磁盘状态文件 ≤16MiB；整体签名不变直接复用 | 大仓库每次保存都全量解析 JSON |

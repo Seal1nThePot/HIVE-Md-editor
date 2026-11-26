@@ -11,12 +11,14 @@ import './file-explorer.css';
 import ImageLibrary from './ImageLibrary';
 import type {WorkspaceReferenceSource} from '../chat/referenceSources';
 import {useFileWorkspace} from './WorkspaceContext';
+import {pastedDocumentPath} from './localDocumentPath';
+import type {WorkspaceTreeStatus} from './workspaceSync';
 
 export type FileAction={action:string;path?:string;parent?:string;name?:string;type?:'file'|'folder';id?:string};
 export type FileResult={path:string;from?:string;type:'file'|'folder';id?:string;deletedAt?:string;warning?:string};
 type ReferenceDestination='basis'|'chat';
-type Props={entries:Entry[];workspaceId:string;root:string;file:string;dirty:boolean;filter:string;setFilter:(value:string)=>void;collapsed:Set<string>;setCollapsed:Dispatch<SetStateAction<Set<string>>>;
-  onRefresh?:()=>Promise<void>;onReferenceDrop?:(source:WorkspaceReferenceSource,destination:ReferenceDestination)=>void;onOpen:(path:string,newTab?:boolean)=>Promise<void>;onAction:(action:FileAction,options?:{quiet?:boolean})=>Promise<FileResult>;onPreflight?:(actions:FileAction[])=>Promise<void>;onReferenceBatch?:(sources:WorkspaceReferenceSource[])=>Promise<{path:string;ok:boolean;error?:string;warning?:string}[]>;onAI:(path:string)=>void;onOpenRepositories?:()=>void;treeReady?:boolean;renameRequest?:{path:string;key:string}};
+type Props={entries:Entry[];workspaceId:string;root:string;file:string;dirty:boolean;filter:string;setFilter:(value:string)=>void;collapsed:Set<string>;setCollapsed:Dispatch<SetStateAction<Set<string>>>;treeStatus:WorkspaceTreeStatus;
+  onFolderVisit?:(path:string)=>void;onQuickOpenDrop?:(path:string)=>void;onRefresh?:()=>Promise<void>;onReferenceDrop?:(source:WorkspaceReferenceSource,destination:ReferenceDestination)=>void;onOpen:(path:string,newTab?:boolean)=>Promise<void>;onOpenPath?:(path:string)=>Promise<void>;onAction:(action:FileAction,options?:{quiet?:boolean})=>Promise<FileResult>;onPreflight?:(actions:FileAction[])=>Promise<void>;onReferenceBatch?:(sources:WorkspaceReferenceSource[])=>Promise<{path:string;ok:boolean;error?:string;warning?:string}[]>;onAI:(path:string)=>void;onOpenRepositories?:()=>void;renameRequest?:{path:string;key:string}};
 type Menu={x:number;y:number;entry?:Entry;sort?:boolean;more?:boolean};
 type Drop={path:string;where:'before'|'after'|'inside'};
 function sortIcon(mode:SortMode,direction:SortDirection):IconName {
@@ -24,28 +26,35 @@ function sortIcon(mode:SortMode,direction:SortDirection):IconName {
   if(mode==='name')return direction==='asc'?'file.sortAToZ':'file.sortZToA';
   return direction==='asc'?'file.sortOldest':'file.sortNewest';
 }
-export default function FileExplorer({entries,workspaceId,root,file,dirty,filter,setFilter,collapsed,setCollapsed,onOpen,onAction,onAI,renameRequest,onReferenceDrop,onRefresh,onPreflight,onReferenceBatch,onOpenRepositories,treeReady=true}:Props){
+export default function FileExplorer({entries,workspaceId,root,file,dirty,filter,setFilter,collapsed,setCollapsed,onOpen,onOpenPath,onAction,onAI,renameRequest,onReferenceDrop,onRefresh,onPreflight,onReferenceBatch,onOpenRepositories,onFolderVisit,onQuickOpenDrop,treeStatus}:Props){
   const {bindings}=useShortcutPreferences();
   const document=usePanelDocument(),window=document.defaultView!;
   const storage='hive.explorer.v1:'+workspaceId;
   const space=useFileWorkspace();
+  const pastedPath=onOpenPath&&pastedDocumentPath(filter);
   const referenceDrop=useRef(onReferenceDrop);referenceDrop.current=onReferenceDrop;
+  const quickOpenDrop=useRef(onQuickOpenDrop);quickOpenDrop.current=onQuickOpenDrop;
   const [externalDrop,setExternalDrop]=useState(false),[importStatus,setImportStatus]=useState(''),[imageRevision,setImageRevision]=useState(0);
   const [imagesOpen,setImagesOpen]=useState(false);
+  const [searchExpanded,setSearchExpanded]=useState(()=>!!filter),searchButton=useRef<HTMLButtonElement>(null);
+  function openSearch(){setSearchExpanded(true);window.requestAnimationFrame(()=>search.current?.focus());}
+  function closeSearch(){setFilter('');setSearchExpanded(false);window.requestAnimationFrame(()=>searchButton.current?.focus());}
   const [searchResult,setSearchResult]=useState<{scope:string;query:string;matches:{path:string;line:number|null;excerpt:string}[];truncated:boolean}|null>(null),[searching,setSearching]=useState(false);
 
   const [order,setOrder]=useState<ExplorerOrder>(()=>{try{return readOrder(localStorage.getItem(storage));}catch{return readOrder(null);}});
   const [selected,setSelected]=useState(''),[scope,setScope]=useState(''),[menu,setMenu]=useState<Menu|null>(null),[rename,setRename]=useState<{path:string;value:string}|null>(null),[pendingOperation,setOperation]=useState<'open'|'manage'|null>(null),[error,setError]=useState(''),[warning,setWarning]=useState('');
+  useEffect(()=>{if(filter)setSearchExpanded(true);},[filter]);
   const busy=pendingOperation!==null;
+  const treeReady=treeStatus.ready&&!treeStatus.error;
   const [selection,setSelection]=useState<Set<string>>(new Set()),anchor=useRef(''),[batch,setBatch]=useState<{kind:'move'|'trash';entries:Entry[]}|null>(null),[batchResult,setBatchResult]=useState<string[]>([]);
   const foldersSeen=useRef<{workspace:string;paths:Set<string>}>({workspace:workspaceId,paths:new Set()});
   const [move,setMove]=useState<Entry|null>(null),[moveParent,setMoveParent]=useState(''),[deleting,setDeleting]=useState<Entry|null>(null),[drop,setDrop]=useState<Drop|null>(null);
   useEffect(()=>{
-    if(!scope||!filter.trim()){setSearchResult(null);setSearching(false);return;}
+    if(!scope||!filter.trim()||pastedPath){setSearchResult(null);setSearching(false);return;}
     const controller=new AbortController();let alive=true;setSearching(true);
     const timer=setTimeout(()=>{void space.request('/api/explorer/search?folder='+encodeURIComponent(scope)+'&query='+encodeURIComponent(filter),{signal:controller.signal}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);if(alive)setSearchResult({...data,scope,query:filter});}).catch(error=>{if(alive&&error.name!=='AbortError')setError(error.message);}).finally(()=>{if(alive)setSearching(false);});},250);
     return()=>{alive=false;clearTimeout(timer);controller.abort();};
-  },[scope,filter,space.request,entries]);
+  },[scope,filter,pastedPath,space.request,entries]);
   const importInput=useRef<HTMLInputElement>(null),importLease=useRef<AbortController|null>(null),currentWorkspace=useRef(workspaceId);
   const workspaceEpoch=useRef(0);if(currentWorkspace.current!==workspaceId){currentWorkspace.current=workspaceId;workspaceEpoch.current++;}
   useEffect(()=>{setOperation(null);setSelected('');setSelection(new Set());anchor.current='';setBatch(null);setMove(null);setDeleting(null);setBatchResult([]);setError('');setWarning('');setImagesOpen(false);setMenu(null);return()=>{importLease.current?.abort();importLease.current=null;};},[workspaceId]);
@@ -107,7 +116,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
     if(action==='rename'){beginRename(entry);return;}
     if(action==='move'){if(selection.size>1&&selection.has(entry.path)){startBatch('move');return;}setMove(entry);setMoveParent(parentPath(entry.path));return;}
     if(action==='trash'){if(selection.size>1&&selection.has(entry.path)){startBatch('trash');return;}setDeleting(entry);return;}
-    if(action==='search'){setScope(entry.path);setFilter('');expand(entry.path);search.current?.focus();return;}
+    if(action==='search'){setScope(entry.path);setFilter('');expand(entry.path);openSearch();return;}
     if(action==='ai'){if(isImagePath(entry.path)){setError('图片用于查看或插入正文，文字依据请选择 Markdown。');return;}if(selection.size>1&&selection.has(entry.path))void referenceBatch();else onAI(entry.path);return;}
     if(action==='copy'){await run(()=>navigator.clipboard.writeText(root.replace(/[\\/]$/,'')+'\\'+entry.path.replace(/\//g,'\\')));return;}
     if(action==='tab'){await run(()=>onOpen(entry.path,true),'open');return;}
@@ -171,6 +180,11 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       const destination=target.dataset.referenceDrop;
       if(destination==='basis'||destination==='chat')return {target,destination};
     }
+    function quickOpenAt(hit:Element|null) {
+      if(source?.type!=='folder'||!quickOpenDrop.current)return;
+      const target=hit?.closest<HTMLElement>('[data-quick-open-drop][data-reference-workspace]');
+      if(target?.dataset.referenceWorkspace===workspaceId)return target;
+    }
     function treeDropAt(hit:Element|null,y:number):Drop|null {
       const row=hit?.closest<HTMLElement>('.explorer-row'),tree=container.current?.querySelector('.explorer-tree');
       if(!row||!container.current?.contains(row))return tree?.contains(hit)?{path:'',where:'inside'}:null;
@@ -197,8 +211,9 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       if(!started&&Math.hypot(next.clientX-start.x,next.clientY-start.y)<5)return;
       started=true;skipClick.current=true;drag.current=path;next.preventDefault();
       const hit=document.elementFromPoint(next.clientX,next.clientY),reference=referenceAt(hit);
-      highlight(reference?.target);
-      if(reference){setDrop(null);return;}
+      const quickOpen=quickOpenAt(hit);
+      highlight(reference?.target||quickOpen);
+      if(reference||quickOpen){setDrop(null);return;}
       const tree=container.current?.querySelector('.explorer-tree');
       if(tree){
         const rect=tree.getBoundingClientRect();
@@ -218,6 +233,11 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       if(!started)return;
       if(epoch!==workspaceEpoch.current){drag.current=null;setDrop(null);return;}
       const hit=document.elementFromPoint(next.clientX,next.clientY),reference=referenceAt(hit);
+      if(quickOpenAt(hit)){
+        drag.current=null;setDrop(null);
+        quickOpenDrop.current?.(path);
+        return;
+      }
       const addReference=referenceDrop.current;
       if(reference&&source&&addReference){
         drag.current=null;setDrop(null);
@@ -243,9 +263,9 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       onDrop={event=>{if(!Array.from(event.dataTransfer.types).includes(REFERENCE_DRAG_TYPE))return;event.preventDefault();event.stopPropagation();const source=readReferenceDrag(event.dataTransfer.getData(REFERENCE_DRAG_TYPE),workspaceId);if(!source||!byPath.has(source.path))return;drag.current=source.path;const rect=event.currentTarget.getBoundingClientRect(),ratio=(event.clientY-rect.y)/rect.height;void dropAt({path:entry.path,where:folder&&ratio>.25&&ratio<.75?'inside':ratio<.5?'before':'after'});}}
       onPointerDown={event=>beginDrag(entry.path,event)}
       style={{paddingLeft:8+depth*16}} onFocus={()=>{if(!busy)setSelected(entry.path);}}
-      onClick={event=>{if(busy||skipClick.current&&event.detail>0)return;setSelected(entry.path);if(editing)return;if(event.shiftKey){const start=visiblePaths.indexOf(anchor.current),end=visiblePaths.indexOf(entry.path);if(start>=0&&end>=0)setSelection(new Set(selectRange(visiblePaths,anchor.current,entry.path)));else{anchor.current=entry.path;setSelection(new Set([entry.path]));}return;}if(event.ctrlKey||event.metaKey){anchor.current=entry.path;setSelection(old=>{const next=new Set(old);if(next.has(entry.path))next.delete(entry.path);else next.add(entry.path);return next;});return;}anchor.current=entry.path;setSelection(new Set([entry.path]));if(folder)setCollapsed(old=>{const next=new Set(old);if(next.has(entry.path))next.delete(entry.path);else next.add(entry.path);return next;});else void run(()=>onOpen(entry.path),'open');}}
+      onClick={event=>{if(busy||skipClick.current&&event.detail>0)return;setSelected(entry.path);if(editing)return;if(event.shiftKey){const start=visiblePaths.indexOf(anchor.current),end=visiblePaths.indexOf(entry.path);if(start>=0&&end>=0)setSelection(new Set(selectRange(visiblePaths,anchor.current,entry.path)));else{anchor.current=entry.path;setSelection(new Set([entry.path]));}return;}if(event.ctrlKey||event.metaKey){anchor.current=entry.path;setSelection(old=>{const next=new Set(old);if(next.has(entry.path))next.delete(entry.path);else next.add(entry.path);return next;});return;}anchor.current=entry.path;setSelection(new Set([entry.path]));if(folder){if(effectiveCollapsed.has(entry.path))onFolderVisit?.(entry.path);setCollapsed(old=>{const next=new Set(old);if(next.has(entry.path))next.delete(entry.path);else next.add(entry.path);return next;});}else void run(()=>onOpen(entry.path),'open');}}
       onContextMenu={event=>{event.preventDefault();event.stopPropagation();if(busy)return;setSelected(entry.path);if(!selection.has(entry.path)){setSelection(new Set([entry.path]));anchor.current=entry.path;}setMenu({x:event.clientX,y:event.clientY,entry});}}
-      onKeyDown={event=>{if(editing||busy||event.nativeEvent.isComposing)return;if(event.key==='Enter'&&!event.ctrlKey&&!event.metaKey){event.preventDefault();event.currentTarget.click();}if(folder&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();setCollapsed(old=>{const next=new Set(old);if(event.key==='ArrowLeft')next.add(entry.path);else next.delete(entry.path);return next;});}if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();const nodes=Array.from(container.current?.querySelectorAll<HTMLElement>('[role="treeitem"]')||[]),index=nodes.indexOf(event.currentTarget),next=event.key==='Home'?0:event.key==='End'?nodes.length-1:Math.max(0,Math.min(nodes.length-1,index+(event.key==='ArrowDown'?1:-1)));if(event.shiftKey&&nodes[next]){if(!anchor.current||!visiblePaths.includes(anchor.current))anchor.current=entry.path;setSelection(new Set(selectRange(visiblePaths,anchor.current,nodes[next].dataset.path!)));}nodes[next]?.focus();}if(matchesShortcut(bindings,'fileMenu',event.nativeEvent)){event.preventDefault();event.stopPropagation();const rect=event.currentTarget.getBoundingClientRect();setMenu({entry,x:rect.x+30,y:rect.bottom});}}}>
+      onKeyDown={event=>{if(editing||busy||event.nativeEvent.isComposing)return;if(event.key==='Enter'&&!event.ctrlKey&&!event.metaKey){event.preventDefault();event.currentTarget.click();}if(folder&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();if(event.key==='ArrowRight'&&effectiveCollapsed.has(entry.path))onFolderVisit?.(entry.path);setCollapsed(old=>{const next=new Set(old);if(event.key==='ArrowLeft')next.add(entry.path);else next.delete(entry.path);return next;});}if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();const nodes=Array.from(container.current?.querySelectorAll<HTMLElement>('[role="treeitem"]')||[]),index=nodes.indexOf(event.currentTarget),next=event.key==='Home'?0:event.key==='End'?nodes.length-1:Math.max(0,Math.min(nodes.length-1,index+(event.key==='ArrowDown'?1:-1)));if(event.shiftKey&&nodes[next]){if(!anchor.current||!visiblePaths.includes(anchor.current))anchor.current=entry.path;setSelection(new Set(selectRange(visiblePaths,anchor.current,nodes[next].dataset.path!)));}nodes[next]?.focus();}if(matchesShortcut(bindings,'fileMenu',event.nativeEvent)){event.preventDefault();event.stopPropagation();const rect=event.currentTarget.getBoundingClientRect();setMenu({entry,x:rect.x+30,y:rect.bottom});}}}>
       {folder?(open?<ChevronDown size={12}/>:<ChevronRight size={12}/>):<span className="explorer-spacer"/>}{folder?<Folder size={15}/>:isImagePath(entry.path)?<FileImage size={15}/>:<Icon name="file.text" size={15}/>}
       {editing?<input aria-label="文件名称" autoFocus value={rename.value} disabled={busy} onClick={event=>event.stopPropagation()} onFocus={event=>{const end=entry.type==='file'?event.currentTarget.value.replace(/\.md$/i,'').length:event.currentTarget.value.length;event.currentTarget.setSelectionRange(0,end);}} onChange={event=>setRename({...rename,value:event.target.value})} onBlur={()=>void commitRename()} onKeyDown={event=>{event.stopPropagation();if(event.key==='Enter'){event.preventDefault();void commitRename();}if(event.key==='Escape'){cancelRename.current=true;setRename(null);}}}/>:<span className="explorer-name">{entry.name.replace(/\.md$/i,'')}</span>}
       {hit?.line&&<small className="explorer-hit-line">{hit.line} 行</small>}
@@ -307,7 +327,12 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
     }
   }}>
     {externalDrop&&<div className="explorer-external-drop" aria-hidden="true">松开以导入 Markdown 或图片<br/><small>复制到当前文件库</small></div>}
-    <div className="explorer-search"><Search size={13}/><input ref={search} disabled={busy} aria-label="筛选文件" placeholder={scope?'在文件夹中查找…':'查找文件…'} value={filter} onChange={event=>setFilter(event.target.value)}/></div>
+    {searchExpanded?<div className="explorer-search"><Search size={13}/><input ref={search} disabled={busy} aria-label="筛选文件" placeholder={scope?'在文件夹中查找…':'查找文件或粘贴路径…'} value={filter} onChange={event=>setFilter(event.target.value)} onKeyDown={event=>{
+      if(event.key==='Escape'&&!event.nativeEvent.isComposing){event.preventDefault();event.stopPropagation();closeSearch();return;}
+      if(event.key!=='Enter'||event.nativeEvent.isComposing||event.repeat||!pastedPath||!onOpenPath)return;
+      event.preventDefault();event.stopPropagation();
+      void run(async()=>{await onOpenPath(pastedPath);return true;},'open').then(opened=>{if(opened)setFilter('');});
+    }}/><button type="button" aria-label="收起文件查找" title="收起并清空查找（Esc）" disabled={busy} onClick={closeSearch}><X size={13}/></button></div>:<button ref={searchButton} type="button" className="explorer-search explorer-search-toggle" aria-label="查找文件" aria-expanded="false" disabled={busy} onClick={openSearch}><Search size={13}/><span>查找文件</span></button>}
     <div className="explorer-tools" data-opening-file={pendingOperation==='open'||undefined}><span className="explorer-heading" title={scope}><span>{scope?scope.split('/').at(-1):'全部文档'}</span>{chosen.length>1&&<small role="status" aria-label={`已选择 ${chosen.length} 项`}>已选 {chosen.length} 项</small>}</span>{scope&&<button type="button" disabled={busy} onClick={()=>{setScope('');setFilter('');}}>全部</button>}<div>
       <input ref={importInput} type="file" hidden multiple accept=".md,.png,.jpg,.jpeg,.gif,.webp" onChange={event=>{const files=Array.from(event.currentTarget.files||[]);event.currentTarget.value='';if(files.length)void importDropped(files);}}/>
       <button type="button" aria-label="导入文件" title="导入文件" disabled={busy} onClick={()=>importInput.current?.click()}><Upload size={14}/></button>
@@ -317,15 +342,26 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
       <button type="button" aria-label="文档更多操作" title="更多操作" aria-haspopup="menu" aria-expanded={!!menu?.more} disabled={busy} onClick={event=>{const rect=event.currentTarget.getBoundingClientRect();setMenu(menu?.more?null:{x:rect.right,y:rect.bottom,more:true});}}><MoreHorizontal size={15}/></button>
     </div></div>
     {batchResult.length>0&&!batch&&<div className="explorer-batch-result" role="status">{batchResult.map((item,index)=><div key={index}>{item}</div>)}<button type="button" onClick={()=>setBatchResult([])}>关闭结果</button></div>}
-    {scope&&filter&&<small className="explorer-search-status" role="status">{searching?'正在查找文件名与正文…':currentResults?`找到 ${currentResults.matches.length} 份文档${currentResults.truncated?'，仅显示前 200 份':''}`:'查找文件名与正文'}</small>}
+    {scope&&filter&&!pastedPath&&<small className="explorer-search-status" role="status">{searching?'正在查找文件名与正文…':currentResults?`找到 ${currentResults.matches.length} 份文档${currentResults.truncated?'，仅显示前 200 份':''}`:'查找文件名与正文'}</small>}
     {warning&&<p className="explorer-error" role="status">操作已完成：{warning}<button type="button" aria-label="关闭文件操作警告" onClick={()=>setWarning('')}><X size={12}/></button></p>}
     {error&&<p className="explorer-error" role="alert">{error}<button type="button" aria-label="关闭文件操作提示" onClick={()=>setError('')}><X size={12}/></button></p>}
     {importStatus&&<p className="explorer-import-status" role="status">{importStatus}<button type="button" aria-label="关闭导入结果" onClick={()=>setImportStatus('')}><X size={12}/></button></p>}
+    {treeStatus.error&&<div className="explorer-error explorer-tree-error" role="alert"><span>读取文档列表失败。{treeStatus.error}</span>
+      {onRefresh&&<button type="button" disabled={busy} onClick={()=>void run(()=>onRefresh().catch(()=>{}))}>重试读取</button>}
+    </div>}
+    {treeStatus.warnings.length>0&&<details className="explorer-scan-warnings">
+      <summary>已跳过 {treeStatus.warnings.length} 个无法读取的文件或文件夹</summary>
+      <ul>{treeStatus.warnings.map(warning=><li key={warning.path}>{warning.path} · {warning.message}</li>)}</ul>
+    </details>}
     <div className={'explorer-tree '+(drop?.path===''?'drop-inside':'')}>
       <div role="tree" aria-multiselectable="true" aria-label="文件和文件夹">{row(entries)}</div>
+      {!treeStatus.ready&&!treeStatus.error&&<p className="empty-note" role="status">正在读取文档列表…</p>}
       {treeReady&&!entries.length&&!scope&&!filter
-        ? onOpenRepositories&&<div className="explorer-empty"><button type="button" disabled={busy} onClick={onOpenRepositories}>打开仓库管理</button></div>
-        : treeReady&&!view.matching.size&&<p className="empty-note">{filter?'没有匹配的文件。':'从一份新文档开始。'}</p>}
+        ? <div className="explorer-empty"><div>
+          <p role="status">{treeStatus.warnings.length?'暂无可读取的文档或文件夹。':'仓库中没有可显示的文档或文件夹。'}</p>
+          {onOpenRepositories&&<button type="button" disabled={busy} onClick={onOpenRepositories}>打开仓库管理</button>}
+        </div></div>
+        : treeReady&&!view.matching.size&&<p className="empty-note">{pastedPath?'按 Enter 打开 Markdown 文稿。':filter?'没有匹配的文件。':'从一份新文档开始。'}</p>}
       <div className="explorer-root-drop">拖到空白处移至根目录</div>
     </div>
     {imagesOpen&&<ImageLibrary workspaceId={workspaceId} file={file} refreshKey={imageRevision} onClose={()=>{setImagesOpen(false);window.requestAnimationFrame(()=>container.current?.querySelector<HTMLButtonElement>('[aria-label="文档更多操作"]')?.focus());}}/>}

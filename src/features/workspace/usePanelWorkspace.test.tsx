@@ -1,7 +1,7 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import type {DependencyList,EffectCallback} from 'react';
 import {NativeHostRuntime,type NativeFloatOptions} from './nativeHostRuntime';
-import {usePanelWorkspace} from './usePanelWorkspace';
+import {usePanelWorkspace,type PanelWorkspacePlacement} from './usePanelWorkspace';
 import {defaultWorkspace,hideWorkspacePanel,type WorkspaceLayout} from './workspaceState';
 import {dockedPanels,type Rect} from './panelLayout';
 import * as layoutModule from './panelLayout';
@@ -13,6 +13,12 @@ import {fileURLToPath} from 'node:url';
 const hooks=vi.hoisted(()=>({
   slots:[] as unknown[],cursor:0,dirty:false,effects:[] as (()=>void)[],desktop:null as unknown,
 }));
+function scheduleEffect(create:EffectCallback,deps?:DependencyList){
+  const index=hooks.cursor++,previous=hooks.slots[index] as {deps?:DependencyList;cleanup?:()=>void}|undefined;
+  if(previous&&deps&&previous.deps&&deps.length===previous.deps.length&&deps.every((value,i)=>Object.is(value,previous.deps![i])))return;
+  const slot={deps,cleanup:undefined as (()=>void)|undefined};hooks.slots[index]=slot;
+  hooks.effects.push(()=>{previous?.cleanup?.();slot.cleanup=create()||undefined;});
+}
 vi.mock('react',async importOriginal=>({
   ...await importOriginal<typeof import('react')>(),
   useState:(initial:unknown)=>{
@@ -31,19 +37,15 @@ vi.mock('react',async importOriginal=>({
     if(previous&&deps.length===previous.deps.length&&deps.every((value,i)=>Object.is(value,previous.deps[i])))return previous.value;
     const value=create();hooks.slots[index]={deps,value};return value;
   },
-  useEffect:(create:EffectCallback,deps?:DependencyList)=>{
-    const index=hooks.cursor++,previous=hooks.slots[index] as {deps?:DependencyList;cleanup?:()=>void}|undefined;
-    if(previous&&deps&&previous.deps&&deps.length===previous.deps.length&&deps.every((value,i)=>Object.is(value,previous.deps![i])))return;
-    const slot={deps,cleanup:undefined as (()=>void)|undefined};hooks.slots[index]=slot;
-    hooks.effects.push(()=>{previous?.cleanup?.();slot.cleanup=create()||undefined;});
-  },
+  useEffect:scheduleEffect,
+  useLayoutEffect:scheduleEffect,
 }));
 vi.mock('./DesktopPanels',()=>({useDesktopPanels:()=>hooks.desktop}));
 vi.mock('./useNativePanelDocking',()=>({useNativePanelDocking:()=>{}}));
 vi.mock('./DockGuides',()=>({default:()=>null}));
 
 const rect:Rect={x:80,y:180,width:300,height:460};
-function fixture(enabled=true,implementation=usePanelWorkspace){
+function fixture(enabled=true,implementation=usePanelWorkspace,initial?:PanelWorkspacePlacement){
   Object.assign(hooks,{slots:[],cursor:0,dirty:true,effects:[]});
   vi.stubGlobal('window',{innerWidth:1280,innerHeight:900,screenX:0,screenY:0,focus:vi.fn(),addEventListener:vi.fn(),removeEventListener:vi.fn(),hiveDesktop:{closePanel:vi.fn(),windowCommand:vi.fn(),panelRect:()=>({...rect})}});
   vi.stubGlobal('document',{addEventListener:vi.fn(),removeEventListener:vi.fn()});
@@ -71,7 +73,7 @@ function fixture(enabled=true,implementation=usePanelWorkspace){
   const stage:{current:HTMLDivElement|null}={current:null};let workspace:ReturnType<typeof usePanelWorkspace>;
   const flush=()=>{
     for(let pass=0;pass<20;pass++){
-      hooks.cursor=0;hooks.dirty=false;hooks.effects=[];workspace=implementation(stage);
+      hooks.cursor=0;hooks.dirty=false;hooks.effects=[];workspace=implementation(stage,undefined,undefined,undefined,initial);
       for(const effect of hooks.effects)effect();
       if(!hooks.dirty)return workspace;
     }
@@ -82,6 +84,25 @@ function fixture(enabled=true,implementation=usePanelWorkspace){
   return {runtime,desktop,connect,flush,act,resize:(area:Rect)=>{stage.current={getBoundingClientRect:()=>area} as HTMLDivElement;measure();return flush();},get workspace(){return workspace;}};
 }
 afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
+
+it('starts a new repository with the prior measured stage, split ratio, and shelved panel',()=>{
+  const before=fixture();
+  const bounds={x:0,y:165,width:980,height:615};
+  before.resize(bounds);
+  const layout=before.workspace.capture();
+  if(layout.tree?.type!=='split')throw new Error('Expected the default split');
+  layout.tree=layoutModule.resizeDockSplit(layout.tree,layout.tree.id,.3);
+  before.act(workspace=>workspace.restoreLayout(layout));
+  before.act(workspace=>workspace.minimize('conversation'));
+  const placement=before.workspace.capturePlacement();
+  const files=before.workspace.panel('files').style;
+
+  const after=fixture(true,usePanelWorkspace,placement);
+  expect(placement.bounds).toEqual(bounds);
+  expect(after.workspace.panel('files').style).toEqual(files);
+  expect(after.workspace.isOpen('conversation')).toBe(false);
+  expect(after.workspace.autoHideItems).toEqual([{id:'conversation',edge:'right',offset:expect.any(Number),active:false}]);
+});
 
 const floatingTools=():WorkspaceLayout=>({...defaultWorkspace(),open:['editor','files','trash'],floatingGroups:[{type:'group',id:'tools',panels:['files','trash'],active:'files'}]});
 if(process.env.HIVE_WORKSPACE_BENCHMARK){

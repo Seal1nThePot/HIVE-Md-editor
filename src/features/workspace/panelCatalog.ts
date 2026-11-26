@@ -6,7 +6,7 @@ export const panelCategories: { id:PanelCategory; label:string }[] = [
 export function panelCategory(item:PanelItem):PanelCategory {
   if (item.category) return item.category;
   const id=item.id.toLowerCase();
-  if (['files','file','trash'].includes(id)) return 'files';
+  if (['files','file','quick-open','trash'].includes(id)) return 'files';
   if (id === 'editor' || id.startsWith('editor-') || id.startsWith('editor:') || item.fixed) return 'documents';
   if (['outline','toc','draft','scratch','annotations','annotation'].includes(id)) return 'writing';
   if (['chat','conversation','basis'].includes(id)) return 'ai';

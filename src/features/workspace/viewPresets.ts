@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import type {Mode} from '../../shared/core';
-import {detachWorkspacePanel,type WorkspaceLayout} from './workspaceState';
+import {omitWorkspacePanels,type WorkspaceLayout} from './workspaceState';
 import {trashPreviewTabPrefix} from '../editor/editorSessionTypes';
 import {dockedPanels,type DockTree} from './panelLayout';
 import type {Appearance} from '../settings/useAppearance';
@@ -9,23 +9,12 @@ import {normalizeStatus,type StatusKey,type CountMode} from '../editor/statusMod
 
 export type ViewEditor={id:string;file:string|null;anchor:number;head:number;scrollTop:number;scrollLeft?:number;imagePath?:string;typewriter?:boolean;displayMode?:EditorDisplayMode;landing?:boolean};
 // A saved blank tab must never reuse an untitled manuscript buffer.
-export function matchesViewEditor(session:{disk:{path:string}|null;landing?:boolean;imagePath?:string;trashPreview?:unknown},descriptor:ViewEditor){
-  return !session.trashPreview&&(session.disk?.path||null)===descriptor.file&&!!session.landing===!!descriptor.landing&&(session.imagePath||null)===(descriptor.imagePath||null);
+export function matchesViewEditor(session:{disk:{path:string}|null;landing?:boolean;imagePath?:string;trashPreview?:unknown;external?:unknown},descriptor:ViewEditor){
+  return !session.trashPreview&&!session.external&&(session.disk?.path||null)===descriptor.file&&!!session.landing===!!descriptor.landing&&(session.imagePath||null)===(descriptor.imagePath||null);
 }
 
-export function omitTrashPreviewTabs(layout:WorkspaceLayout):WorkspaceLayout {
-  const regular=(id:string)=>!id.startsWith(trashPreviewTabPrefix);
-  const without= <T,>(entries:Record<string,T>)=>Object.fromEntries(Object.entries(entries).filter(([id])=>regular(id)));
-  let next=layout;
-  const visible=new Set([...layout.open,...layout.minimized,...dockedPanels(layout.tree),...layout.floatingGroups.flatMap(group=>group.panels)]);
-  for(const id of visible)if(!regular(id))next=detachWorkspacePanel(next,id);
-  const restore=Object.fromEntries(Object.entries(without(next.restore)).flatMap(([id,anchor])=>regular(anchor.target)?
-    [[id,anchor.split?{...anchor,split:{...anchor.split,siblings:anchor.split.siblings.filter(regular)}}:anchor]]:[]));
-  return {...next,open:next.open.filter(regular),minimized:next.minimized.filter(regular),rects:without(next.rects),layers:without(next.layers),restore,
-    ...(next.lockedPanels?{lockedPanels:next.lockedPanels.filter(regular)}:{}),
-    ...(next.autoHide?{autoHide:without(next.autoHide)}:{}),
-    ...(next.autoHideActive&&!regular(next.autoHideActive)?{autoHideActive:null}:{}),
-  };
+export function omitTransientDocumentTabs(layout:WorkspaceLayout,externalTabs=new Set<string>()):WorkspaceLayout {
+  return omitWorkspacePanels(layout,id=>!id.startsWith(trashPreviewTabPrefix)&&!externalTabs.has(id));
 }
 export type ViewSnapshot={layout:WorkspaceLayout;editors:ViewEditor[];activeEditor:string;appearance:Appearance;statusItems:StatusKey[];statusCountMode?:CountMode;filter:string;collapsed:string[];chatOrb:boolean;orbPosition?:{x:number;y:number};orbBounds:{width:number;height:number}};
 export type ViewPreset=ViewSnapshot&{id:string;name:string;mode:Mode;updatedAt:string};
@@ -54,7 +43,7 @@ export function parseViewCollection(raw:string|null):ViewCollection {
   if(!result.success)throw new Error('保存的视图格式无效，已保留原记录。');
   const viewIds=new Set<string>();
   for(const view of result.data.views){
-    const editors=new Set(view.editors.map(item=>item.id)),known=new Set(['files','repositories','conversation','outline','toc','scratch','annotations','basis','properties','search','trash',...editors]);
+    const editors=new Set(view.editors.map(item=>item.id)),known=new Set(['files','quick-open','repositories','conversation','outline','toc','scratch','annotations','basis','properties','search','trash',...editors]);
     if(viewIds.has(view.id)||editors.size!==view.editors.length||!editors.has(view.activeEditor))throw new Error('保存的视图包含重复或缺失的编辑区。');
     viewIds.add(view.id);
     const active=[...dockedPanels(view.layout.tree),...view.layout.floatingGroups.flatMap(item=>item.panels)];

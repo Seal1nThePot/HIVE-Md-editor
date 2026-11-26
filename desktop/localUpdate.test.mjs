@@ -100,4 +100,34 @@ describe('application update sources', () => {
     expect(await fs.promises.readdir(test.resources)).toEqual(['app.asar', 'update-source.json']);
     expect(test.options.requestClose).not.toHaveBeenCalled();
   });
+
+  it('keeps an authorized progress snapshot and distinguishes transfer completion from a failed update', async () => {
+    const test = await fixture();
+    test.options.sendProgress = vi.fn();
+    const updates = test.create();
+    await updates.setSource(event, 'internet');
+    expect(updates.progress(event)).toEqual({phase:'idle'});
+    expect(() => updates.progress({})).toThrow('无权');
+    test.internetUpdate.latest.mockResolvedValue(candidate({...current,buildNumber:'new',buildTime:'2026-11-21T00:00:00.000Z'}));
+    test.dialog.showMessageBox.mockResolvedValue({response:0});
+    test.internetUpdate.stage.mockImplementation(async (_candidate, file, _rawFs, progress) => {
+      expect(updates.progress(event)).toEqual({phase:'downloading',receivedBytes:0,totalBytes:4});
+      for (const bytes of [1,3,4]) {
+        await new Promise(resolve => setTimeout(resolve, 105));
+        progress(bytes);
+      }
+      await fs.promises.writeFile(file, 'asar', {flag:'wx'});
+    });
+    const result = await updates.apply(event);
+    expect(result.status).toBe('error');
+    expect(test.options.sendProgress.mock.calls.map(([,value]) => value)).toEqual([
+      {phase:'checking'},
+      {phase:'downloading',receivedBytes:0,totalBytes:4},
+      {phase:'downloading',receivedBytes:1,totalBytes:4},
+      {phase:'downloading',receivedBytes:3,totalBytes:4},
+      {phase:'downloaded',receivedBytes:4,totalBytes:4},
+      {phase:'error',message:result.message},
+    ]);
+    expect(updates.progress(event)).toEqual({phase:'error',message:result.message});
+  });
 });

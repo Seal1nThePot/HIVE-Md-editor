@@ -1,5 +1,6 @@
 .cm-math-widget { cursor: text; color: inherit; }
-span.cm-math-widget { display: inline-block; max-width: 100%; max-height: 12em; overflow: auto; vertical-align: middle; }
+/* List markers hang outside the first line. Keep that indent out of the formula's scroll box. */
+span.cm-math-widget { display: inline-block; text-indent: 0; max-width: 100%; max-height: 12em; overflow: auto; vertical-align: middle; }
 div.cm-math-widget { margin: 8px 24px; max-width: calc(100% - 48px); max-height: 24em; overflow: auto; white-space: pre-wrap; }
 .cm-math-widget .katex-display { margin: .35em 0; }
 .cm-math-widget .katex { color: inherit; }

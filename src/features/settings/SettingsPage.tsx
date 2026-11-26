@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, type FormEvent, type PointerEvent as React
 import { DesktopPanel, useDesktopPanels } from '../workspace/DesktopPanels';
 import { ArrowLeft, Check, ChevronRight, Icon, Info, iconComponent, Keyboard, LayoutPanelTop, Minus, Palette, PencilLine, Plus, Search, Server, SlidersHorizontal, Trash2, X, RefreshCw, Plug, Settings, MoreHorizontal, GripVertical, WandSparkles } from "../../shared/icons";
 import AboutSettings from './AboutSettings';
+import PluginSettings from './PluginSettings';
+import type {usePlugins} from './usePlugins';
 import {aboutSearchKeywords} from './aboutInfo';
 import AppearanceSettings from './AppearanceSettings';
 import AnnotationSettings from './AnnotationSettings';
@@ -24,11 +26,12 @@ import AIResponseSettings from './AIResponseSettings';
 import type {useAIResponsePreferences} from './useAIResponsePreferences';
 import './settings.css';
 
-export type SettingsSection='appearance'|'appearance-reserved'|'features'|'writing'|'models'|'shortcuts'|'about';
+export type SettingsSection='appearance'|'appearance-reserved'|'features'|'writing'|'models'|'shortcuts'|'plugins'|'about';
 type Props={panelIconDragPreferences:ReturnType<typeof usePanelIconDragPreferences>;annotationPreferences:ReturnType<typeof useAnnotationPreferences>;statusPreferences:StatusPreferences;config:Config;initialSection:SettingsSection;restoreKey:number;appearance:ReturnType<typeof useAppearance>;busy:boolean;
   historyLimits?:HistoryLimits;onSaveHistoryLimits?:(limits:HistoryLimits)=>Promise<void>;
   aiButtonLayout:ReturnType<typeof useAIButtonLayout>;
   aiResponsePreferences:ReturnType<typeof useAIResponsePreferences>;
+  plugins:ReturnType<typeof usePlugins>;
   onProbe:(body:ModelProbeRequest,signal?:AbortSignal)=>Promise<ModelProbeResult>;onRequest:(route:string,body:unknown)=>Promise<void>;onReload:()=>Promise<void>;onClose:()=>void};
 type ServiceDraft=Omit<ModelService,'id'|'hasKey'>&{id?:string;key:string;clearKey:boolean};
 const sections=[{id:'appearance' as const,label:'界面',description:'顶部编辑栏、文字、正文排版与底部栏',Icon:LayoutPanelTop},
@@ -37,6 +40,7 @@ const sections=[{id:'appearance' as const,label:'界面',description:'顶部编�
   {id:'writing' as const,label:'写作',description:'续写与写作节奏',Icon:PencilLine},
   {id:'models' as const,label:'模型',description:'AI 服务与模型管理',Icon:iconComponent("model.choose")},
   {id:'shortcuts' as const,label:'快捷键',description:'编辑与面板操作',Icon:Keyboard},
+  {id:'plugins' as const,label:'插件',description:'插件目录与写作区底部栏扩展',Icon:Plug},
   {id:'about' as const,label:'关于',description:'版本、应用更新、离线帮助与诊断信息',keywords:aboutSearchKeywords,Icon:Info}];
 
 const sectionMatches=(item:typeof sections[number],search:string)=>(item.label+item.description+('keywords' in item?item.keywords:'')).toLowerCase().includes(search.trim().toLowerCase());
@@ -45,7 +49,7 @@ export default function SettingsPage(props:Props){
   return <DesktopPanel id="settings" title="设置" open><SettingsContent {...props}/></DesktopPanel>;
 }
 
-function SettingsContent({panelIconDragPreferences,annotationPreferences,statusPreferences,config,initialSection,restoreKey,appearance,busy,historyLimits,onSaveHistoryLimits,aiButtonLayout,aiResponsePreferences,onProbe,onRequest,onReload,onClose}:Props){
+function SettingsContent({panelIconDragPreferences,annotationPreferences,statusPreferences,config,initialSection,restoreKey,appearance,busy,historyLimits,onSaveHistoryLimits,aiButtonLayout,aiResponsePreferences,plugins,onProbe,onRequest,onReload,onClose}:Props){
   const [section,setSection]=useState(initialSection),[search,setSearch]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const [draft,setDraft]=useState<ServiceDraft|null>(null),[modelId,setModelId]=useState(''),[modelName,setModelName]=useState(''),[filter,setFilter]=useState(''),[removeId,setRemoveId]=useState<string|null>(null),[discard,setDiscard]=useState(false);
   const [catalog,setCatalog]=useState<ModelEntry[]>([]),[catalogOpen,setCatalogOpen]=useState(false),[catalogSearch,setCatalogSearch]=useState(''),[checked,setChecked]=useState<string[]>([]),[probing,setProbing]=useState(false),[modelSettings,setModelSettings]=useState<string|null>(null),[menu,setMenu]=useState<string|null>(null),[menuPosition,setMenuPosition]=useState({left:0,top:0});
@@ -161,6 +165,7 @@ function SettingsContent({panelIconDragPreferences,annotationPreferences,statusP
       {error&&<div className="settings-feedback error" role="alert"><span>{error}</span>{(error.includes('其他窗口')||error.includes('重新载入'))&&<button type="button" disabled={busy} onClick={async()=>{try{await onReload();setError('');setNotice('已重新载入配置。');}catch(error){setError((error as Error).message);}}}>重新载入配置</button>}</div>}
       {notice&&<p className="settings-feedback" role="status"><Check size={14}/>{notice}</p>}
       {section==='about'&&<AboutSettings/>}
+      {section==='plugins'&&<PluginSettings plugins={plugins}/>}
       {section==='appearance'&&<>
         <section className="settings-card"><AppearanceSettings {...appearance} group="ribbon"/></section>
         <section className="settings-card"><AppearanceSettings {...appearance} group="text"/></section>

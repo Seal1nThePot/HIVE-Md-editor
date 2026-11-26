@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "id": "hive.selection-lines",
+  "name": "选区行数",
+  "description": "在写作区底栏显示当前正文选区覆盖的行数。",
+  "contribution": {
+    "slot": "editor.status",
+    "metric": "selected-lines",
+    "label": "选中行"
+  }
+}

@@ -1,14 +1,18 @@
-import {StateEffect, StateField, type EditorState, type Extension} from '@codemirror/state';
+import {StateEffect, StateField, type EditorState, type Extension, type Text} from '@codemirror/state';
 import {codeFolding, foldEffect, unfoldEffect, foldedRanges} from '@codemirror/language';
 import {Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet} from '@codemirror/view';
 import {createUiIcon} from '../../shared/icons';
 import {outlineTree} from './markdownParse';
 
 export type HeadingFold = {from:number; to:number; lineFrom:number; level:number};
+const headingPlans=new WeakMap<Text,{tree:ReturnType<typeof outlineTree>;ranges:readonly HeadingFold[]}>();
+
 /** Use the Markdown parser so code blocks and frontmatter never become headings. */
-export function headingFolds(state:EditorState):HeadingFold[]{
+export function headingFolds(state:EditorState):readonly HeadingFold[]{
+  const tree=outlineTree(state),cached=headingPlans.get(state.doc);
+  if(cached?.tree===tree)return cached.ranges;
   const headings:{lineFrom:number; end:number; level:number}[]=[];
-  const cursor=outlineTree(state).cursor();
+  const cursor=tree.cursor();
   do {
     const match=/^(?:ATX|Setext)Heading([1-6])$/.exec(cursor.name);
     if(match){const line=state.doc.lineAt(cursor.from),end=state.doc.lineAt(Math.max(cursor.from,cursor.to-1));headings.push({lineFrom:line.from,end:end.to,level:Number(match[1])});}
@@ -19,7 +23,9 @@ export function headingFolds(state:EditorState):HeadingFold[]{
     const next=stack.at(-1),to=next?Math.max(heading.end,next.lineFrom-1):state.doc.length;
     if(to>heading.end)result.push({from:heading.end,to,lineFrom:heading.lineFrom,level:heading.level});stack.push(heading);
   }
-  return result.reverse();
+  const ranges=result.reverse();
+  headingPlans.set(state.doc,{tree,ranges});
+  return ranges;
 }
 export function foldingEffects(state:EditorState){
   const effects:StateEffect<unknown>[]=[];
@@ -40,10 +46,34 @@ class FoldButton extends WidgetType {
   }
   ignoreEvent(){return false;}
 }
+function firstHeadingAtOrAfter(headings:readonly HeadingFold[],position:number){
+  let start=0,end=headings.length;
+  while(start<end){
+    const middle=start+Math.floor((end-start)/2);
+    if(headings[middle].lineFrom<position)start=middle+1;
+    else end=middle;
+  }
+  return start;
+}
+
 function decorations(view:EditorView):DecorationSet{
-  const folded=new Map<number,number>();foldedRanges(view.state).between(0,view.state.doc.length,(from,to)=>{folded.set(from,to);});
-  const ranges=headingFolds(view.state).filter(h=>view.visibleRanges.some(r=>h.lineFrom>=r.from&&h.lineFrom<=r.to));
-  return Decoration.set(ranges.map(h=>Decoration.widget({widget:new FoldButton(folded.has(h.from)?{...h,to:folded.get(h.from)!}:h,folded.has(h.from)),side:-1}).range(h.lineFrom)),true);
+  const headings=headingFolds(view.state),folds=foldedRanges(view.state);
+  const ranges=[];
+  let next=0;
+  for(const visible of view.visibleRanges){
+    next=Math.max(next,firstHeadingAtOrAfter(headings,visible.from));
+    const first=headings[next];
+    if(!first||first.lineFrom>visible.to)continue;
+    const fold=folds.iter(first.from);
+    for(;next<headings.length&&headings[next].lineFrom<=visible.to;next++){
+      const heading=headings[next];
+      while(fold.value&&fold.from<heading.from)fold.next();
+      const folded=!!fold.value&&fold.from===heading.from;
+      const range=folded?{...heading,to:fold.to}:heading;
+      ranges.push(Decoration.widget({widget:new FoldButton(range,folded),side:-1}).range(range.lineFrom));
+    }
+  }
+  return Decoration.set(ranges,true);
 }
 export const foldingMarker=StateField.define({create:()=>true,update:value=>value});
 export const headingFolding:Extension=[foldingMarker,codeFolding(),ViewPlugin.fromClass(class {

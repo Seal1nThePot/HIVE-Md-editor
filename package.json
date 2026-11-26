@@ -1,21 +1,22 @@
 {
   "name": "hive-writing-prototype",
   "private": true,
-  "version": "0.1.8",
+  "version": "0.1.9",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
-    "dev": "node server/index.mjs",
+    "dev": "npm run build:backend && node server/index.mjs",
     "start": "node server/index.mjs --production",
-    "build": "tsc -b && vite build",
-    "test": "vitest run",
+    "build": "node scripts/build-runtime.mjs",
+    "build:backend": "node scripts/build-runtime.mjs backend",
+    "test": "npm run build:backend && vitest run",
     "desktop": "npm run build && electron .",
-    "desktop:dev": "node scripts/desktop-dev.mjs",
-    "desktop:folder": "npm run build && electron-builder --win --dir",
+    "desktop:dev": "npm run build:backend && node scripts/desktop-dev.mjs",
+    "desktop:folder": "node scripts/build-runtime.mjs dir",
     "verify:app": "node scripts/verify-app.mjs",
     "verify:package": "node scripts/verify-release.mjs",
     "update:bundle": "node scripts/make-local-update.mjs",
-    "desktop:portable": "npm run build && electron-builder --win portable"
+    "desktop:portable": "node scripts/build-runtime.mjs portable"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.0",
@@ -60,14 +61,20 @@
       "output": "release"
     },
     "files": [
-      "dist/**",
-      "server/**",
       "desktop/**",
       "shared/**",
-      "templates/**",
       "assets/brand/hive.png",
       "LICENSE",
       "!**/*.test.*",
+      "!**/node_modules/**",
+      "!desktop/localDocuments.mjs",
+      "!desktop/preferences.cjs",
+      "!desktop/templateSource.cjs",
+      "!desktop/localUpdate.cjs",
+      "!desktop/internetUpdate.cjs",
+      "!desktop/applyLocalUpdate.cjs",
+      "!desktop/about.cjs",
+      "!desktop/buildMetadata.cjs",
       "package.json"
     ],
     "win": {

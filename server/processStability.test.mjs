@@ -1,10 +1,10 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
-import {fork} from 'node:child_process';
 import {promises as fs} from 'node:fs';
 import {request} from 'node:http';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
+import {launchBackend} from '../desktop/backendProcess.mjs';
 
 let directory;const children=new Set();
 beforeEach(async()=>{directory=await fs.mkdtemp(path.join(os.tmpdir(),'hive-process-stability-'));});
@@ -15,12 +15,12 @@ afterEach(async()=>{
   await fs.rm(directory,{recursive:true,force:true});
 });
 async function start(){
-  const child=fork(process.env.HIVE_STABILITY_SERVER||fileURLToPath(new URL('./index.mjs',import.meta.url)),['--production'],{execPath:process.env.HIVE_STABILITY_EXECUTABLE||process.execPath,cwd:fileURLToPath(new URL('../',import.meta.url)),silent:true,windowsHide:true,env:{...process.env,...(process.env.HIVE_STABILITY_EXECUTABLE?{ELECTRON_RUN_AS_NODE:'1'}:{}),HIVE_PORT:'0',HIVE_DOCUMENTS:path.join(directory,'documents'),HIVE_STATE_DIR:path.join(directory,'state'),HIVE_API_KEY:''}});children.add(child);
-  const port=await new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>reject(new Error('Isolated server startup timeout')),10000);
-    child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('exit',code=>{clearTimeout(timer);reject(new Error('Isolated server exited '+code));});
-    child.on('message',message=>{if(message?.type==='hive-ready'){clearTimeout(timer);resolve(message.port);}});
+  const backend=launchBackend({
+    root:fileURLToPath(new URL('../',import.meta.url)),
+    env:{HIVE_PORT:'0',HIVE_DOCUMENTS:path.join(directory,'documents'),HIVE_STATE_DIR:path.join(directory,'state'),HIVE_API_KEY:''},
   });
+  const {child}=backend;children.add(child);
+  const {port}=await backend.ready;
   const base='http://127.0.0.1:'+port,workspace=await(await fetch(base+'/api/workspace')).json();return {child,base,workspace};
 }
 describe('real isolated backend process failures',()=>{

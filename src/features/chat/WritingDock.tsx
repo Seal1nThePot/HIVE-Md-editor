@@ -11,7 +11,7 @@ export default function WritingDock({mode,continuationLimit,aiOpen,annotationToo
       data-tooltip={busy?'正在生成，请稍候':hint} disabled={busy} onClick={()=>onRun(value)}><Icon size={19}/></button>;
   }
   return <footer className="bottom-bar floating-mode-dock writing-dock" aria-label="写作快捷栏"><DockTooltip><div className="writing-dock-controls">
-    <button type="button" className={'dock-mode-button dock-annotation-button'+(annotationTool?' active':'')} aria-label="标注工具" aria-pressed={annotationTool} data-tooltip={annotationHint??(annotationTool?'标注工具已开启 · 拖选文字或单击正文标签添加附件':'标注工具 · 拖选文字或单击正文标签')} onPointerDown={event=>event.preventDefault()} onClick={onAnnotate}><Icon name="annotation.markSelection" size={19}/></button>
+    <button type="button" className={'dock-mode-button dock-annotation-button'+(annotationTool?' active':'')} aria-label="标注工具" aria-pressed={annotationTool} data-tooltip={annotationHint??(annotationTool?'标注工具已开启 · 拖选文字或点击目标':'标注工具 · 选择文字、文档或窗口')} onPointerDown={event=>event.preventDefault()} onClick={onAnnotate}><Icon name="annotation.markSelection" size={19}/></button>
     {modes.slice(0,1).map(modeButton)}
     <button type="button" className={'dock-ai-button'+(aiOpen?' active':'')+(busy?' ai-running':'')} aria-label={aiOpen?'显示 AI 面板':'打开 AI 面板'} aria-expanded={aiOpen} data-tooltip={aiOpen?'将 AI 面板提到前面':'打开 AI 面板'} onClick={onToggleAi}>
       <AiLauncher size={29}/>

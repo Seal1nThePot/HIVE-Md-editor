@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(MSBuildThisFileDirectory)..\..\.work\019-csharp-backend\dotnet</ArtifactsPath>
+  </PropertyGroup>
+</Project>

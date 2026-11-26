@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {csharpLanguage,fencedCodeLanguage} from './codeHighlight';
+import {csharpLanguage,fencedCodeLanguage,codeLanguageLabel,fencedCodeBody,codeHighlightRanges} from './codeHighlight';
 import {javascriptLanguage,jsxLanguage,typescriptLanguage,tsxLanguage} from '@codemirror/lang-javascript';
 import {htmlLanguage} from '@codemirror/lang-html';
 import {cssLanguage} from '@codemirror/lang-css';
@@ -14,5 +14,21 @@ describe('fenced code language selection',()=>{
   });
   it('keeps unspecified and unsupported languages plain',()=>{
     for(const name of ['', 'python','__proto__'])expect(fencedCodeLanguage(name)).toBeNull();
+  });
+});
+
+import {parser} from '@lezer/markdown';
+describe('code block presentation',()=>{
+  it('preserves blank lines, indentation and unclosed code bodies',()=>{
+    for(const source of ['```ts\n\n\tconst x=1;\n\n```','```ts\n\n\tconst x=1;\n']){
+      const node=parser.parse(source).topNode.firstChild!;
+      expect(fencedCodeBody(source,node)).toBe('\n\tconst x=1;\n');
+    }
+  });
+  it('uses safe text labels and only available language parsers',()=>{
+    expect(codeLanguageLabel('ts')).toBe('TypeScript');
+    expect(codeLanguageLabel('<unsafe>')).toBe('<unsafe>');
+    expect(codeHighlightRanges('const value="a";','ts').length).toBeGreaterThan(1);
+    expect(codeHighlightRanges('<literal>','<unsafe>')).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import {useEffect,useRef,useState,type PointerEvent} from 'react';
+import {useEffect,useRef,useState,useSyncExternalStore,type PointerEvent} from 'react';
 import {Move} from "../../shared/icons";
 import {DesktopPanel,useDesktopPanels} from '../workspace/DesktopPanels';
 import {usePanelDocument} from '../../shared/panelDocument';
@@ -7,6 +7,25 @@ import type {Mode} from '../../shared/core';
 import './global-toolbar.css';
 
 type Props={mode:Mode;continuationLimit:number;aiOpen:boolean;annotationTool:boolean;annotationHint?:string;busy?:boolean;onRun:(mode:Mode)=>void;onToggleAi:()=>void;onAnnotate:()=>void};
+
+export function createGlobalToolbarStore(){
+  let current:Props|null=null;
+  const listeners=new Set<()=>void>();
+  return {
+    read:()=>current,
+    subscribe(listener:()=>void){listeners.add(listener);return()=>{listeners.delete(listener);};},
+    publish(next:Props|null){
+      if(current===next)return;
+      current=next;
+      for(const listener of listeners)listener();
+    },
+  };
+}
+
+export function PersistentGlobalToolbar({store}:{store:ReturnType<typeof createGlobalToolbarStore>}){
+  const props=useSyncExternalStore(store.subscribe,store.read);
+  return props&&<GlobalToolbar {...props}/>;
+}
 
 export default function GlobalToolbar(props:Props){
   const desktop=useDesktopPanels(),started=useRef(false);

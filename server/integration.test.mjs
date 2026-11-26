@@ -1,14 +1,14 @@
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from "vitest";
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { annotationMessages } from "../src/features/annotations/annotations.ts";
 import { probeModelService } from "./model-probe.mjs";
+import { launchBackend } from "../desktop/backendProcess.mjs";
 let mock,
-  child,
+  backend,
   temp,
   base,
   mockBase,
@@ -97,41 +97,21 @@ beforeAll(async () => {
     res.end();
   });
   mockBase = `http://127.0.0.1:${await listen(mock)}/v1`;
-  const reserve = createServer();
-  const port = await listen(reserve);
-  await new Promise((resolve) => reserve.close(resolve));
-  base = `http://127.0.0.1:${port}`;
   const project = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "..",
   );
-  child = spawn(process.execPath, ["server/index.mjs", "--production"], {
-    cwd: project,
-    windowsHide: true,
+  backend = launchBackend({
+    root: project,
     env: {
-      ...process.env,
-      HIVE_PORT: String(port),
+      HIVE_PORT: "0",
       HIVE_DOCUMENTS: path.join(temp, "documents"),
       HIVE_STATE_DIR: path.join(temp, "state"),
       HIVE_API_KEY: "",
     },
   });
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error("Test server did not start")),
-      10000,
-    );
-    child.stdout.on("data", (chunk) => {
-      if (chunk.toString().includes("HIVE ready")) {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code) reject(new Error("Test server exited " + code));
-    });
-  });
+  const { port } = await backend.ready;
+  base = `http://127.0.0.1:${port}`;
 }, 15000);
 beforeEach(async () => {
   reply = "valid";
@@ -149,13 +129,7 @@ beforeEach(async () => {
   expect(response.ok).toBe(true);
 });
 afterAll(async () => {
-  if (child) {
-    child.kill();
-    await new Promise((resolve) => {
-      if (child.exitCode !== null) return resolve();
-      child.once("exit", resolve);
-    });
-  }
+  await backend?.stop();
   if (mock) {
     mock.closeAllConnections();
     await new Promise((resolve) => mock.close(resolve));
@@ -671,7 +645,8 @@ describe("HTTP model and local service contract", () => {
     const health = await response.json();
     expect(health.app).toBe("hive-writing-prototype");
     expect(health.ready).toBe(true);
-    expect(health.pid).toBe(child.pid);
+    expect(health.backend).toBe("dotnet");
+    expect(health.pid).toBe(backend.child.pid);
     expect(health.project).toBe(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
     );

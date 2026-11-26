@@ -6,7 +6,7 @@ import {markdownDisplayExtensions,markdownPreview} from './markdownDisplay';
 import {annotationHighlights,setAnnotationMarks} from '../annotations/annotationDecorations';
 import {history,undo,redo} from '@codemirror/commands';
 import {tableOperation,type TableAction} from './tableOperations';
-import {defaultTableWidths,tableSegments} from './tableViewport';
+import {defaultTableWidths,fitTableWidths,tableSegments} from './tableViewport';
 
 describe('table source editing',()=>{
   it('normalizes a rectangular drag in either direction',()=>{expect(tableRectangle({row:4,col:3},{row:1,col:0})).toEqual({top:1,bottom:4,left:0,right:3});});
@@ -58,6 +58,12 @@ describe('table source editing',()=>{
 });
 
 describe('automatic table widths',()=>{
+  it('fills the page while respecting manual widths and readable overflow minima',()=>{
+    expect(fitTableWidths([6,12],[null,null],600,16).reduce((a,b)=>a+b,0)).toBeCloseTo(600);
+    expect(fitTableWidths([6,12],[120,null],600,16)).toEqual([120,480]);
+    expect(fitTableWidths([6,12],[120,240],600,16)).toEqual([120,240]);
+    expect(fitTableWidths([6,12],[null,null],80,16)).toEqual([64,96]);
+  });
   const longStatus='已完成旧版及 WPF 预检，样本待制作';
   const row=(cells:string[])=>'| '+cells.join(' | ')+' |';
   function parsedTable(headers:string[],data:string[][]){

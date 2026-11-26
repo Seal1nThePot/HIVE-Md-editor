@@ -6,6 +6,10 @@ import {typographyUpdateQueue} from './typographyUpdateQueue';
 import {typographyTheme} from './typographyTheme';
 
 function applyStyles(view:EditorView,preferences:TypographyPreferences){
+  const compact=preferences.tableDensity!=='standard';
+  view.dom.style.setProperty('--hive-table-line-height',compact?'1.35':'1.55');
+  view.dom.style.setProperty('--hive-table-padding-y',compact?'.2em':'.4em');
+  view.dom.style.setProperty('--hive-table-padding-x',compact?'.4em':'.8em');
   view.dom.style.setProperty('--hive-max-width',preferences.maxWidth+'px');
   view.dom.style.setProperty('--hive-line-height',String(preferences.lineHeight));
   view.dom.style.setProperty('--hive-paragraph-spacing',preferences.paragraphSpacing+'em');

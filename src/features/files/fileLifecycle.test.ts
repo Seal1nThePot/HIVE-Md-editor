@@ -23,7 +23,7 @@ function setup(){
   const opts:any={sessions:{current:new Map<string,EditorSession>([['editor',{id:'editor',disk:null,state:null,view:null,dirty:false}]])},activeSession:{current:'editor'},activeTextSource:{current:'document'},proposal:{current:null},undo:{current:[]},appAlive:{current:true},promptRef:{current:{value:''}},dialogRef:{current:null},prompt:'',dialog:null,
     running:{current:false},requestAnchor:{current:null},structuring:{current:false},switching:{current:false},viewApplying:{current:false},creatingNote:{current:false},savingPaths:{current:new Set()},fileWorkspace:{info:{id:'space',root:'synthetic'},flush:async()=>{},update:async()=>{}},annotations:{syncEditor:noop},references:{remap:noop},uid:(()=>{let value=0;return()=>String(++value);})(),stop:noop,redraw:noop,inform:noop,
     setFileBusy:(value:boolean,opening:boolean)=>{busy.push(value);openingFile.push(opening);},setError:(value:string)=>errors.push(value),setConfirm:(value:any)=>{confirm=value;},setDialog:(value:any)=>{dialog=value;opts.dialogRef.current=value;},bindings:(id:string)=>{if(!callbacks.has(id))callbacks.set(id,vi.fn());return {onUpdate:callbacks.get(id)!};}};
-  for(const name of ['setNewNoteBusy','setEntries','setRoot','setFilter','setRenameRequest','setCollapsed','setTrashRevision','setInlineRequest','setOutline','setSelection','setWritingNodeId'])opts[name]=noop;
+  for(const name of ['setNewNoteBusy','setEntries','reportTree','setFilter','setRenameRequest','setCollapsed','setTrashRevision','setInlineRequest','setOutline','setSelection','setWritingNodeId'])opts[name]=noop;
   const active=activeEditor(opts.sessions,opts.activeSession);
   const activate=(id:string)=>{opts.activeSession.current=id;};
   opts.workspace={isOpen:(id:string)=>open.has(id),open:(id:string)=>{open.add(id);activate(id);},openDocumentTab:(id:string)=>{open.add(id);activate(id);},close:(id:string)=>open.delete(id),openIds:['editor']};
@@ -57,7 +57,7 @@ describe('forced tree refresh lifecycle',()=>{
     expect([...t.opts.sessions.current.values()].some((session:any)=>session.imagePath)).toBe(false);
   });
   it('forces a scan, retains its cursor, and supports repeated refreshes without a render',async()=>{
-    const t=setup();t.opts.setEntries=vi.fn();t.opts.setRoot=vi.fn();
+    const t=setup();t.opts.setEntries=vi.fn();
     const entries=[{path:'one.md',name:'one.md',type:'file'}];
     t.setHandler(async()=>({root:'synthetic',entries,treeVersion:'forced'}));
     const actions=t.actions();await actions.refresh();await actions.refresh();
@@ -66,17 +66,18 @@ describe('forced tree refresh lifecycle',()=>{
     expect(workspaceTreeSync(t.opts.setEntries,t.opts.fileWorkspace.info).beginSync()?.treeVersion).toBe('forced');
   });
   it('drops a refresh from an earlier repository and rejects stale callbacks after a round trip',async()=>{
-    const t=setup(),pending=deferred();t.opts.setEntries=vi.fn();t.opts.setRoot=vi.fn();t.setHandler(()=>pending.promise);
+    const t=setup(),pending=deferred();t.opts.setEntries=vi.fn();t.opts.reportTree=vi.fn();t.setHandler(()=>pending.promise);
     const oldInfo=t.opts.fileWorkspace.info,oldActions=t.actions(),refresh=oldActions.refresh();
     t.opts.fileWorkspace.info={id:'another',root:'other'};t.actions();
     pending.resolve({root:'synthetic',entries:[],treeVersion:'old'});await refresh;
-    expect(t.opts.setEntries).not.toHaveBeenCalled();expect(t.opts.setRoot).not.toHaveBeenCalled();
+    expect(t.opts.setEntries).not.toHaveBeenCalled();expect(t.opts.reportTree).not.toHaveBeenCalled();
     t.opts.fileWorkspace.info=oldInfo;t.actions();await oldActions.refresh();
     expect(t.opts.api).toHaveBeenCalledTimes(1);
   });
   it('releases a failed refresh so regular polling can continue',async()=>{
-    const t=setup();t.setHandler(async()=>{throw new Error('offline');});
+    const t=setup();t.opts.reportTree=vi.fn();t.setHandler(async()=>{throw new Error('offline');});
     await expect(t.actions().refresh()).rejects.toThrow('offline');
+    expect(t.opts.reportTree).toHaveBeenCalledExactlyOnceWith({error:'offline'});
     expect(workspaceTreeSync(t.opts.setEntries,t.opts.fileWorkspace.info).beginSync()).toEqual({epoch:expect.any(Number),treeVersion:undefined});
   });
 });
@@ -85,7 +86,7 @@ describe('repository switching preserves save guards',()=>{
   it('flushes pending work and saves dirty sessions before opening another repository',async()=>{
     const t=setup(),session=t.add('editor','draft.md');t.edit(session);const events:string[]=[];
     t.opts.fileWorkspace.flush=async()=>{events.push('flush');};
-    t.opts.saveSession=async(id:string,required:boolean)=>{expect(id).toBe('editor');expect(required).toBe(true);events.push('save');return true;};
+    t.opts.saveSession=async(id:string,required:boolean)=>{expect(id).toBe('editor');expect(required).toBe(true);events.push('save');session.dirty=false;return true;};
     t.opts.fileWorkspace.update=async(patch:unknown)=>{expect(patch).toEqual({root:'other'});events.push('switch');};
     await t.actions().switchWorkspace('other');expect(events).toEqual(['flush','save','switch']);expect(t.opts.switching.current).toBe(false);
   });
@@ -99,6 +100,39 @@ describe('repository switching preserves save guards',()=>{
       await expect(t.actions().switchWorkspace('other')).rejects.toThrow();
       expect(t.opts.fileWorkspace.update).not.toHaveBeenCalled();expect(session.dirty).toBe(true);expect(t.opts.switching.current).toBe(false);
     }
+  });
+  it('saves the current manuscript before removing its repository through a single request',async()=>{
+    const t=setup(),session=t.add('editor','draft.md');t.edit(session);const events:string[]=[];
+    t.opts.fileWorkspace.flush=async()=>{events.push('flush');};
+    t.opts.saveSession=async()=>{events.push('save');session.dirty=false;return true;};
+    t.opts.fileWorkspace.update=vi.fn();
+    t.opts.fileWorkspace.manage=async(action:unknown)=>{expect(action).toEqual({action:'remove',id:'space'});events.push('remove');};
+    await t.actions().removeRepository('space');
+    expect(events).toEqual(['flush','save','remove']);
+    expect(t.opts.fileWorkspace.update).not.toHaveBeenCalled();
+  });
+  it('leaves the current repository intact when removing it fails a switch guard',async()=>{
+    for(const reason of ['disk conflict','pending edits','unsent AI draft','composition']){
+      const t=setup(),session=t.add('editor','draft.md');t.edit(session);
+      t.opts.fileWorkspace.manage=vi.fn();
+      if(reason==='disk conflict')t.opts.saveSession=async()=>false;
+      if(reason==='pending edits')t.opts.saveSession=async()=>true;
+      if(reason==='unsent AI draft')t.opts.hasUnsentChatDraft=()=>true;
+      if(reason==='composition')t.opts.fileWorkspace.flush=async()=>{throw new Error('请先完成当前输入法组词');};
+      await expect(t.actions().removeRepository('space')).rejects.toThrow();
+      expect(t.opts.fileWorkspace.manage).not.toHaveBeenCalled();
+      expect(session.dirty).toBe(true);
+      expect(t.opts.switching.current).toBe(false);
+    }
+  });
+  it('removes an inactive repository without saving or flushing the active one',async()=>{
+    const t=setup(),session=t.add('editor','draft.md');t.edit(session);
+    t.opts.fileWorkspace.flush=vi.fn();t.opts.saveSession=vi.fn();t.opts.fileWorkspace.manage=vi.fn();
+    await t.actions().removeRepository('inactive');
+    expect(t.opts.fileWorkspace.manage).toHaveBeenCalledWith({action:'remove',id:'inactive'});
+    expect(t.opts.fileWorkspace.flush).not.toHaveBeenCalled();
+    expect(t.opts.saveSession).not.toHaveBeenCalled();
+    expect(session.dirty).toBe(true);
   });
 });
 
@@ -265,6 +299,26 @@ describe('file read authority and local history',()=>{
     const t=setup(),session=t.add('editor','same.md'),write=deferred();t.setDialog({kind:'saveAs',value:'copy.md',title:'copy'});t.setHandler(()=>write.promise);
     const pending=t.actions().submitDialog({preventDefault(){}} as any);t.edit(session);write.resolve({hash:'copy-hash'});await pending;
     expect(session.disk?.path).toBe('same.md');expect(session.state!.doc.toString()).toBe('original UNSAVED');expect(t.opts.api).toHaveBeenCalledTimes(1);
+  });
+  it('normalizes an accepted save-as copy only in its target session and preserves its prior undo',async()=>{
+    const t=setup(),original='1. First\n4. Second\n',formatted='1. First\n2. Second\n';
+    const session=t.add('editor','original.md',original),sibling=t.add('other','original.md',original);
+    t.edit(session,'\nDone');
+    t.setDialog({kind:'saveAs',value:'copy.md',title:'copy'});
+    const write=deferred();
+    t.setHandler(async(url,body:any)=>{
+      if(url==='/file'){expect(body.text).toBe(formatted+'\nDone');return write.promise;}
+      if(url.startsWith('/file?'))return data('copy.md',formatted+'\nDone','copy-hash');
+      return {root:'synthetic',entries:[]};
+    });
+    const pending=t.actions().submitDialog({preventDefault(){}} as any);
+    expect(session.state!.doc.toString()).toBe(original+'\nDone');
+    write.resolve({hash:'copy-hash'});await pending;
+    expect(session.state!.doc.toString()).toBe(formatted+'\nDone');
+    expect(session.disk?.path).toBe('copy.md');expect(session.dirty).toBe(false);
+    expect(sibling.state!.doc.toString()).toBe(original);expect(sibling.disk?.path).toBe('original.md');
+    expect(undo({state:session.state!,dispatch:tr=>{session.state=tr.state;}})).toBe(true);
+    expect(session.state!.doc.toString()).toBe(formatted);
   });
   it('captures an import target before File.text resolves and keeps the newly active editor intact',async()=>{
     const t=setup(),first=t.add('editor','old.md'),other=t.add('other','other.md'),fileText=deferred<string>();

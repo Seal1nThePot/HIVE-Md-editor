@@ -1,16 +1,22 @@
 import {useEffect, useRef, useState, type FormEvent} from 'react';
-import {AlertCircle, ArrowDown, ArrowRight, ArrowUp, Check, FolderOpen, Icon, Pencil, Search} from "../../shared/icons";
+import {AlertCircle, ArrowRight, Check, FolderOpen, Icon, Pencil, Search} from "../../shared/icons";
 import {repositoryLabel, useFileWorkspace} from './WorkspaceContext';
+import {usePanelDocument} from '../../shared/panelDocument';
 import './repositories.css';
 
-export default function RepositoryPanel({onSwitch,onReturn}:{onSwitch:(root:string)=>Promise<void>;onReturn:()=>void}) {
-  const space=useFileWorkspace();
+export default function RepositoryPanel({onSwitch,onRemove,onReturn,annotationMode=false}:{annotationMode?:boolean;onSwitch:(root:string)=>Promise<void>;onRemove:(id:string)=>Promise<void>;onReturn:()=>void}) {
+  const space=useFileWorkspace(),document=usePanelDocument(),owner=document.defaultView!;
+  const [dragging,setDragging]=useState(''),[dropTarget,setDropTarget]=useState<{id:string;after:boolean}|null>(null);
+  const dragCleanup=useRef<(()=>void)|null>(null);
+  useEffect(()=>()=>dragCleanup.current?.(),[]);
+
   const [root,setRoot]=useState(''),[query,setQuery]=useState(''),[busy,setBusy]=useState(false);
   const [feedback,setFeedback]=useState<{message:string;error?:boolean}|null>(null);
   const [enterPath,setEnterPath]=useState(false);
   const [editing,setEditing]=useState<{id:string;name:string}|null>(null);
   const pending=useRef(false),pathDialog=useRef<HTMLDialogElement>(null);
   const repositories=space.info.repositories;
+  useEffect(()=>{dragCleanup.current?.();},[annotationMode,query,editing,busy,space.info.revision,space.info.id]);
   const chooseDirectory=window.hiveDesktop?.chooseRepositoryDirectory;
   const shown=repositories.filter(item=>(repositoryLabel(item)+' '+item.root).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   useEffect(()=>{
@@ -47,11 +53,78 @@ export default function RepositoryPanel({onSwitch,onReturn}:{onSwitch:(root:stri
     if(chooseDirectory){void add();return;}
     setRoot('');setFeedback(null);setEnterPath(true);
   }
-  function move(id:string,offset:number) {
-    const order=repositories.map(item=>item.id),index=order.indexOf(id),target=index+offset;
-    if(index<0||target<0||target>=order.length)return;
-    [order[index],order[target]]=[order[target],order[index]];
-    void run(()=>space.manage({action:'reorder',order}));
+  function beginDrag(id:string,event:React.PointerEvent<HTMLElement>){
+    const target=event.target as Element;
+    const protectedContent='button,input,textarea,select,a,h3,.repository-path-value,.repository-default-badge';
+    if(event.button!==0||!event.isPrimary||annotationMode||pending.current||editing||query.trim()||target.closest(protectedContent))return;
+    dragCleanup.current?.();
+    const start={x:event.clientX,y:event.clientY};
+    const pointerId=event.pointerId;
+    const initialOrder=repositories.map(item=>item.id);
+    const grid=event.currentTarget.closest('.repository-grid');
+    let started=false;
+    let destination:{id:string;after:boolean}|null=null;
+    function move(pointer:PointerEvent){
+      if(pointer.pointerId!==pointerId)return;
+      if(!started&&Math.hypot(pointer.clientX-start.x,pointer.clientY-start.y)<5)return;
+      started=true;
+      setDragging(id);
+      pointer.preventDefault();
+      const card=document.elementFromPoint(pointer.clientX,pointer.clientY)?.closest<HTMLElement>('.repository-card');
+      if(!card||card.closest('.repository-grid')!==grid){
+        destination=null;
+      }else{
+        const bounds=card.getBoundingClientRect();
+        const cards=[...grid!.querySelectorAll<HTMLElement>('.repository-card')];
+        const multipleColumns=cards.some(other=>other!==card&&Math.abs(other.getBoundingClientRect().top-bounds.top)<5);
+        destination={
+          id:card.dataset.repositoryId!,
+          after:multipleColumns?pointer.clientX>bounds.left+bounds.width/2:pointer.clientY>bounds.top+bounds.height/2,
+        };
+      }
+      setDropTarget(destination);
+    }
+    function cleanup(){
+      owner.removeEventListener('pointermove',move);
+      owner.removeEventListener('pointerup',finish);
+      owner.removeEventListener('pointercancel',cancel);
+      owner.removeEventListener('blur',cancel);
+      owner.removeEventListener('keydown',key,true);
+      setDragging('');
+      setDropTarget(null);
+      dragCleanup.current=null;
+    }
+    function cancel(){cleanup();}
+    function key(keyboard:KeyboardEvent){
+      if(keyboard.key!=='Escape'||keyboard.isComposing)return;
+      keyboard.preventDefault();
+      cleanup();
+    }
+    function finish(pointer:PointerEvent){
+      if(pointer.pointerId!==pointerId)return;
+      const drop=destination;
+      cleanup();
+      if(!started||!drop||drop.id===id)return;
+      const next=initialOrder.filter(value=>value!==id);
+      const index=next.indexOf(drop.id);
+      if(index<0)return;
+      next.splice(index+(drop.after?1:0),0,id);
+      if(next.join('\0')!==initialOrder.join('\0')){
+        void run(async()=>{
+          try{await space.manage({action:'reorder',order:next});}
+          catch(error){
+            try{const response=await space.request('/api/workspace');if(response.ok)space.adopt(await response.json());}catch{/* Keep the last confirmed order if refresh is unavailable. */}
+            throw error;
+          }
+        });
+      }
+    }
+    dragCleanup.current=cleanup;
+    owner.addEventListener('pointermove',move,{passive:false});
+    owner.addEventListener('pointerup',finish);
+    owner.addEventListener('pointercancel',cancel);
+    owner.addEventListener('blur',cancel);
+    owner.addEventListener('keydown',key,true);
   }
   async function rename(event:FormEvent) {
     event.preventDefault();if(!editing)return;
@@ -71,18 +144,17 @@ export default function RepositoryPanel({onSwitch,onReturn}:{onSwitch:(root:stri
     </div>
     <div className="repository-toolbar"><label className="repository-search"><Search size={15}/><input aria-label="搜索仓库" placeholder="搜索名称或路径…" value={query} onChange={event=>setQuery(event.target.value)}/></label></div>
     <div className="repository-grid" aria-label="仓库列表">{shown.map(item=>{
-      const current=item.id===space.info.id,index=repositories.findIndex(value=>value.id===item.id),name=repositoryLabel(item);
-      return <article className={'repository-card'+(current?' repository-current':'')} key={item.id} data-repository-id={item.id} aria-label={`仓库：${name}`}>
+      const current=item.id===space.info.id,isDefault=item.id===space.info.defaultRepositoryId;
+      const name=repositoryLabel(item);
+      return <article className={'repository-card'+(current?' repository-current':'')+(dragging===item.id?' repository-dragging':'')+(dropTarget?.id===item.id?(dropTarget.after?' repository-drop-after':' repository-drop-before'):'')} key={item.id} data-repository-id={item.id} aria-label={`仓库：${name}`} onPointerDown={event=>beginDrag(item.id,event)}>
         <div className="repository-card-heading"><span className="repository-card-icon"><FolderOpen size={20}/></span><h3 title={name}>{name}</h3><button type="button" className="repository-rename" aria-label={`备注仓库名称：${name}`} title="备注名称" disabled={busy} onClick={()=>{setEditing({id:item.id,name:item.name||''});setFeedback(null);}}><Pencil size={15}/></button>{current&&<span className="repository-current-badge"><Check size={12}/>当前</span>}</div>
         {editing?.id===item.id&&<form className="repository-name-editor" onSubmit={event=>void rename(event)} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(!busy)setEditing(null);}}}>
           <label htmlFor={`repository-name-${item.id}`}>备注名称</label><input id={`repository-name-${item.id}`} aria-label="仓库备注名称" value={editing.name} maxLength={80} placeholder="留空使用文件夹名" autoFocus disabled={busy} onChange={event=>setEditing({...editing,name:event.target.value})}/>
           <p>仅修改应用中的名称，文件夹名保持不变。</p><div><button type="submit" className="repository-primary" disabled={busy}><Check size={14}/>保存</button><button type="button" className="repository-secondary" disabled={busy} onClick={()=>setEditing(null)}>取消</button></div>
         </form>}
-        <p className="repository-path" title={item.root}>{item.root}</p>
+        <p className="repository-path" title={item.root}>{isDefault&&<span className="repository-default-badge">默认根目录</span>}<span className="repository-path-value">{item.root}</span></p>
         <div className="repository-card-actions"><button type="button" className={current?'repository-secondary':'repository-primary'} disabled={busy} onClick={()=>{if(current)onReturn();else void run(()=>onSwitch(item.root));}}>{current?'返回写作':'打开仓库'}<ArrowRight size={14}/></button><div className="repository-order">
-          <button type="button" aria-label={`上移仓库：${name}`} title="上移" disabled={busy||index===0||!!query.trim()} onClick={()=>move(item.id,-1)}><ArrowUp size={16}/></button>
-          <button type="button" aria-label={`下移仓库：${name}`} title="下移" disabled={busy||index===repositories.length-1||!!query.trim()} onClick={()=>move(item.id,1)}><ArrowDown size={16}/></button>
-          <button type="button" aria-label={`从列表移除仓库：${name}`} title={current?'请先打开其他仓库再移出列表':'从列表移除，文件保留'} disabled={busy||current} onClick={()=>void run(()=>space.manage({action:'remove',id:item.id}),'已从列表移除，文件仍保留在原文件夹。')}><Icon name="repository.remove" size={16}/></button>
+          <button type="button" aria-label={`从列表移除仓库：${name}`} title={isDefault?'默认根目录不能移出仓库列表':current?'从列表移除并返回默认根目录，文件保留':'从列表移除，文件保留'} disabled={busy||isDefault} onClick={()=>void run(()=>onRemove(item.id),'已从列表移除，文件仍保留在原文件夹。')}><Icon name="repository.remove" size={16}/></button>
         </div></div>
       </article>;
     })}</div>

@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import type {AboutInfo} from '../../shared/buildInfo';
 import {browserAboutInfo, copyAboutDiagnostic, diagnosticPreview, openAboutDataDirectory, readDesktopAboutInfo} from './aboutInfo';
+import type {UpdateProgress} from './updateProgress';
 import helpText from '../../../docs/help.md?raw';
 import changelogText from '../../../docs/CHANGELOG.md?raw';
 import licenseText from '../../../LICENSE?raw';
@@ -12,6 +13,8 @@ const modeLabels: Record<AboutInfo['runtime']['mode'], string> = {
 };
 const displayBuildValue = (value: string) => !value || value === 'unavailable' ? '未记录' : value;
 const displayReleaseVersion = (version: string) => version.replace(/^(\d+\.\d+\.\d+)-r(\d+)$/, '$1r$2');
+const formatBytes = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
+  ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 
 export default function AboutSettings() {
   const bridge = window.hiveDesktop?.isDesktop ? window.hiveDesktop : undefined;
@@ -24,7 +27,8 @@ export default function AboutSettings() {
   const [opening, setOpening] = useState(false);
   const [updateMode, setUpdateMode] = useState<'unsupported'|'directory'|'picker'|'internet'>('unsupported');
   const [settingUpdateSource, setSettingUpdateSource] = useState(false);
-  const [updating, setUpdating] = useState(false);
+  const [requestPending, setRequestPending] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress>({phase:'idle'});
   const [updateFeedback, setUpdateFeedback] = useState('');
   const alive = useRef(true);
   useEffect(() => {
@@ -39,6 +43,23 @@ export default function AboutSettings() {
     }
     return () => { alive.current = false; };
   }, [bridge]);
+  useEffect(() => {
+    let current = true;
+    let hasEvent = false;
+    const unsubscribe = bridge?.onUpdateProgress?.(value => {
+      hasEvent = true;
+      if (current) setUpdateProgress(value);
+    });
+    void bridge?.getUpdateProgress?.().then(value => {
+      if (current && !hasEvent) setUpdateProgress(value);
+    }).catch(() => {});
+    return () => { current = false; unsubscribe?.(); };
+  }, [bridge]);
+  const updating = requestPending || (updateProgress.phase !== 'idle' && updateProgress.phase !== 'error');
+  const transfer = 'receivedBytes' in updateProgress && updateProgress.receivedBytes !== undefined ? updateProgress : null;
+  const updateStatus = updateProgress.phase === 'downloaded' ? '下载完成，正在验证更新包…'
+    : updateProgress.phase === 'restarting' ? '正在重启 HIVE…'
+    : updateProgress.phase === 'error' ? updateProgress.message : updateFeedback;
   const metadata = info || build;
   const missingBuildRecord = !loading && [metadata.buildNumber, metadata.buildTime, metadata.channel].some(value => !value || value === 'unavailable');
   const preview = diagnosticPreview(build, info, desktop);
@@ -73,19 +94,21 @@ export default function AboutSettings() {
   }
   async function update() {
     if (!bridge?.installUpdate) return;
-    setUpdating(true);
+    setRequestPending(true);
+    setUpdateProgress({phase:'idle'});
     setUpdateFeedback('');
     try {
       const result = await bridge.installUpdate();
       if (!alive.current) return;
-      if (result.status === 'restarting') { setUpdateFeedback('正在重启 HIVE…'); return; }
+      if (result.status === 'restarting') setUpdateFeedback('正在重启 HIVE…');
       if (result.status === 'error') setUpdateFeedback(result.message);
       if (result.status === 'current') setUpdateFeedback('当前没有较新的更新。');
       if (result.status === 'empty') setUpdateFeedback(updateMode === 'internet' ? 'GitHub 暂无可用的稳定版更新包。' : '更新目录中还没有发布包。');
     } catch {
       if (alive.current) setUpdateFeedback('无法开始更新，请重试。');
+    } finally {
+      if (alive.current) setRequestPending(false);
     }
-    if (alive.current) setUpdating(false);
   }
 
   return <div className="about-settings">
@@ -121,10 +144,15 @@ export default function AboutSettings() {
           ? '从本地稳定版发布目录检查更新。' : '选择新版更新包中的 update.hive.json。'} 确认后，HIVE 会保存并退出，更新完成后自动重启。</p>
         <div className="about-actions">
           <button type="button" className="settings-secondary" disabled={updating || settingUpdateSource} onClick={() => void update()}>
-            {updating ? updateMode === 'internet' ? '正在检查或下载更新…' : '正在检查更新…' : updateMode === 'picker' ? '选择本地更新包…' : '检查更新'}
+            {updating ? updateProgress.phase === 'downloading' ? '正在下载更新…' : updateProgress.phase === 'downloaded' || updateProgress.phase === 'restarting' ? '正在准备更新…' : '正在检查更新…' : updateMode === 'picker' ? '选择本地更新包…' : '检查更新'}
           </button>
         </div>
-        {updateFeedback && <p role="status" className="about-feedback">{updateFeedback}</p>}
+        {transfer && transfer.receivedBytes !== undefined && <div className="about-download-progress">
+          <div><span>下载进度</span><span>{transfer.totalBytes ? `${Math.floor(100 * transfer.receivedBytes / transfer.totalBytes)}% · ${formatBytes(transfer.receivedBytes)} / ${formatBytes(transfer.totalBytes)}`
+            : `已下载 ${formatBytes(transfer.receivedBytes)}`}</span></div>
+          <progress aria-label="更新下载进度" value={transfer.totalBytes ? transfer.receivedBytes : undefined} max={transfer.totalBytes || undefined}/>
+        </div>}
+        {updateStatus && <p role={updateProgress.phase === 'error' ? 'alert' : 'status'} className="about-feedback">{updateStatus}</p>}
       </> : <p>应用内更新适用于 Windows 目录版。</p>}
     </section>
     <section className="settings-card about-documents" aria-labelledby="about-documents-title">

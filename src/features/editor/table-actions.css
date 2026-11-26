@@ -5,7 +5,7 @@
 .cm-editor .cm-table-sticky .cm-table-select-table-button{position:relative;opacity:1}
 .cm-editor .cm-table-widget{overflow-x:auto;max-width:100%;box-sizing:border-box;padding-top:26px}
 .cm-editor .cm-table-widget[data-table-segment]:not([data-table-segment="0"]){padding-top:0}
-.cm-editor .cm-table-widget .cm-preview-table{margin:0 clamp(24px,6.4%,50px)}
+.cm-editor .cm-table-widget .cm-preview-table{margin:0 clamp(12px,6.4%,50px)}
 .cm-editor .cm-table-sticky{position:absolute;z-index:5;overflow:hidden;pointer-events:none;background:var(--hive-document-bg,var(--bg))}
 .cm-editor .cm-table-sticky .cm-table-sticky-track{padding-top:26px}
 .cm-editor .cm-table-sticky .cm-preview-table{margin:0}
@@ -29,7 +29,7 @@
 .cm-table-context-menu button:disabled{opacity:.45;cursor:default}
 .cm-editor .cm-table-widget textarea{height:auto;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere}
 .cm-table-status:empty{display:none}
-.cm-editor :is(.cm-table-widget,.cm-table-sticky) .cm-table-cell-preview{min-height:24px;white-space:pre-wrap;overflow-wrap:anywhere}
+.cm-editor :is(.cm-table-widget,.cm-table-sticky) .cm-table-cell-preview{min-height:1.35em;white-space:pre-wrap;overflow-wrap:anywhere}
 .cm-editor .cm-table-widget .cm-table-cell-preview{user-select:text;cursor:text;outline-offset:2px}
 .cm-editor .cm-table-widget .cm-table-cell-preview::selection,.cm-editor .cm-table-widget .cm-table-cell-preview ::selection{background:var(--hive-editor-selection-background);color:var(--hive-editor-selection-text)}
 .cm-editor :is(.cm-table-widget,.cm-table-sticky) .cm-table-cell-preview code{font-family:monospace;background:color-mix(in srgb, currentColor 9%, transparent);border-radius:3px;padding:0 2px}

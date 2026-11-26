@@ -1,10 +1,14 @@
 # 后端契约
 
-## 0.1.6 文档保存与同步
+## 0.1.9 服务入口与兼容格式
 
-`server/index.mjs` 装配本机来源校验、写作空间上下文及同仓库请求队列。`server/document-routes.mjs` 接收正文、草稿、目录和同步请求，并把写入交给仓库的 `fileStore`。
+`backend/Program.cs` 装配 Kestrel、本机来源校验、写作空间上下文和请求队列。`Workspaces.cs` 管理仓库注册、切换和外置仓库清单。`Files.cs` 负责正文、草稿、目录快照和同步，`Explorer.cs` 负责结构操作和回收站。`Metadata.cs` 使用现有标注、写作大纲和创建时间 JSON 文件。历史记录、图片和参考附件分别由 `History.cs`、`Media.cs` 和 `References.cs` 管理。
 
-正文保存先核对磁盘基线，再写同目录暂存文件。发布前复查磁盘内容，已有文件用 `rename`，新文件用不覆盖同名目标的 `link`。最后一次复查与替换之间仍有外部写入的竞态窗口。
+`Models.cs`、`Generation.cs` 和 `AiTools.cs` 处理模型配置、生成和工具请求。模型配置与密钥沿用原状态目录及文件格式。主题和插件由 `CatalogService.cs` 及其存储模块实现。桌面主进程通过私有进程管道调用外部文稿、偏好和更新，保留现有渲染端 IPC 名称。桌面文件打开与保存需通过主窗口主 frame，仓库外保存还需有本次进程内打开记录和有效磁盘基线。
+
+## 文档保存与同步
+
+正文保存先核对磁盘基线，再写同目录暂存文件。发布前复查磁盘内容，已有文件使用原子替换，新文件使用不覆盖同名目标的硬链接。最后一次复查与替换之间仍有外部写入的竞态窗口。
 
 `POST /api/file` 和 `POST /api/scratch` 返回 `{path,hash}`。正文发布成功后若时间记录更新失败，响应额外带 `warning`。前端接受此次写入的基线，保存期间产生的编辑继续留在内存并保持未保存。
 
@@ -12,22 +16,20 @@
 
 `POST /api/workspace/sync` 保留 `paths`、`baselines`，新增可选 `treeVersion`。响应为 `{workspace, treeVersion, entries, files}`；`entries` 恒返回，`treeVersion` 未变化时省略的是目录重扫而非响应字段（2026-11-19 实测）。该版本独立于仓库配置的 revision。
 
-`GET /api/tree` 返回完整的当前快照；`?refresh=1` 强制校验磁盘，复用仍在进行的扫描。`files.list()` 保持即时扫描兼容语义，供显式搜索与旧接口使用。扫描、保存与元数据写入沿用同仓库事务队列。
+`GET /api/tree` 返回当前快照，`?refresh=1` 强制校验磁盘。`files.list()` 保持即时扫描兼容语义，供显式搜索与旧接口使用。扫描、保存与元数据写入沿用同仓库事务队列。树响应使用支持深层目录的序列化配置，请求解析深度与正文体积上限沿用原配置。
 
-`file-index.mjs` 管理单个在途更新、有界索引、目录监听和 60 秒兜底；变化使快照失效，下次请求重建过滤范围内的树，当前未实现逐目录补丁。`file-probe.mjs` 只为同步缓存属性/哈希，最多 100 项，30 秒重验内容，不缓存正文、不替代保存前检查。`file-times.mjs` 复用最多 16 MiB 状态文件的解析结果，磁盘签名变化或失败时失效。
+`Files.cs` 管理仓库扫描、目录监听和 60 秒兜底。变化使快照失效，下次请求重建过滤范围内的树。权限拒绝的子项会跳过，`/api/tree` 和 `/api/workspace/sync` 都会随可读条目返回 `warnings: [{path, message}]`。`path` 为仓库内斜杠分隔的相对路径。警告参与快照版本计算，权限恢复后重扫会清除警告。根目录和时间记录的读取失败返回错误，损坏的记录保留原样。同步探测最多缓存 100 项属性与哈希，监听到变化后重验内容，并保留 30 秒兜底。保存始终重新核对磁盘基线。`FileTimes.cs` 复用最多 16 MiB 创建时间状态文件的解析结果，磁盘签名变化或读写失败时失效。
 
-切换仓库停止旧监听、释放索引与时间状态缓存；已捕获的请求仍只访问原仓库。退出等待 spaces.close() 回收资源。以下为前序协议说明，历史行数不作为当前定位依据。
+切换仓库停止旧监听并释放索引和同步探测缓存。已捕获的请求继续访问原仓库。同步准备响应时若当前仓库已切换，返回 409。退出时停止监听并回收服务资源。
 
-本地服务使用一个 Express 5 进程，由 `server/index.mjs` 启动。业务状态保存在磁盘，进程内保留队列、锁、API Key、回收站清理令牌与文件创建时间缓存。
-
-模块划分：`workspace.mjs` 组装各 store（`files` / `explorer` / `annotations` / `writing-nodes` / `outlines` / `spaces` / `model-config`），`trash-retention.mjs` 由 explorer 挂载，`file-times.mjs` 由 files 挂载，`references.mjs` 与 `generation-options.mjs` 是无状态纯函数，直接挂在路由上。
+本地 HTTP 服务绑定 `127.0.0.1`。命令行入口 `server/index.mjs` 启动同一个 C# 可执行程序，开发模式下另开 Vite 提供前端热更新。生产桌面直接启动包内 C# 可执行程序。磁盘保存业务状态，C# 进程管理队列、锁、模型密钥和回收站清理令牌。
 
 ## 1. 前置条件（每个 `/api/*` 请求都会过）
 
 1. **本机限定**：`Host` 必须是 `127.0.0.1:<port>` 或 `localhost:<port>`，否则 403 `只允许本机访问。`
 2. **来源校验**：带 `Origin` 时必须同源，否则 403 `请求来源不匹配。`
 3. **不缓存**：统一 `Cache-Control: no-store`。
-4. **JSON 上限 3 MB**：`express.json({limit:"3mb"})`（图片上传走 `express.raw`，另有 12 MB 上限）。
+4. **请求上限**。JSON 为 3 MiB，图片原始字节为 12 MiB，参考附件为 2,000,000 字节。
 5. **写作空间上下文**：路径首段属于 `workspaceRoutes`（`writing-outline / annotations / scratch / outline / tree / file / folder / rename / workspace / explorer / images / references`）时，按 `x-hive-workspace` 头取空间，过期即 409 `写作空间已在其他窗口切换。`
 6. **POST 串行化**：同一空间内的 POST（`/workspace/sync` 除外）在服务端排队，前一个响应结束才处理下一个——结构操作与元数据保存不会互相插队。
 
@@ -37,15 +39,15 @@
 
 | 方法 | 路径 | 入参 | 出参 |
 | --- | --- | --- | --- |
-| GET | `/api/health` | — | `{app:"hive-writing-prototype",pid,project,ready}` |
-| GET | `/api/workspace` | — | `{id,root,autoSave,revision,repositories:[{id,root}]}`（恒含当前仓库） |
+| GET | `/api/health` | — | `{app:"hive-writing-prototype",pid,project,ready,backend:"dotnet"}`，PID 属于真实 C# 进程 |
+| GET | `/api/workspace` | — | `{id,root,defaultRepositoryId,autoSave,revision,repositories:[{id,root,name?}]}`。列表包含当前仓库和默认文档根。 |
 | POST | `/api/workspace` | `{root,autoSave,revision}` | 同 GET；`revision` 过期 → 409 |
-| POST | `/api/workspace/repositories` | `{action:"add"\|"rename"\|"remove"\|"reorder", revision, …}` | 同 GET；`add` 须现有普通目录（拒符号链接/junction），`rename` 备注 ≤80 单行，`remove` 拒绝移除使用中的仓库，`reorder` 须全量 id；`revision` 过期 → 409 |
-| POST | `/api/workspace/sync` | `{paths: string[], baselines?: Record<path, sha256>, treeVersion?}`（paths ≤100，`baselines` 可选，兼容旧请求） | `{workspace,treeVersion,entries,files}`；服务端最多 4 个并发读文件；hash 与 `baselines[path]` 相同的文件只回 `{path,hash,unchanged:true}`，不带 `text`；不排队 |
+| POST | `/api/workspace/repositories` | `{action:"add"\|"rename"\|"remove"\|"reorder", revision, …}` | 同 GET。`add` 须现有普通目录（拒符号链接/junction），`rename` 备注 ≤80 单行，`reorder` 须全量 id。`remove` 仅移出登记，保留文件与元数据。默认文档根禁止移出。移出当前仓库时同一事务切回默认文档根。`revision` 过期 → 409。 |
+| POST | `/api/workspace/sync` | `{paths: string[], baselines?: Record<path, sha256>, treeVersion?}`（paths ≤100，`baselines` 可选，兼容旧请求） | `{workspace,treeVersion,entries,files,warnings?}`；服务端最多 4 个并发读文件；hash 与 `baselines[path]` 相同的文件只回 `{path,hash,unchanged:true}`，不带 `text`；不排队 |
 | POST | `/api/references/resolve` | `{sources,budget,currentFile?,overrides?}`，来源格式见 §10 | `{sources,files:[{path,source,characters,truncated,text,unsaved?}],warnings}` |
 | POST | `/api/references/attachments` | UTF-8 Markdown 原始字节（`application/octet-stream`，≤2 MB）和 `?name=` | `{type:"attachment",id,path}`，`path` 为显示文件名 |
 | DELETE | `/api/references/attachments/:id` | 附件 ID | `{ok:true}` |
-| GET | `/api/tree` | — | `{root,entries}`（文件夹优先，`zh-CN` 排序） |
+| GET | `/api/tree` | — | `{root,treeVersion,entries,warnings?}`（文件夹优先，`zh-CN` 排序） |
 | GET | `/api/file` | `?path=` | `{path,text,hash,eol,bom}` |
 | POST | `/api/file` | `{path,text,baseline,eol,bom}` | `{path,hash,warning?}` |
 | POST | `/api/folder` | `{path}` | `{ok:true}` |
@@ -59,6 +61,10 @@
 | GET | `/api/outline` | `?file=` | `{key: description}`（旧版大纲备注） |
 | POST | `/api/outline` | `{file,key,description}` | 同上（无 revision 校验） |
 | GET | `/api/templates` | — | `{directory,sourceDirectory,templates,warnings}`（olive-gold 置顶、zh-CN 名称排序；读取失败的目录记入 warnings） |
+| GET | `/api/plugins` | — | `{directory,plugins,errors,limitReached,canOpenDirectory,canInstallSample}`。插件来自应用数据目录的 `plugins` 子目录。清单版本 1 支持 `editor.status` 的本地统计。 |
+| POST | `/api/plugins/enabled` | `{id,enabled}` | 原子保存启用状态后返回插件目录快照。未知、冲突或无效插件返回 404。 |
+| POST | `/api/plugins/sample` | `{}` | 添加未启用的选区行数示例，保留现有同名文件，返回插件目录快照。 |
+| POST | `/api/plugins/open` | `{}` | 桌面端请求系统打开插件目录，返回 `{ok:true}`。 |
 | GET | `/api/templates/:id` | 可选 `?colorsOnly=1` 或 `?iconPackRevision=<hash>` | `{template,directory,colors,revision,defaults,defaultsRevision,iconPack}`。仅配色请求省略 `iconPack`。图标包摘要匹配时返回 `iconPackUnchanged:true` 并省略包。 |
 | POST | `/api/templates/:id` | `{revision,colors}` | 保存配色（version 1 全量校验；`colors.before-save.json` 备份；临时文件+rename；`revision` 过期 → 409 `模板配色文件已被外部修改，请重新读取后再保存。`） |
 | POST | `/api/templates/:id/open` | — | `{ok,directory}`（仅 Windows。桌面端由 Electron 打开对应模板目录并确认系统调用结果，失败返回 503。独立后端调用 `explorer.exe`。） |
@@ -90,6 +96,7 @@
 | POST | `/api/ai-tools/repositories` | `{instruction,selection?,pendingName?,target:{workspaceId,revision}}` | `repository-list` 返回 `{repositories:[{id,name,path}]}`，`repository-created` 返回 `{repository,workspace}`，`repository-location-required` 返回 `{name,question}` |
 | POST | `/api/ai-tools/documents` | `{instruction,selection?,target:{workspaceId}}` | `folder-list` 返回 `{folder,entries:[{name,path,type}]}`，`document-create` 返回 `{parent,name,type}`，`document-trash` 返回 `{path}` |
 | POST | `/api/ai-tools/trash` | `{instruction,selection?,target:{workspaceId}}` | `trash-restore` 或 `trash-confirm-delete` 返回 `{items}`，条目沿用回收站记录 |
+| POST | `/api/ai-tools/quick-open` | `{workspaceId,limit,candidates:[{path,count}]}` | `{paths}`。至多 16 个当前仓库目录候选，模型建议限定在可用候选内，最多 4 项。应用索引前在窗口内确认。 |
 
 `server/ai-tools/` 集中维护标注窗口可调用的内置工具。笔记查找使用发送时的编辑器快照，支持未保存正文。模型收到查找要求和 `find_note` 工具参数定义，允许返回查找词、区分大小写与完整词匹配。查找在本机进行，响应最多含 100 项。行和列从 1 开始，`from` 和 `to` 是编辑器使用的 UTF-16 偏移，`to` 为结束边界。仓库切换后返回 409。模型不支持结构化调用或返回未提供的工具时返回 502。
 

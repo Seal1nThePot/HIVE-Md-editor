@@ -1,5 +1,5 @@
 import {useLayoutEffect,useRef,useState} from 'react';
-import {FileText,Table2,X} from '../../shared/icons';
+import {FileText,Folder,Icon,Table2,X} from '../../shared/icons';
 import type {ChatAttachment} from './chatAttachments';
 
 export function ChatAttachmentList({attachments,onRemove}:{
@@ -16,7 +16,7 @@ export function ChatAttachmentList({attachments,onRemove}:{
     <div className="chat-attachments" aria-label={onRemove?'待发送附件':'已发送附件'}>
       {attachments.map(item=><div className="chat-attachment-chip" key={item.id}>
         <button type="button" className="chat-attachment-open" data-attachment-kind={item.kind} title={item.file||item.label} aria-label={`查看附件 ${item.label}`} onClick={()=>setSelected(item)}>
-          {item.kind==='table'?<Table2 size={13}/>:<FileText size={13}/>}<span>{item.label}</span>
+          {item.kind==='table'?<Table2 size={13}/>:item.kind==='folder'?<Folder size={13}/>:item.kind==='repository'?<Icon name="panel.repositories" size={13}/>:<FileText size={13}/>}<span>{item.label}</span>
         </button>
         {onRemove&&<button type="button" className="chat-attachment-remove" aria-label={`移除附件 ${item.label}`} onClick={()=>onRemove(item.id)}><X size={12}/></button>}
       </div>)}

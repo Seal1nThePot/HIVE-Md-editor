@@ -1,8 +1,9 @@
 import {createContext, useContext, useMemo, useRef, type ReactNode} from 'react';
+import {flushSync} from 'react-dom';
 
 export type RepositoryInfo={id:string;root:string;name?:string};
 export type RepositoryAction={action:'add';root:string}|{action:'rename';id:string;name:string}|{action:'remove';id:string}|{action:'reorder';order:string[]};
-export type WorkspaceInfo={id:string;root:string;autoSave:boolean;revision:number;repositories:RepositoryInfo[]};
+export type WorkspaceInfo={id:string;root:string;defaultRepositoryId:string;autoSave:boolean;revision:number;repositories:RepositoryInfo[]};
 export const repositoryName=(root:string)=>root.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||root;
 export const repositoryLabel=(item:RepositoryInfo)=>item.name?.trim()||repositoryName(item.root);
 type Guard=()=>Promise<string|void>;
@@ -17,7 +18,10 @@ export function WorkspaceProvider({info,onChange,children}:{info:WorkspaceInfo;o
   },[info.id]);
   async function write(route:string,body:unknown) {
     const response=await request(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const next=await response.json();if(!response.ok)throw new Error(next.error);onChange(next);
+    const next=await response.json();
+    if(!response.ok)throw new Error(next.error);
+    if(next.id!==latestInfo.current.id)flushSync(()=>onChange(next));
+    else onChange(next);
   }
   const value:WorkspaceContextValue={info,request,register:guard=>{guards.current.add(guard);return()=>{guards.current.delete(guard);};},
     flush:async()=>{for(const guard of guards.current){const error=await guard();if(error)throw new Error(error);}},

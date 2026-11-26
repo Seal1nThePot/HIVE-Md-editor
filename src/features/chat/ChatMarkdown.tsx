@@ -3,6 +3,9 @@ import type { SyntaxNode } from '@lezer/common';
 import { GFM, parser } from '@lezer/markdown';
 import { parseExternalHttpLink } from '../../shared/externalLinks';
 
+import {codeLanguageLabel,codeHighlightRanges,fencedCodeBody} from '../editor/codeHighlight';
+import '../editor/code-block.css';
+
 const markdownParser = parser.configure(GFM);
 const inlineTags = new Map([
   ['StrongEmphasis', 'strong'],
@@ -125,8 +128,21 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, onOpenExternal, d
         return <code>{content.startsWith(' ') && content.endsWith(' ') && content.trim() ? content.slice(1, -1) : content}</code>;
       }
       case 'FencedCode':
-      case 'CodeBlock':
-        return <pre><code>{node.getChildren('CodeText').map(part => text.slice(part.from, part.to)).join('')}</code></pre>;
+      case 'CodeBlock': {
+        const info=node.getChild('CodeInfo');
+        const language=info?text.slice(info.from,info.to):'';
+        const content=fencedCodeBody(text,node);
+        const label=codeLanguageLabel(language);
+        const parts:ReactNode[]=[];
+        let position=0;
+        for(const range of codeHighlightRanges(content,language)){
+          if(range.from>position)parts.push(content.slice(position,range.from));
+          parts.push(<span key={range.from} className={range.className}>{content.slice(range.from,range.to)}</span>);
+          position=range.to;
+        }
+        parts.push(content.slice(position));
+        return <div className="hive-code-block">{label&&<div className="hive-code-language">{label}</div>}<pre><code>{parts}</code></pre></div>;
+      }
       case 'Link':
       case 'Image': {
         const [open, close] = node.getChildren('LinkMark');

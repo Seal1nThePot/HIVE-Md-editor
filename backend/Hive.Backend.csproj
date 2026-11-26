@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Hive.Backend</AssemblyName>
+    <Version>0.1.9</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Markdig" Version="1.6.0" />
+  </ItemGroup>
+</Project>

@@ -21,6 +21,16 @@ describe('chat Markdown',()=>{
     expect(html).toContain('href="https://example.com/read"');
     expect(html).toContain('<pre><code>&lt;literal&gt; &amp; **内容**\n\n[1]</code></pre>');
   });
+  it('shows canonical language labels and safe syntax colors without changing whitespace',()=>{
+    const html=render('```ts\n\n\tconst name = "text";\n\n```');
+    expect(html).toContain('hive-code-language">TypeScript</div>');
+    expect(html).toContain('tok-keyword');
+    expect(html).toContain('tok-string');
+    expect(html).toMatch(/<code>\n\t/);
+    expect(html).toContain(';</span>\n</code>');
+    expect(render('```unknown\n<literal>\n```')).toContain('hive-code-language">unknown</div><pre><code>&lt;literal&gt;</code>');
+    expect(render('```\nplain\n```')).not.toContain('hive-code-language');
+  });
   it('renders unfinished fences as escaped literal text and recovers once a block is complete',()=>{
     expect(render('~~~md\n**literal**\n<img src=x>')).toContain('<code>**literal**\n&lt;img src=x&gt;</code>');
     expect(render('**未闭')).toContain('**未闭');

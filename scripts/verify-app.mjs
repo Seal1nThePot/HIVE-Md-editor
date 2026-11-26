@@ -4,11 +4,14 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
-import {fork,spawn} from 'node:child_process';
+import {spawn} from 'node:child_process';
+import {launchBackend,workspaceBuildPaths} from '../desktop/backendProcess.mjs';
 const project=fileURLToPath(new URL('../',import.meta.url)),require=createRequire(import.meta.url);
 const pkg=JSON.parse(await fs.readFile(path.join(project,'package.json'),'utf8'));
-const output=path.resolve(process.env.HIVE_VERIFY_OUTPUT||path.join(project,'.runtime/checks'));
-const packaged=process.argv.includes('--package'),bundle=path.resolve(process.env.HIVE_VERIFY_BUNDLE||path.join(project,'release')),prefix=packaged?'packaged':'source';
+const expectedVersion=process.env.HIVE_VERIFY_EXPECTED_VERSION||pkg.version;
+const paths=workspaceBuildPaths(project);
+const output=path.resolve(process.env.HIVE_VERIFY_OUTPUT||path.join(paths.work,'evidence','ui'));
+const packaged=process.argv.includes('--package'),bundle=path.resolve(process.env.HIVE_VERIFY_BUNDLE||paths.release),prefix=packaged?'packaged':'source';
 async function worker(){
   const {app,BrowserWindow}=require('electron');app.setPath('userData',path.join(process.argv.at(-1),'profile'));app.disableHardwareAcceleration();await app.whenReady();
   const win=new BrowserWindow({show:false,focusable:false,skipTaskbar:true,width:1600,height:1050,webPreferences:{offscreen:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
@@ -40,21 +43,22 @@ async function worker(){
         }
       }finally{settingsRoot.setProperty('--ui-scale',priorScale);}
       const fixtureEditor=get('.active-editor .split-main .cm-content').cmTile.root.view;
-      const codeLines=()=>[...document.querySelectorAll('.active-editor .cm-line.cm-preview-code-line')];
-      check('hidden code fences leave a framed code body',codeLines().length===3
-        &&getComputedStyle(codeLines()[0]).borderTopLeftRadius==='5px'
-        &&getComputedStyle(codeLines().at(-1)).borderBottomLeftRadius==='5px'
-        &&getComputedStyle(codeLines()[1]).boxShadow!=='none');
+      const codeWidget=()=>get('.active-editor .cm-code-block');
+      await wait(()=>codeWidget()?.querySelector('pre > code'),'short code block preview');
+      const framed=codeWidget();
+      const codeStyle=getComputedStyle(framed);
+      check('short code preview shows its frame, language and exact body',framed.querySelector('.hive-code-language')?.textContent==='C#'
+        &&framed.querySelector('pre > code').textContent.replace(/\\n$/,'')==='log 1\\n\\nlog 2'
+        &&parseFloat(codeStyle.borderTopWidth)>0&&parseFloat(codeStyle.borderTopLeftRadius)>0&&parseFloat(codeStyle.borderBottomLeftRadius)>0);
+      framed.querySelector('pre > code').click();
+      const fence=String.fromCharCode(96).repeat(3);
+      const editorLines=()=>[...document.querySelectorAll('.active-editor .split-main .cm-line')].map(line=>line.textContent);
+      await wait(()=>!codeWidget()&&editorLines().includes(fence+'csharp')&&editorLines().includes(fence),'editable code fences');
       const insideCode=fixtureEditor.state.sliceDoc().indexOf('log 1');
-      fixtureEditor.focus();
-      fixtureEditor.dispatch({selection:{anchor:insideCode+1},userEvent:'select.widget'});
-      check('both visible fences join the same code frame',
-        codeLines().length===5&&codeLines()[0].classList.contains('cm-preview-code-opening')
-        &&codeLines().at(-1).classList.contains('cm-preview-code-closing')
-        &&getComputedStyle(codeLines()[0]).borderTopLeftRadius==='5px'
-        &&getComputedStyle(codeLines()[1]).borderTopLeftRadius==='0px'
-        &&getComputedStyle(codeLines().at(-1)).borderBottomLeftRadius==='5px',
-        codeLines().map(line=>[line.textContent,line.className,getComputedStyle(line).borderRadius]));
+      check('clicking short code enters the editable Markdown frame',insideCode>=0&&fixtureEditor.state.selection.main.from>=insideCode
+        &&fixtureEditor.state.selection.main.from<fixtureEditor.state.sliceDoc().indexOf(fence,insideCode),editorLines());
+      fixtureEditor.dispatch({changes:{from:insideCode,to:insideCode+5,insert:'log 3'},userEvent:'input.type'});
+      check('editing the frame updates source and keeps both fences',fixtureEditor.state.sliceDoc().includes(fence+'csharp\\nlog 3\\n\\nlog 2\\n'+fence));
       get('.home-ribbon [aria-label="居中"]').click();
       await wait(()=>get('.error-toast'),'formatting error toast');
       const errorToast=get('.error-toast'),toastStart=performance.now();
@@ -154,7 +158,7 @@ async function worker(){
       get('[aria-label="切换仓库"]').click();await wait(()=>get('.recent-repositories-manage'),'recent repository menu');
       get('.recent-repositories-manage').click();await wait(()=>get('.repository-card'),'repository manager');check('shared repository manager is integrated',!!get('.repository-current')&&!!get('.repository-rename')&&!get('.repository-auto-save'));
       [...get('.repository-card-actions').querySelectorAll('button')].find(b=>b.textContent.includes('返回写作')).click();await pause();
-      const build=await(await fetch('/build-info.json')).json();check('current build metadata is present',build.version===${JSON.stringify(pkg.version)}&&!!build.buildNumber);
+      const build=await(await fetch('/build-info.json')).json();check('current build metadata is present',build.version===${JSON.stringify(expectedVersion)}&&!!build.buildNumber);
       const menuAction=async(path,text)=>{const row=get('.explorer-row[data-path="'+path+'"]');if(!row)throw Error('Missing file '+path);row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:110,clientY:240}));await wait(()=>get('.explorer-menu'),'file menu');const button=[...get('.explorer-menu').querySelectorAll('button')].find(b=>b.textContent.includes(text));if(!button)throw Error('Missing menu '+text);button.click();await pause();};
       const trash=async path=>{await menuAction(path,'删除到回收站');await wait(()=>get('dialog[aria-label="删除到回收站"]'),'delete confirmation');[...get('dialog[aria-label="删除到回收站"]').querySelectorAll('button')].find(b=>b.textContent==='移到回收站').click();await wait(()=>!get('.explorer-row[data-path="'+path+'"]'),'delete complete');await pause();};
       const open=async(path,text)=>{get('.explorer-row[data-path="'+path+'"]').click();await wait(()=>get('.document-pane .cm-content')?.textContent.includes(text),'open '+path);};
@@ -238,8 +242,17 @@ async function worker(){
       await wait(()=>candidate()?.value==='关联批注的建议','linked polish comparison');
       get('[data-panel-tab="'+siblingTab.dataset.panelTab+'"]').click();
       await wait(()=>reviewButton('对话甲.md')&&linkedPencil(),'linked comparison parked in the mirrored tab');
+      const deletePrompt=()=>get('dialog.annotation-delete-confirm[open]');
       linkedPencil().dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
-      await wait(()=>!reviewButton('对话甲.md')&&!linkedPencil(),'right-click cancels the matching review parked in the other copy');
+      await wait(deletePrompt,'confirm deleting the linked annotation');
+      check('asking to delete keeps the annotation and linked comparison',!!reviewButton('对话甲.md')&&!!linkedPencil());
+      deletePrompt().querySelector('button').click();
+      await wait(()=>!deletePrompt(),'cancel annotation deletion');
+      check('declining keeps the matching review parked in the other copy',!!reviewButton('对话甲.md')&&!!linkedPencil());
+      linkedPencil().dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
+      await wait(deletePrompt,'reopen delete confirmation');
+      deletePrompt().querySelector('.annotation-delete-danger').click();
+      await wait(()=>!reviewButton('对话甲.md')&&!linkedPencil(),'confirmed deletion clears the matching review parked in the other copy');
       check('annotation cancellation clears the linked comparison across two tabs without changing the body',activeDocument().state.sliceDoc().includes('甲稿原句。手写尾句。'));
 
       await menuAction('对话乙.md','在新标签页中打开');
@@ -298,10 +311,13 @@ else{
     await fs.writeFile(path.join(docs,'编辑显示验收.md'),['正文 <mark>主题高亮</mark>。','',fence+'csharp','log 1','','log 2',fence,'','代码后正文。'].join('\n'));
     const paragraph='这是用于整合验证的中文与 English mixed text，数字 12345、标点和很长的网址 https://example.org/research/2026/notes?language=English&version=12345 都保持原文。';
     await fs.writeFile(path.join(docs,'整合验收.md'),'# 整合验收\n\n> **最终入口：** '+paragraph.repeat(2)+'\n\n![[示例 图.png]]\n\n- [ ] 整合待办\n\n| 标题甲 | 标题乙 |\n| :--- | ---: |\n| 内容甲 | 内容乙 |\n\n这是本轮合成资料，不含用户文稿。\n');
-    const appRoot=packaged?path.join(bundle,'win-unpacked'):null,backend=appRoot?path.join(appRoot,'resources/app.asar/server/index.mjs'):path.join(project,'server/index.mjs');
-    server=fork(backend,['--production'],{execPath:appRoot?path.join(appRoot,'HIVE markdown editor.exe'):process.execPath,cwd:project,silent:true,windowsHide:true,env:{...process.env,...(appRoot?{ELECTRON_RUN_AS_NODE:'1'}:{}),HIVE_PORT:'0',HIVE_DOCUMENTS:docs,HIVE_STATE_DIR:path.join(temp,'state'),HIVE_API_KEY:''}});server.stdout.on('data',v=>serverLog+=v);server.stderr.on('data',v=>serverLog+=v);
-    const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Integrated backend timeout')),15000);server.once('error',reject);server.once('exit',code=>{clearTimeout(timer);reject(new Error('Integrated backend exited '+code+'\n'+serverLog));});server.on('message',m=>{if(m?.type==='hive-ready'){clearTimeout(timer);resolve(m.port);}});});
-    const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const child=spawn((await import('electron')).default,[fileURLToPath(import.meta.url),'--integrated-worker',...(packaged?['--package']:[]),String(port),temp],{cwd:project,windowsHide:true,env,stdio:['ignore','pipe','pipe']});let log='';child.stdout.on('data',v=>log+=v);child.stderr.on('data',v=>log+=v);
+    const resources=packaged?path.join(bundle,'win-unpacked','resources'):undefined;
+    server=launchBackend({root:project,resources,env:{HIVE_PORT:'0',HIVE_DOCUMENTS:docs,HIVE_STATE_DIR:path.join(temp,'state'),HIVE_API_KEY:''},onLine:line=>serverLog+=line+'\n',onError:line=>serverLog+=line});
+    const backend=await server.ready;
+    const {port}=backend;
+    const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+    const hostFlags=env.HIVE_TEST_ELECTRON_NO_SANDBOX==='1'?['--no-sandbox']:[];
+    const child=spawn((await import('electron')).default,[...hostFlags,fileURLToPath(import.meta.url),'--integrated-worker',...(packaged?['--package']:[]),String(port),temp],{cwd:project,windowsHide:true,env,stdio:['ignore','pipe','pipe']});let log='';child.stdout.on('data',v=>log+=v);child.stderr.on('data',v=>log+=v);
     const code=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{child.kill();reject(new Error('Integrated UI timeout'));},45000);child.once('error',reject);child.once('exit',code=>{clearTimeout(timer);resolve(code);});});await fs.writeFile(path.join(output,prefix+'-app.log'),log);console.log(log);assert.equal(code,0);
-  }finally{await fs.writeFile(path.join(output,prefix+'-server.log'),serverLog);if(server&&server.exitCode===null)await new Promise(resolve=>{server.once('exit',resolve);server.kill();});const resolved=path.resolve(temp);assert.equal(path.dirname(resolved),path.resolve(output));assert.ok(path.basename(resolved).startsWith('.app-check-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
+  }finally{await fs.writeFile(path.join(output,prefix+'-server.log'),serverLog);await server?.stop();const resolved=path.resolve(temp);assert.equal(path.dirname(resolved),path.resolve(output));assert.ok(path.basename(resolved).startsWith('.app-check-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 }

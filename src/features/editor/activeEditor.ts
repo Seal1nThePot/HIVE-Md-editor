@@ -9,12 +9,12 @@ export function activeEditor(
   const current = () => sessions.current.get(activeId.current);
   return {
     get session() { return current(); },
-    view: { get current() { return current()?.view ?? null; } },
+    view: { get current() { const session=current();return session?.external?null:session?.view??null; } },
     disk: { get current() { return current()?.disk ?? null; } },
     editorState: {
       get current() {
         const session = current();
-        return session?.view?.state ?? session?.state ?? null;
+        return session?.external?null:session?.view?.state ?? session?.state ?? null;
       },
     },
   };

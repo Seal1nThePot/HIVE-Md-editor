@@ -6,7 +6,7 @@ import type { Mode } from '../../shared/core';
 import type { DiskFile } from '../../shared/fileTypes';
 import type { EditorSession } from '../editor/editorSessionTypes';
 import { makeState } from '../editor/Editor';
-import { matchesViewEditor, omitTrashPreviewTabs, remapViewLayout, type ViewPreset, type ViewSnapshot } from './viewPresets';
+import { matchesViewEditor, omitTransientDocumentTabs, remapViewLayout, type ViewPreset, type ViewSnapshot } from './viewPresets';
 import type { usePanelWorkspace } from './usePanelWorkspace';
 
 const uid = () => crypto.randomUUID();
@@ -48,13 +48,14 @@ type ViewSnapshotsOptions = {
 /** 视图快照的采集与应用：把「当前打开哪些标签、各自滚动到哪」存成可复用的视图预设。 */
 export function useViewSnapshots({ workspace, sessions, activeSession, bindings, activateEditor, api, appearance, statusPreferences, mode, currentMode, appAlive, viewApplying, running, switching, fileBusy, filter, setFilter, collapsed, setCollapsed, chatOrb, setChatOrb, orbPosition, orbBounds, redraw }: ViewSnapshotsOptions) {
     function captureView(): ViewSnapshot {
-        const layout = omitTrashPreviewTabs(workspace.capture());
-        const activeEditor=sessions.current.get(activeSession.current)?.trashPreview?
+        const externalTabs=new Set([...sessions.current.values()].filter(session=>session.external).map(session=>session.id));
+        const layout = omitTransientDocumentTabs(workspace.capture(),externalTabs);
+        const activeEditor=sessions.current.get(activeSession.current)?.trashPreview||externalTabs.has(activeSession.current)?
             [...layout.open,...layout.minimized].find(id=>sessions.current.has(id))??'editor':activeSession.current;
         const included = new Set([...layout.open, ...layout.minimized, activeEditor]);
         return {
             layout,
-            editors: [...sessions.current.values()].filter(session => !session.trashPreview&&included.has(session.id)).map(session => {
+            editors: [...sessions.current.values()].filter(session => !session.trashPreview&&!session.external&&included.has(session.id)).map(session => {
                 captureEditorView(session);
                 const state = session.view?.state || session.state, range = state?.selection.main;
                 return { id: session.id, file: session.disk?.path || null, imagePath:session.imagePath, anchor: range?.anchor || 0, head: range?.head || 0, scrollTop: session.restoreScroll ?? 0,scrollLeft:session.restoreScrollLeft??0, typewriter: !!session.typewriter, displayMode: session.displayMode || 'live', landing: !!session.landing };

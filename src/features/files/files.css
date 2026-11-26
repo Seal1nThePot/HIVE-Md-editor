@@ -68,6 +68,9 @@
 .file-conflict {display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;background:color-mix(in srgb,var(--hive-danger) 16%,var(--hive-panel-bg));color:inherit;font-size:calc(11px * var(--text-scale));flex:none;}
 .file-conflict span {flex:1;min-width:120px;}
 .file-conflict button {padding:4px 7px;border:1px solid var(--hive-danger);background:transparent;color:inherit;border-radius:3px;}
+.external-document-bar {display:flex;flex:none;gap:8px;align-items:center;padding:4px 12px;border-bottom:1px solid var(--line);font-size:calc(11px * var(--text-scale,1));}
+.external-document-bar > span {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.external-document-bar > button {flex:none;padding:4px 7px;border:1px solid var(--hive-input-border);border-radius:4px;}
 .workspace-autosave {display:flex;gap:8px;align-items:center;}
 .status-bar-settings {margin-bottom:20px;}
 .status-bar-settings p {color:var(--hive-header-text);font-size:calc(12px * var(--text-scale));line-height:1.8;}

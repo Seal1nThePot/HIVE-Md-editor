@@ -14,11 +14,13 @@ import {type ChatAnnotationBatch,type ChatMessageDetails,type Message} from '../
 import {trashPreviewTabPrefix,type EditorSession} from '../features/editor/editorSessionTypes';
 import type {Dialog} from '../features/editor/editorDialogTypes';
 import {useDocumentPersistence} from '../features/files/useDocumentPersistence';
+import {listNormalizationEvent} from '../features/editor/normalizeOrderedLists';
 import {useFileActions} from '../features/files/useFileActions';
 import {useViewSnapshots} from '../features/workspace/useViewSnapshots';
 import {PanelFrame,PanelControls,emptyPanelFooter,type PanelChrome} from '../features/workspace/PanelFrame';
 import {AppHeader} from './AppHeader';
-import {WindowAnnotationProvider,useWindowAnnotations,useWindowAnnotationGesture,type WindowMark} from '../features/annotations/windowAnnotations';
+import {WindowAnnotationProvider,useWindowAnnotations,useWindowAnnotationGesture,type WindowMark,type WorkspaceAnnotationTarget} from '../features/annotations/windowAnnotations';
+import {workspaceAnnotationAttachment} from '../features/annotations/workspaceAnnotationAttachment';
 import {useAnnotationActions} from '../features/annotations/useAnnotationActions';
 import HistoryPage,{type HistoryPageProps,type HistoryTab} from '../features/history/HistoryPage';
 import {historyTextChanges,historyTextPatch,planHistoryText} from '../features/history/historyText';
@@ -40,10 +42,12 @@ import {documentMatchesText} from '../features/editor/documentText';
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type FormEvent,
+  type RefObject,
 } from "react";
 import {WorkspaceProvider, useFileWorkspace, type WorkspaceInfo} from "../features/files/WorkspaceContext";
 import type {AnnotationContext} from '../features/editor/EditorContextMenu';
@@ -56,7 +60,10 @@ import FileExplorer,{type FileAction} from "../features/files/FileExplorer";
 import FilePicker from '../features/files/FilePicker';
 import {readRecentDocuments,rememberRecentDocument} from '../features/files/recentDocuments';
 import NewTabPage,{NewTabButton} from '../features/editor/NewTabPage';
-import {flattenEntries,type Entry} from "../features/files/explorerState";
+import {flattenEntries,parentPath,type Entry} from "../features/files/explorerState";
+import {applyWorkspaceTreeReport,initialWorkspaceTreeStatus,type WorkspaceTreeReport} from "../features/files/workspaceSync";
+import QuickOpenPanel from '../features/files/QuickOpenPanel';
+import {useQuickOpen} from '../features/files/useQuickOpen';
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { EditorSelection } from "@codemirror/state";
 import {undo as undoDocument,redo as redoDocument} from '@codemirror/commands';
@@ -92,13 +99,15 @@ import Ribbon from "../features/ribbon/Ribbon";
 import WritingOutline from "../features/outline/WritingOutlineV2";
 import { targetForNode,type WritingNode } from "../features/outline/writingNodes";
 import { useWritingNodes } from "../features/outline/useWritingNodes";
-import { usePanelWorkspace } from "../features/workspace/usePanelWorkspace";
+import { usePanelWorkspace, type PanelWorkspacePlacement } from "../features/workspace/usePanelWorkspace";
+import { isEditorPanel, PRIMARY_EDITOR } from "../features/workspace/workspacePolicy";
+import { findPanelGroup, omitWorkspacePanels } from "../features/workspace/workspaceState";
 import PanelControl from "../features/workspace/PanelControl";
 import ViewControls from "../features/workspace/ViewControls";
 import PanelIconRail from "../features/workspace/PanelIconRail";
 import type {DockEdge} from "../features/workspace/panelLayout";
 import WritingModeControl from "../features/chat/WritingModeControl";
-import GlobalToolbar from "../features/chat/GlobalToolbar";
+import {createGlobalToolbarStore,PersistentGlobalToolbar} from '../features/chat/GlobalToolbar';
 import {useReferenceSources,type AttachmentReferenceSource,type ReferenceSource,type WorkspaceReferenceSource} from '../features/chat/referenceSources';
 import {REFERENCE_DRAG_TYPE,readReferenceDrag} from '../features/files/referenceDrag';
 import {CHAPTER_DRAG_TYPE,appendDraftContext,chapterForQuickAI,readChapterDrag,type ChapterDrag} from '../features/chat/contextDraft';
@@ -120,6 +129,8 @@ import RailEdgeHandle from "../features/workspace/RailEdgeHandle";
 import {ShortcutPreferencesProvider,useShortcutPreferences} from '../features/settings/ShortcutPreferences';
 import {matchesShortcut,shortcutLabel} from '../features/settings/shortcuts';
 import SettingsPage, {type SettingsSection} from "../features/settings/SettingsPage";
+import {usePlugins} from '../features/settings/usePlugins';
+import {freezeWorkspaceInput} from './freezeWorkspaceInput';
 import {initialConfig, parseModelChoice, selectedModelEntry, type Config, type ModelProbeRequest, type ModelProbeResult} from "../features/settings/modelConfig";
 import { useAppearance } from "../features/settings/useAppearance";
 import {useAnnotationPreferences} from '../features/settings/useAnnotationPreferences';
@@ -155,20 +166,40 @@ import {
 const uid = () => crypto.randomUUID();
 const FileTextIcon=iconComponent('file.text');
 const railIcons:Record<string,typeof FileTextIcon>={
-  files:DocumentsPanel,repositories:iconComponent('panel.repositories'),conversation:MessageSquare,
+  files:DocumentsPanel,'quick-open':DocumentsPanel,repositories:iconComponent('panel.repositories'),conversation:MessageSquare,
   outline:OutlinesPanel,toc:ContentsPanel,scratch:ScratchPanel,annotations:Highlighter,properties:NoteProperties,
   basis:iconComponent('panel.basis'),search:iconComponent('editor.findReplace'),trash:Trash2,
 };
 
+type RepositoryPanelPlacement=PanelWorkspacePlacement & {activeEditor:string};
+
 export default function App() {
   useApplyTheme();
-  const [info,setInfo]=useState<WorkspaceInfo|null>(null),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
-  useEffect(()=>{let alive=true;fetch('/api/workspace').then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);if(alive){setInfo(data);setError('');}}).catch(error=>{if(alive)setError(error.message);});return()=>{alive=false;};},[attempt]);
-  if(!info)return <div className="workspace-loading" role="status">{error||'正在打开写作空间…'}{error&&<button onClick={()=>setAttempt(value=>value+1)}>重试</button>}</div>;
-  return <WorkspaceProvider key={info.id} info={info} onChange={setInfo}><ShortcutPreferencesProvider><WindowAnnotationProvider><DesktopPanelsProvider><WritingApp/></DesktopPanelsProvider></WindowAnnotationProvider></ShortcutPreferencesProvider></WorkspaceProvider>;
+  const [current,setCurrent]=useState<{info:WorkspaceInfo;placement?:RepositoryPanelPlacement}|null>(null);
+  const [error,setError]=useState(''),[attempt,setAttempt]=useState(0);
+  const [toolbarStore]=useState(createGlobalToolbarStore);
+  const capturePlacement=useRef<(()=>RepositoryPanelPlacement)|null>(null);
+  useEffect(()=>{let alive=true;fetch('/api/workspace').then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);if(alive){setCurrent({info:data});setError('');}}).catch(error=>{if(alive)setError(error.message);});return()=>{alive=false;};},[attempt]);
+  if(!current)return <div className="workspace-loading" role="status">{error||'正在打开写作空间…'}{error&&<button onClick={()=>setAttempt(value=>value+1)}>重试</button>}</div>;
+  const {info,placement}=current;
+  function changeWorkspace(next:WorkspaceInfo){
+    setCurrent({info:next,placement:next.id===info.id?placement:capturePlacement.current?.()});
+  }
+  return <WindowAnnotationProvider scopeKey={info.id}><DesktopPanelsProvider>
+    <WorkspaceProvider key={info.id} info={info} onChange={changeWorkspace}><ShortcutPreferencesProvider>
+      <WritingApp initialPlacement={placement} capturePlacement={capturePlacement} toolbarStore={toolbarStore}/>
+    </ShortcutPreferencesProvider></WorkspaceProvider>
+    <PersistentGlobalToolbar store={toolbarStore}/>
+  </DesktopPanelsProvider></WindowAnnotationProvider>;
 }
-function WritingApp() {
+function WritingApp({initialPlacement,capturePlacement,toolbarStore}:{
+  initialPlacement?:RepositoryPanelPlacement;
+  capturePlacement:RefObject<(()=>RepositoryPanelPlacement)|null>;
+  toolbarStore:ReturnType<typeof createGlobalToolbarStore>;
+}) {
   const desktopPanels = useDesktopPanels();
+  const latestDesktop = useRef(desktopPanels);
+  latestDesktop.current = desktopPanels;
   const {bindings:shortcutBindings}=useShortcutPreferences();
   const {markedPanels,marks,remove:removeWindowMark}=useWindowAnnotations();
   const closing = useRef(false);
@@ -184,7 +215,10 @@ function WritingApp() {
   useEffect(()=>{void history.read();},[history.read]);
   const api=<T,>(url:string,body?:unknown)=>requestApi<T>(request,url,body);
   const statusPreferences=useStatusPreferences();
+  const plugins=usePlugins();
+  const statusPlugins=plugins.catalog?.plugins.filter(plugin=>plugin.enabled);
   const switching=useRef(false),structuring=useRef(false);
+  const committingWorkspace=useRef(false);
 
   const workbenchRef = useRef<HTMLDivElement>(null);
   const appearanceSettings=useAppearance();
@@ -192,11 +226,27 @@ function WritingApp() {
   const panelIconDragPreferences=usePanelIconDragPreferences();
   const aiButtonLayout=useAIButtonLayout();
   const aiResponsePreferences=useAIResponsePreferences();
-  const workspace = usePanelWorkspace(workbenchRef, id => {if(sessions.current.has(id))activateEditor(id);},28*appearanceSettings.appearance.uiScale/100,appearanceSettings.appearance.panelLockGesture);
-  const sessions = useRef(new Map<string, EditorSession>([["editor", {id:"editor",disk:null,state:null,view:null,dirty:false,landing:true}]]));
+  const workspace = usePanelWorkspace(workbenchRef, id => {if(sessions.current.has(id))activateEditor(id);},28*appearanceSettings.appearance.uiScale/100,appearanceSettings.appearance.panelLockGesture,initialPlacement);
+  const [initialSessions]=useState(()=>new Map<string,EditorSession>(
+    [...new Set([PRIMARY_EDITOR,...(initialPlacement?.layout.open??[]),...(initialPlacement?.layout.minimized??[])])]
+      .filter(isEditorPanel)
+      .map(id=>[id,{id,disk:null,state:null,view:null,dirty:false,landing:true}]),
+  ));
+  const sessions = useRef(initialSessions);
   const [recentOpen,setRecentOpen]=useState(false),[newNoteBusy,setNewNoteBusy]=useState(false),[renameRequest,setRenameRequest]=useState<{path:string;key:string}>();
   const creatingNote=useRef(false);
-  const activeSession = useRef("editor"), syncingSessions = useRef(false);
+  const activeSession = useRef(initialPlacement?.activeEditor??PRIMARY_EDITOR), syncingSessions = useRef(false);
+  useLayoutEffect(()=>{
+    capturePlacement.current=()=>{
+      const placement=workspace.capturePlacement();
+      const layout=omitWorkspacePanels(placement.layout,id=>id!=='repositories'&&!id.startsWith(trashPreviewTabPrefix)&&!sessions.current.get(id)?.external);
+      const openEditors=layout.open.filter(isEditorPanel);
+      const primaryTab=findPanelGroup(layout.tree,PRIMARY_EDITOR)?.active??PRIMARY_EDITOR;
+      const activeEditor=[activeSession.current,primaryTab].find(id=>openEditors.includes(id))??openEditors[0]??PRIMARY_EDITOR;
+      // The repository owns the sessions. A retained editor slot starts on a blank landing page.
+      return {...placement,layout,activeEditor};
+    };
+  });
   const active = useMemo(() => activeEditor(sessions, activeSession), [sessions, activeSession]);
   const {view, disk, editorState} = active;
   const activeEditorId = activeSession.current;
@@ -215,8 +265,8 @@ function WritingApp() {
   function panelLabel(id:string) {
     const session=sessions.current.get(id);
     if(session?.trashPreview)return '回收站 · '+(session.trashPreview.path.split('/').at(-1)||session.trashPreview.path);
-    if(session)return session.landing?'新标签页':(session.imagePath||session.disk?.path)?.split('/').at(-1)||'未命名稿';
-    return ({files:'文档',repositories:'仓库管理',conversation:'对话',outline:'大纲',toc:'标题目录',scratch:'草稿',annotations:'标注',basis:'依据',search:'查找替换',trash:'回收站',properties:'笔记属性'} as Record<string,string>)[id]||id;
+    if(session)return session.landing?'新标签页':(session.imagePath||session.disk?.path||session.external?.disk.path)?.split('/').at(-1)||'未命名稿';
+    return ({files:'文档','quick-open':'快速打开文档',repositories:'仓库管理',conversation:'对话',outline:'大纲',toc:'标题目录',scratch:'草稿',annotations:'标注',basis:'依据',search:'查找替换',trash:'回收站',properties:'笔记属性'} as Record<string,string>)[id]||id;
   }
   const leftPanel = workspace.panel("files"), rightPanel = workspace.panel("conversation");
   const conversationHasNativeTabs = (desktopPanels.paneMembers('conversation')?.length ?? 0) > 1;
@@ -224,10 +274,10 @@ function WritingApp() {
   const [focusFileSearch,setFocusFileSearch]=useState(false);
   useEffect(()=>{
     if(!focusFileSearch)return;
-    const input=leftPanel.ref.current?.querySelector<HTMLInputElement>('input[aria-label="筛选文件"]');
-    if(!input?.isConnected||input.disabled||!input.getClientRects().length)return;
-    if(input.ownerDocument!==document)desktopPanels.focus('files');
-    input.focus({preventScroll:true});
+    const control=leftPanel.ref.current?.querySelector<HTMLInputElement|HTMLButtonElement>('input[aria-label="筛选文件"],button[aria-label="查找文件"]');
+    if(!control?.isConnected||control.disabled||!control.getClientRects().length)return;
+    if(control.ownerDocument!==document)desktopPanels.focus('files');
+    if(control.tagName==='BUTTON')control.click();else control.focus({preventScroll:true});
     setFocusFileSearch(false);
   });
   const scratchView = useRef<EditorView | null>(null),
@@ -248,8 +298,11 @@ function WritingApp() {
     importRef = useRef<HTMLInputElement>(null),
     messagesEnd = useRef<HTMLDivElement>(null);
   const [entries, setEntries] = useState<Entry[]>([]),
-    [root, setRoot] = useState(""),
     [tick, setTick] = useState(0);
+  const [treeStatus,setTreeStatus]=useState(initialWorkspaceTreeStatus);
+  const reportTree=useCallback((report:WorkspaceTreeReport)=>setTreeStatus(current=>applyWorkspaceTreeReport(current,report)),[]);
+  const quickOpen=useQuickOpen(fileWorkspace.info.id,entries);
+  const [quickOpenError,setQuickOpenError]=useState('');
   useEffect(()=>{if(file)rememberRecentDocument(fileWorkspace.info.id,file);},[fileWorkspace.info.id,file]);
   const [scratchReady, setScratchReady] = useState(0);
   const [chatTab, setChatTab] = useState<"conversation" | "annotations">(
@@ -276,7 +329,7 @@ function WritingApp() {
     if(id==='properties'&&(searchInScratch||!propertyTargetAvailable.current))return mark;
     if(id==='outline'&&!/\.md$/i.test(session.disk.path))return mark;
     return {...mark,document:{sessionId:activeEditorId,file:session.disk.path}};
-  },{enabled:annotationTool,has:isMarkdownTab,stage:stageDocumentTab});
+  },{enabled:annotationTool,has:isMarkdownTab,stage:stageDocumentTab,canMarkWindow:isWindowTool,labelForWindow:panelLabel,stageWorkspaceTarget});
   // Several panels in the same native group share its document and annotation UI.
   const annotationOwners=new Map<string,Document>([['',document]]);
   for(const [id,popup] of desktopPanels.windows)annotationOwners.set(desktopPanels.owner(id),popup.document);
@@ -404,7 +457,8 @@ function WritingApp() {
     try{
       for(const other of sessions.current.values()){
         if(other===session||other.disk?.path!==session.disk?.path||!other.state?.doc.eq(transaction.startState.doc))continue;
-        const effect={changes:transaction.changes,userEvent:'input.shared-document'};
+        const annotations=transaction.isUserEvent(listNormalizationEvent)?Transaction.addToHistory.of(false):undefined;
+        const effect={changes:transaction.changes,userEvent:'input.shared-document',annotations};
         if(other.view)other.view.dispatch(effect);
         else applyStored(other,other.state.update(effect),false);
       }
@@ -435,7 +489,7 @@ function WritingApp() {
   const {savingPaths,fileConflicts,saveSession,applyDiskFile}=useDocumentPersistence({
     api, appAlive, workspace: fileWorkspace.info, sessions, switching, structuring,
     fileBusy, tick, autoSave: fileWorkspace.info.autoSave, pendingProposal,
-    setFileBusy, setEntries, setError, inform, redraw, onStoredChange: handleStoredChange,
+    setFileBusy, setEntries, reportTree, setError, inform, redraw, onStoredChange: handleStoredChange,applyFormatting:applyNoteTransaction,
   });
   const onUpdate = useCallback((update: ViewUpdate) => {
     annotations.map("document", update);
@@ -510,7 +564,7 @@ function WritingApp() {
       });
       sessionScrollBindings.current.set(id,()=>{next.scrollDOM.removeEventListener('scroll',remember);if(frame!==undefined)window.cancelAnimationFrame(frame);});
     }
-    if (activeSession.current === id && next) {
+    if (activeSession.current === id && next && !session.external) {
       annotations.syncEditor("document", next, session.disk?.path);
       setScratchReady(value => value + 1);
     }
@@ -521,14 +575,17 @@ function WritingApp() {
       for(const transaction of update.transactions)humanHistory.track(id,session.disk.path,transaction);
     session.state = update.state;
     if(update.docChanged)session.contentVersion=(session.contentVersion||0)+1;
-    if(update.docChanged)session.dirty = !documentMatchesText(update.state.doc,session.disk?.text || "");
+    if(update.docChanged)session.dirty = !documentMatchesText(update.state.doc,session.external?.disk.text ?? session.disk?.text ?? "");
+    if(session.external){if(update.docChanged)redraw();return;}
     if (update.docChanged && !syncingSessions.current && session.disk) {
       syncingSessions.current = true;
       try {
         for (const other of sessions.current.values()) {
           if (other.id === id || other.disk?.path !== session.disk.path || !other.state?.doc.eq(update.startState.doc)) continue;
-          if (other.view) other.view.dispatch({changes:update.changes,userEvent:"input.shared-document"});
-          else {const transaction=other.state.update({changes:update.changes,userEvent:'input.shared-document'});other.state=transaction.state;other.contentVersion=(other.contentVersion||0)+1;other.dirty=!documentMatchesText(other.state.doc,other.disk.text);mapStoredSessionContext(other.context,transaction);handleStoredChange(other.id,transaction,activeSession.current!==id);}
+          const annotations=update.transactions.some(transaction=>transaction.isUserEvent(listNormalizationEvent))?Transaction.addToHistory.of(false):undefined;
+          const effect={changes:update.changes,userEvent:'input.shared-document',annotations};
+          if (other.view) other.view.dispatch(effect);
+          else {const transaction=other.state.update(effect);other.state=transaction.state;other.contentVersion=(other.contentVersion||0)+1;other.dirty=!documentMatchesText(other.state.doc,other.disk.text);mapStoredSessionContext(other.context,transaction);handleStoredChange(other.id,transaction,activeSession.current!==id);}
         }
       } finally { syncingSessions.current = false; }
     }
@@ -541,7 +598,7 @@ function WritingApp() {
   };
   function activateEditor(id: string) {
     const next=sessions.current.get(id)!;
-    if(next.trashPreview&&activeTextSource.current!=='document'){activeTextSource.current='document';if(id===activeSession.current)redraw();}
+    if((next.trashPreview||next.external)&&activeTextSource.current!=='document'){activeTextSource.current='document';if(id===activeSession.current)redraw();}
     if (id === activeSession.current) return;
     const previous = sessions.current.get(activeSession.current)!;
     captureEditorView(previous);
@@ -550,8 +607,8 @@ function WritingApp() {
     activeSession.current=id;
     proposal.current=next.context?.proposal||null; undo.current=next.context?.undo||[];
     setWritingNodeId(next.context?.writingNodeId||null);
-    setOutline(next.state?headings(next.state):[]);
-    const range=next.state?.selection.main;
+    setOutline(next.state&&!next.external?headings(next.state):[]);
+    const range=next.external?undefined:next.state?.selection.main;
     setSelection(range&&next.state?{from:range.from,to:range.to,text:next.state.sliceDoc(range.from,range.to)}:{from:0,to:0,text:""});
     setInlineRequest(null);setScratchReady(value=>value+1);setError("");
   }
@@ -786,19 +843,39 @@ function WritingApp() {
     return retained;
   }
 
-  const { refresh, openFile, safeSwitch, openSaveAs, save, openBlankTab, createQuickNote, openExplorerFile, manageFile, preflightFileActions, reloadFromDisk, switchWorkspace, submitDialog, importFile } = useFileActions({
+  const { refresh, openFile, safeSwitch, openSaveAs, save, openBlankTab, createQuickNote, openExplorerFile, openDocumentPath, manageFile, preflightFileActions, reloadFromDisk, switchWorkspace, removeRepository, submitDialog, importFile } = useFileActions({
     api, appAlive, promptRef, hasUnsentChatDraft:()=>unsentDraft.current, dialogRef, uid, workspace, sessions, activeSession, activeTextSource,
+    beforeWorkspaceCommit:()=>{
+      const desktop=latestDesktop.current;
+      const views=[...sessions.current.values()].flatMap(session=>session.view?[session.view]:[]);
+      if(scratchView.current)views.push(scratchView.current);
+      if(desktop.isComposing()||views.some(view=>view.composing))throw new Error('请先完成当前输入法组词，再切换文件夹。');
+      const release=freezeWorkspaceInput([document,...[...desktop.windows.values()].map(popup=>popup.document)],views);
+      committingWorkspace.current=true;
+      return restoreFocus=>{
+        try {release(restoreFocus);}
+        finally {committingWorkspace.current=false;}
+      };
+    },
     proposal, undo, prompt, dialog, running, requestAnchor, structuring, switching, viewApplying,
-    creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,
+    creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,applyFormatting:applyNoteTransaction,
     onApplied:(action,result,actor)=>{
+      if(result.type==='folder'){
+        if((action.action==='rename'||action.action==='move')&&result.from)quickOpen.updatePath(result.from,result.path);
+        if(action.action==='trash')quickOpen.updatePath(result.path);
+      }
       const label=({create:'创建文件或文件夹',trash:'移入回收站',restore:'从回收站恢复',rename:'重命名',move:'移动',duplicate:'复制'} as Record<string,string>)[action.action];
       if(label&&result.path&&(action.action!=='rename'&&action.action!=='move'||result.from))recordHistory({actor,kind:'file',file:result.path,label,
         changes:{file:{action:action.action,path:result.path,id:result.id||action.id,from:result.from}}});
     },
     annotations, references, bindings, stop, redraw, inform, setError, setFileBusy, setNewNoteBusy,
-    setEntries, setRoot, setConfirm, setDialog, setFilter, setRenameRequest, setCollapsed,
+    setEntries, reportTree, setConfirm, setDialog, setFilter, setRenameRequest, setCollapsed,
     setTrashRevision, setInlineRequest, setOutline, setSelection, setWritingNodeId,
   });
+  async function openAndCount(path:string,newTab=false,reuseExisting=false){
+    await openExplorerFile(path,newTab,reuseExisting);
+    if(appAlive.current&&!switching.current&&[...sessions.current.values()].some(session=>session.disk?.path===path))quickOpen.visit(parentPath(path));
+  }
   async function openTrashedDocument(item:TrashRecord){
     const unavailable=()=>structuring.current||switching.current||viewApplying.current||!!requestAnchor.current&&running.current;
     const checkRoom=()=>{
@@ -940,7 +1017,7 @@ function WritingApp() {
   const [chatDropTarget,setChatDropTarget]=useState(false);
   function isMarkdownTab(id:string){
     const session=sessions.current.get(id);
-    return !!session&&!session.landing&&!session.imagePath&&!session.trashPreview&&(!session.disk||/\.md$/i.test(session.disk.path));
+    return !!session&&!session.landing&&!session.imagePath&&!session.trashPreview&&!session.external&&(!session.disk||/\.md$/i.test(session.disk.path));
   }
   function stageAttachment(attachment:Omit<ChatAttachment,'id'>){
     const snapshot={...attachment,id:uid()};
@@ -950,7 +1027,25 @@ function WritingApp() {
   function stageDocumentTab(id:string){
     const session=sessions.current.get(id),state=session?.view?.state??session?.state;
     if(!isMarkdownTab(id)||!state)return;
-    stageAttachment({kind:'document',file:session?.disk?.path||'',label:panelLabel(id),text:state.doc.toString()});
+    const path=session?.disk?.path||'';
+    stageAttachment({kind:'document',file:path,label:panelLabel(id),text:state.doc.toString(),
+      reference:path?{workspaceId:fileWorkspace.info.id,path}:undefined});
+  }
+  function stageWorkspaceTarget(target:WorkspaceAnnotationTarget){
+    if(switching.current||closing.current)return;
+    void workspaceAnnotationAttachment(target,{
+      workspaceId:fileWorkspace.info.id,entries,repositories:fileWorkspace.info.repositories,request,
+      findOpenDocument:path=>{
+        const active=sessions.current.get(activeSession.current);
+        const matches=[...sessions.current.values()].filter(session=>session.disk?.path===path);
+        const session=active?.disk?.path===path?active:matches.find(candidate=>candidate.dirty)??matches[0];
+        return (session?.view?.state??session?.state)?.doc.toString();
+      },
+    }).then(attachment=>{
+      if(appAlive.current&&!switching.current&&!closing.current)stageAttachment(attachment);
+    }).catch(error=>{
+      if(appAlive.current&&!switching.current)setError(error instanceof Error?error.message:'无法添加标注。');
+    });
   }
   function stageEditorSelection(id:string,text:string,table?:{ordinal:number}){
     const file=sessions.current.get(id)?.disk?.path||'';
@@ -1015,7 +1110,7 @@ function WritingApp() {
       if(id!=='editor'&&!closeEditor(id))return;
       humanHistory.forget(id);
       setError('');
-      if(session.trashPreview){sessions.current.delete(id);redraw();return;}
+      if(session.trashPreview||session.external){sessions.current.delete(id);redraw();return;}
       if(originalProposal&&retainedProposal()){
         if(id!=='editor'){
           redraw();
@@ -1046,7 +1141,7 @@ function WritingApp() {
   useEffect(() => {
     let cancelled = false;
     const onError=(error:Error)=>{if(!cancelled)setError(error.message);};
-    void refresh().catch(onError);
+    void refresh().catch(()=>{/* The file tree retains its own error state. */});
     void api<Config>('/config').then(next=>{if(!cancelled)setConfig(current=>next.revision>=current.revision?next:current);}).catch(onError);
     return () => {
       cancelled = true;
@@ -1083,6 +1178,7 @@ function WritingApp() {
   }, [dirty,hasUnsentDraft,proposalFor]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      if(committingWorkspace.current){event.preventDefault();event.stopImmediatePropagation();return;}
       if(event.defaultPrevented||event.isComposing||desktopPanels.isComposing())return;
       const target=event.target as HTMLElement|null;
       const doc=target?.ownerDocument||window.document;
@@ -1283,14 +1379,22 @@ function WritingApp() {
   },[annotationLocation,setError]);
   const annotationPanelOpen=workspace.isOpen('annotations');
   useEffect(()=>{if(!annotationPanelOpen)setAnnotationBatch(null);},[annotationPanelOpen]);
-  const chatFileOpener = useRef(openExplorerFile);
-  chatFileOpener.current = openExplorerFile;
+  const chatFileOpener = useRef(openDocumentPath);
+  chatFileOpener.current = openDocumentPath;
   const openChatDocument = useCallback((source:string,target:string)=>{
     try {
       const path=resolveLinkTarget(source,target);
-      void chatFileOpener.current(path,true).catch(error=>setError(error.message));
+      void chatFileOpener.current(path).catch(error=>setError(error.message));
     } catch(error) { setError((error as Error).message); }
   },[setError]);
+  function openEditorDocument(id:string,target:string){
+    try{
+      const session=sessions.current.get(id);
+      const path=resolveLinkTarget(session?.disk?.path||session?.external?.disk.path||'',target);
+      activateEditor(id);
+      void openDocumentPath(path).catch(error=>setError(error.message));
+    }catch(error){setError((error as Error).message);}
+  }
   const openChatExternal = useCallback((target:string)=>{
     void openExternalHttpLink(target).then(opened=>{if(!opened)setError('无法打开外部链接。');});
   },[setError]);
@@ -1464,6 +1568,13 @@ function WritingApp() {
         const moved=await manageFile({action:'trash',path:result.path},{quiet:true,actor:'ai'});
         return '已移入回收站 '+result.path+'。'+(moved.warning||'');
       }
+      case 'trash-list':{
+        if(mark.id!=='trash')throw new Error('回收站结果与已标注窗口不一致，请重试。');
+        if(!result.total)return '当前仓库的回收站为空。';
+        const entries=result.entries.map(item=>`- ${item.path}${item.type==='folder'?'/':''}${item.missing?'（回收项已缺失）':''}`);
+        const next=result.nextOffset===undefined?[]:[`另有条目，可从第 ${result.nextOffset+1} 项继续查看。`];
+        return [`当前仓库回收站共有 ${result.total} 项。`,...entries,...next].join('\n');
+      }
       case 'trash-restore':{
         const outcomes:string[]=[];
         for(const item of result.items){
@@ -1545,6 +1656,13 @@ function WritingApp() {
     : false;
   // 建议就地显示在正文锚点后面，不再用底部浮层压住文字。
   const inlineProposal=useMemo<InlineProposal|null>(()=>p?{id:p.id,from:p.from,to:p.to,mode:modeLabels[p.mode],count:p.count,text:p.text,original:p.original,reason:p.reason,stale,node:p.node,placement:p.placement,refinementNote:p.refinementNote}:null,[p,stale]);
+  useLayoutEffect(()=>{
+    if(appearanceSettings.appearance.floatingToolbarVisible===false){toolbarStore.publish(null);return;}
+    const available=()=>appAlive.current&&!switching.current&&!closing.current;
+    toolbarStore.publish({mode,continuationLimit:config.continuationLimit,aiOpen:chatOpen&&!desktopPanels.hiddenWindows.has('conversation'),
+      annotationTool,busy,onRun:mode=>{if(available())runFromDock(mode);},onToggleAi:()=>{if(available())revealConversation();},
+      onAnnotate:()=>{if(available())setAnnotationTool(active=>!active);}});
+  });
   return (
     <div className="app-shell" data-revision={tick}>
       <AppHeader
@@ -1586,9 +1704,10 @@ function WritingApp() {
             id="sidebar-panel-files"
             aria-label="文档列表"
           >
-            <FileExplorer onRefresh={refresh} entries={entries} workspaceId={fileWorkspace.info.id} root={root} file={file} dirty={dirty} filter={filter} setFilter={setFilter} collapsed={collapsed} setCollapsed={setCollapsed} renameRequest={renameRequest}
-              treeReady={!!root} onOpenRepositories={()=>workspace.open('repositories')}
-              onOpen={openExplorerFile} onAction={manageFile} onPreflight={preflightFileActions} onReferenceBatch={addReferenceBatch}
+            <FileExplorer onRefresh={refresh} entries={entries} workspaceId={fileWorkspace.info.id} root={fileWorkspace.info.root} file={file} dirty={dirty} filter={filter} setFilter={setFilter} collapsed={collapsed} setCollapsed={setCollapsed} renameRequest={renameRequest}
+              treeStatus={treeStatus} onOpenRepositories={()=>workspace.open('repositories')}
+              onOpen={openAndCount} onOpenPath={openDocumentPath} onAction={manageFile} onPreflight={preflightFileActions} onReferenceBatch={addReferenceBatch}
+              onFolderVisit={path=>{if(!annotationTool)quickOpen.visit(path);}} onQuickOpenDrop={path=>setQuickOpenError(quickOpen.bind([path]))}
               onReferenceDrop={(source,destination)=>addReference(source,destination==='basis')} onAI={path=>{const entry=entries.flatMap(function walk(value):Entry[]{return [value,...(value.children||[]).flatMap(walk)];}).find(entry=>entry.path===path);if(entry)addReference({path,type:entry.type});}}/>
           </div>
           <input
@@ -1607,6 +1726,7 @@ function WritingApp() {
         </aside></DesktopPanel>
         {editorIds.map((id,index)=>{
           const session=sessions.current.get(id)!,documentPanel=workspace.panel(id);
+          const external=session.external,documentPath=session.disk?.path||external?.disk.path;
           return (<DesktopPanel key={id} id={id} title={`${panelLabel(id)} · 正文 ${index+1}`} open={workspace.isOpen(id)} visible={documentPanel.visible}><main data-panel-id={id} aria-label={`正文编辑区 ${index+1}`}
           className={
             "document-pane workspace-panel " + (documentPanel.grouped?'panel-grouped ':'') + (activeEditorId === id ? "active-editor " : "") +
@@ -1622,7 +1742,7 @@ function WritingApp() {
             title={documentPanel.primary?'正文主版面 · 位置固定':documentPanel.lockHint}
             data-position-fixed={!documentPanel.movable||undefined}
           >
-            <div className="document-tab" data-document-tab={id} data-tab-detachable={canDetachDocumentTab||undefined} title={`${session.trashPreview?'只读 · '+session.trashPreview.path:session.landing?'新标签页':session.imagePath||session.disk?.path||'未命名稿'}${canDetachDocumentTab?' · 拖动移出此标签':''}`} onPointerDown={event=>{
+            <div className="document-tab" data-document-tab={id} data-tab-detachable={canDetachDocumentTab||undefined} title={`${session.trashPreview?'只读 · '+session.trashPreview.path:session.landing?'新标签页':session.imagePath||documentPath||'未命名稿'}${canDetachDocumentTab?' · 拖动移出此标签':''}`} onPointerDown={event=>{
               if(!canDetachDocumentTab)return;event.stopPropagation();workspace.beginTabDrag(id,event,{fromTab:true,onFinish:()=>{}});
             }}>
               <span>{panelLabel(id)}</span>
@@ -1643,9 +1763,18 @@ function WritingApp() {
             <PanelControls chrome={chrome} id={id} />
             {documentPanel.positionLocked&&<Icon name="panel.positionLocked" className="panel-position-lock-icon" size={11}/>}
           </div>
-          {session.disk&&fileConflicts[session.disk.path]&&<div className="file-conflict" role="alert"><span>{fileConflicts[session.disk.path]}</span><button type="button" onClick={()=>reloadFromDisk(id)}>重新读取磁盘</button><button type="button" onClick={()=>{activateEditor(id);openSaveAs(session.disk!.path);}}>另存本地副本</button></div>}
-          {session.trashPreview?<><TrashDocumentPreview preview={session.trashPreview}/>{emptyPanelFooter('回收站只读预览')}</>:session.imagePath?<><ImageFileView key={fileWorkspace.info.id+session.imagePath} path={session.imagePath} workspaceId={fileWorkspace.info.id}/>{emptyPanelFooter("图片")}</>:session.landing?<><NewTabPage active={activeEditorId===id} busy={newNoteBusy||fileBusy||busy} onCreate={()=>void createQuickNote(id)} onOpen={openDocumentList}/>{emptyPanelFooter("新标签页")}</>:<>
-                {<Editor initialState={session.state} keepAlive={busy&&activeEditorId===id||!!dialog?.target&&dialog.target.editor===session.view} documentFile={session.disk?.path||''} onOpenLink={target=>{try{const path=resolveLinkTarget(session.disk?.path||'',target);activateEditor(id);void openExplorerFile(path,true).catch(error=>setError(error.message));}catch(error){setError((error as Error).message);}}} onDraftSelection={(text,table)=>stageEditorSelection(id,text,table)} annotationTool={annotationTool} searchActive={workspace.isOpen('search')&&activeEditorId===id&&activeTextSource.current==='document'} onFind={replace=>{activateEditor(id);activeTextSource.current='document';ribbonCommand('find',replace);}} displayMode={session.displayMode||'live'} splitOrder={appearanceSettings.appearance.splitOrder} typewriter={!!session.typewriter} onReady={bindings(id).onReady} onUpdate={bindings(id).onUpdate} onFocus={()=>{if(activeTextSource.current!=='document'){activeTextSource.current='document';redraw();}}} onMarkSelection={()=>{activateEditor(id);markText('document',sessions.current.get(id)?.disk?.path||'');}} onUnmarkSelection={annotationId=>{activateEditor(id);unmarkText('document',annotationId,sessions.current.get(id)?.disk?.path||'');}} onShowAnnotations={context=>{activateEditor(id);showLocalAnnotation('document',context,sessions.current.get(id)?.disk?.path||'');}} onError={setError} inlineProposal={activeEditorId===id?inlineProposal:null}/>}
+          {documentPath&&fileConflicts[documentPath]&&<div className="file-conflict" role="alert"><span>{fileConflicts[documentPath]}</span><button type="button" onClick={()=>reloadFromDisk(id)}>重新读取磁盘</button>{!external&&<button type="button" onClick={()=>{activateEditor(id);openSaveAs(documentPath);}}>另存本地副本</button>}</div>}
+          {external?<><div className="external-document-bar">
+            <span title={external.disk.path}>{external.editable?'仓库外文稿':'仓库外 · 只读预览'} · {external.disk.path}</span>
+            {external.editable?<button type="button" disabled={!session.dirty||fileBusy} onClick={()=>void saveSession(id)}>保存到原文件</button>:
+              <button type="button" onClick={()=>{external.editable=true;redraw();}}>切换到编辑</button>}
+          </div>
+            <Editor initialState={session.state} displayMode={external.editable?'live':'preview'}
+              onReady={bindings(id).onReady} onUpdate={bindings(id).onUpdate} onError={setError}
+              onOpenLink={target=>openEditorDocument(id,target)}/>
+            {emptyPanelFooter(external.editable?(session.dirty?'有未保存的修改':'已保存'):'只读预览')}
+          </>:session.trashPreview?<><TrashDocumentPreview preview={session.trashPreview}/>{emptyPanelFooter('回收站只读预览')}</>:session.imagePath?<><ImageFileView key={fileWorkspace.info.id+session.imagePath} path={session.imagePath} workspaceId={fileWorkspace.info.id}/>{emptyPanelFooter("图片")}</>:session.landing?<><NewTabPage active={activeEditorId===id} busy={newNoteBusy||fileBusy||busy} onCreate={()=>void createQuickNote(id)} onOpen={openDocumentList}/>{emptyPanelFooter("新标签页")}</>:<>
+                {<Editor initialState={session.state} keepAlive={busy&&activeEditorId===id||!!dialog?.target&&dialog.target.editor===session.view} documentFile={session.disk?.path||''} onOpenLink={target=>openEditorDocument(id,target)} onDraftSelection={(text,table)=>stageEditorSelection(id,text,table)} annotationTool={annotationTool} searchActive={workspace.isOpen('search')&&activeEditorId===id&&activeTextSource.current==='document'} onFind={replace=>{activateEditor(id);activeTextSource.current='document';ribbonCommand('find',replace);}} displayMode={session.displayMode||'live'} splitOrder={appearanceSettings.appearance.splitOrder} typewriter={!!session.typewriter} onReady={bindings(id).onReady} onUpdate={bindings(id).onUpdate} onFocus={()=>{if(activeTextSource.current!=='document'){activeTextSource.current='document';redraw();}}} onMarkSelection={()=>{activateEditor(id);markText('document',sessions.current.get(id)?.disk?.path||'');}} onUnmarkSelection={annotationId=>{activateEditor(id);unmarkText('document',annotationId,sessions.current.get(id)?.disk?.path||'');}} onShowAnnotations={context=>{activateEditor(id);showLocalAnnotation('document',context,sessions.current.get(id)?.disk?.path||'');}} onError={setError} inlineProposal={activeEditorId===id?inlineProposal:null}/>}
               {activeEditorId===id&&<ProposalOverlay view={view.current} proposal={inlineProposal} accept={accept} reject={adjust=>{
                 const origin=writingOrigin.current;
                 if(origin?.proposalId&&origin.proposalId===p?.id)stop();
@@ -1653,7 +1782,7 @@ function WritingApp() {
               }} editCandidate={editCandidate} editRefinementNote={editRefinementNote}
                 refineCandidate={instruction=>{if(p)void generate({mode:'edit',revision:{proposalId:p.id,instruction},allowEmptyPrompt:true});}} busy={busy}/>
               }
-          <EditorStatusBar status={session.disk?`自由写作 · ${session.dirty?'有未保存的修改':'已保存'}`:'未打开文档'} aiStatus={activeEditorId===id?(writingBusy?'AI 正在生成':p?stale?'建议已被改动，请核对':'预览中：✓ 保留 / ✗ 撤掉，未保存':undefined):session.context?.proposal?'1 条建议等待审阅':undefined} state={session.view?.state||session.state} eol={session.disk?.eol} bom={session.disk?.bom} preferences={statusPreferences} onSettings={()=>openSettings('appearance')}/>
+          <EditorStatusBar status={session.disk?`自由写作 · ${session.dirty?'有未保存的修改':'已保存'}`:'未打开文档'} aiStatus={activeEditorId===id?(writingBusy?'AI 正在生成':p?stale?'建议已被改动，请核对':'预览中：✓ 保留 / ✗ 撤掉，未保存':undefined):session.context?.proposal?'1 条建议等待审阅':undefined} state={session.view?.state||session.state} eol={session.disk?.eol} bom={session.disk?.bom} preferences={statusPreferences} plugins={statusPlugins} onSettings={()=>openSettings('appearance')}/>
           </>}
           {documentPanel.handles}
         </main></DesktopPanel>
@@ -1747,7 +1876,11 @@ function WritingApp() {
             {aiButtonLayout.layout.bottom.length?chatActions('bottom'):emptyPanelFooter("对话")}
             {rightPanel.handles}
           </aside></DesktopPanel>
-        <PanelFrame chrome={chrome} id="repositories" title="仓库管理" className="repositories-workspace">{workspace.isOpen('repositories')&&<RepositoryPanel onSwitch={switchWorkspace} onReturn={()=>workspace.close('repositories')}/>}</PanelFrame>
+        <PanelFrame chrome={chrome} id="repositories" title="仓库管理" className="repositories-workspace">{workspace.isOpen('repositories')&&<RepositoryPanel annotationMode={annotationTool} onSwitch={switchWorkspace} onRemove={removeRepository} onReturn={()=>workspace.close('repositories')}/>}</PanelFrame>
+        <PanelFrame chrome={chrome} id="quick-open" title="快速打开文档" className="quick-open-workspace">{workspace.isOpen('quick-open')&&
+          <QuickOpenPanel workspaceId={fileWorkspace.info.id} indexes={quickOpen} request={requestModel} modelConfigured={!config.demo}
+            onOpen={path=>openAndCount(path,false,true)} onClose={()=>workspace.close('quick-open')} dropError={quickOpenError} onDropError={setQuickOpenError}/>}
+        </PanelFrame>
         <PanelFrame chrome={chrome} id="toc" title="标题目录" className="toc-workspace"><TableOfContents key={activeEditorId+':'+file} file={file} items={outline} current={currentHeading?.from} onLocate={locate}
           onDraft={heading=>addChapterDraft({workspace:fileWorkspace.info.id,editor:activeEditorId,file,heading})}
           onDragSection={(heading,event)=>{event.dataTransfer.effectAllowed='copy';event.dataTransfer.setData(CHAPTER_DRAG_TYPE,JSON.stringify({workspace:fileWorkspace.info.id,editor:activeEditorId,file,heading} satisfies ChapterDrag));}}/></PanelFrame>
@@ -1836,7 +1969,7 @@ function WritingApp() {
           onOpen={(position) => openChat(chatTab, position)}
         />
       )}
-      {[...annotationOwners].map(([host,ownerDocument])=><InlineAnnotationEditor key={host} ownerDocument={ownerDocument}
+      {[...annotationOwners].map(([host,ownerDocument])=><InlineAnnotationEditor key={host} ownerDocument={ownerDocument} scopeKey={JSON.stringify([fileWorkspace.info.id,activeEditorId,file])}
         items={annotations.items.filter(item=>(item.source==='document'?view.current:scratchView.current)?.dom.ownerDocument===ownerDocument)}
         request={inlineRequest&&annotations.items.some(item=>item.id===inlineRequest.id&&(item.source==='document'?view.current:scratchView.current)?.dom.ownerDocument===ownerDocument)?inlineRequest:null}
         editorFor={(source) => {const editor=source==='document'?view.current:scratchView.current;return editor?.dom.ownerDocument===ownerDocument?editor:null;}}
@@ -1852,10 +1985,6 @@ function WritingApp() {
         bubblePlacement={annotationPreferences.preferences.bubblePlacement}
       />)}
       {closingWindow&&([document,...[...desktopPanels.windows.values()].map(popup=>popup.document)]).map((doc,index)=>createPortal(<div className="desktop-closing" role="status">正在保存并退出…</div>,doc.body,`closing-${index}`))}
-      {appearanceSettings.appearance.floatingToolbarVisible!==false&&<GlobalToolbar mode={mode} continuationLimit={config.continuationLimit} aiOpen={chatOpen&&!desktopPanels.hiddenWindows.has('conversation')} annotationTool={annotationTool} onAnnotate={()=>{
-        setAnnotationTool(active=>!active);
-      }}
-        onRun={runFromDock} busy={busy} onToggleAi={revealConversation}/>}
       {notice && (
         <div className="toast" role="status">
           <CheckCheck size={16} />
@@ -1880,7 +2009,7 @@ function WritingApp() {
           onUndo={(actor,id)=>void historyTask(()=>replayHistory(actor,id,true))}
           onRedo={(actor,id)=>void historyTask(()=>replayHistory(actor,id,false))} conflict={historyConflict}/>
       </dialog>}
-      {settings && <SettingsPage panelIconDragPreferences={panelIconDragPreferences} annotationPreferences={annotationPreferences} aiButtonLayout={aiButtonLayout} aiResponsePreferences={aiResponsePreferences} config={config} initialSection={settingsSection} restoreKey={settingsRestoreKey} appearance={appearanceSettings} statusPreferences={statusPreferences} busy={configBusy}
+      {settings && <SettingsPage panelIconDragPreferences={panelIconDragPreferences} annotationPreferences={annotationPreferences} aiButtonLayout={aiButtonLayout} aiResponsePreferences={aiResponsePreferences} plugins={plugins} config={config} initialSection={settingsSection} restoreKey={settingsRestoreKey} appearance={appearanceSettings} statusPreferences={statusPreferences} busy={configBusy}
         historyLimits={history.summary.limits} onSaveHistoryLimits={async limits=>{humanHistory.flushAll();await history.setLimits(limits);}}
         onRequest={updateSettings} onProbe={(body:ModelProbeRequest,signal?:AbortSignal)=>requestApi<ModelProbeResult>(request,'/model-services/probe',body,signal)}
         onReload={async()=>{const next=await api<Config>('/config');setConfig(current=>next.revision>=current.revision?next:current);}} onClose={()=>setSettings(false)}/>}

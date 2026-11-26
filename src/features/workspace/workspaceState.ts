@@ -19,6 +19,19 @@ export function detachWorkspacePanel(layout:WorkspaceLayout,id:string):Workspace
   }
   return {...layout,tree:removeDockPanel(layout.tree,id),rects,floatingGroups};
 }
+export function omitWorkspacePanels(layout:WorkspaceLayout,keep:(id:string)=>boolean):WorkspaceLayout {
+  const retained=<T,>(entries:Record<string,T>)=>Object.fromEntries(Object.entries(entries).filter(([id])=>keep(id)));
+  let next=layout;
+  const mounted=new Set([...dockedPanels(layout.tree),...layout.floatingGroups.flatMap(group=>group.panels)]);
+  for(const id of mounted)if(!keep(id))next=detachWorkspacePanel(next,id);
+  const restore=Object.fromEntries(Object.entries(retained(next.restore)).flatMap(([id,anchor])=>keep(anchor.target)?
+    [[id,anchor.split?{...anchor,split:{...anchor.split,siblings:anchor.split.siblings.filter(keep)}}:anchor]]:[]));
+  return {...next,open:next.open.filter(keep),minimized:next.minimized.filter(keep),rects:retained(next.rects),layers:retained(next.layers),restore,
+    ...(next.lockedPanels?{lockedPanels:next.lockedPanels.filter(keep)}:{}),
+    ...(next.autoHide?{autoHide:retained(next.autoHide)}:{}),
+    ...(next.autoHideActive&&!keep(next.autoHideActive)?{autoHideActive:null}:{}),
+  };
+}
 /** Keep a standalone home for one native window instead of leaving it in a tab group. */
 export function isolateWorkspacePanel(layout:WorkspaceLayout,id:string):WorkspaceLayout {
   const split=(node:DockTree|null):DockTree|null=>{

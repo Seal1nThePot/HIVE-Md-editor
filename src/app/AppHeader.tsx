@@ -62,6 +62,7 @@ export function AppHeader({ workspace, openChat, openSettings, openHistory, swit
           <span className="header-divider" />
           <PanelSwitcher items={[
             {id:"files",label:"文档（文件列表）",open:leftOpen,category:'files',keywords:['目录','文件夹','浏览器']},
+            {id:'quick-open',label:'快速打开文档',open:workspace.isOpen('quick-open'),category:'files',keywords:['常用','文件夹','索引']},
             {id:'repositories',label:'仓库管理',open:workspace.isOpen('repositories'),category:'files',keywords:['仓库','项目','目录','切换']},
             {id:"trash",label:"回收站",open:workspace.isOpen('trash'),category:'files',keywords:['恢复','删除','清理']},
             {id:"conversation",label:"对话",open:chatOpen,category:'ai',keywords:['聊天','模型']},
@@ -72,7 +73,7 @@ export function AppHeader({ workspace, openChat, openSettings, openHistory, swit
             {id:"scratch",label:"草稿",open:workspace.isOpen("scratch"),category:'writing',keywords:['草稿纸','临时']},
             {id:"basis",label:"依据",open:workspace.isOpen("basis"),category:'ai',keywords:['参考','资料','上下文']},
             {id:"search",label:"查找替换",open:workspace.isOpen("search"),category:'tools',keywords:['查找','搜索','替换']},
-          ].map(item=>({...item,category:item.category as PanelCategory,locked:workspace.isPositionLocked(item.id)}))} onToggleLock={workspace.togglePositionLock} onReveal={id=>{workspace.open(id);workspace.panel(id).raise();requestAnimationFrame(()=>{const element=workspace.panel(id).ref.current;if(element){element.tabIndex=-1;element.focus({preventScroll:true});element.classList.add('panel-located');setTimeout(()=>element.classList.remove('panel-located'),1200);}});}} onToggle={id=>{
+          ].map(item=>({...item,category:item.category as PanelCategory,locked:workspace.isPositionLocked(item.id)}))} onToggleLock={workspace.togglePositionLock} onReveal={id=>{if(id==='quick-open')workspace.reveal(id);else workspace.open(id);workspace.panel(id).raise();requestAnimationFrame(()=>{const element=workspace.panel(id).ref.current;if(element){element.tabIndex=-1;element.focus({preventScroll:true});element.classList.add('panel-located');setTimeout(()=>element.classList.remove('panel-located'),1200);}});}} onToggle={id=>{
             if(id==="conversation") {
               if(chatOpen)workspace.close(id);else openChat("conversation");
             } else workspace.toggle(id);

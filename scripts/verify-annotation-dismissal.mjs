@@ -17,7 +17,9 @@ const cases = [
   {mode: 'toolbar', outside: 'blank', text: 'Toolbar outside blank'},
 ];
 const lastLine = 'This paragraph is an outside click target.';
-const fixture = [...cases.map(({text}) => text), 'Context menu fallback', 'Regular drag leaves no popup', 'Ctrl click still annotates', lastLine].join('\n\n');
+const tableCells = ['Group cell A', 'Group cell B'];
+const tableText = '| Header A | Header B |\n| --- | --- |\n| ' + tableCells.join(' | ') + ' |';
+const fixture = [...cases.map(({text}) => text), 'Context menu fallback', 'Regular drag leaves no popup', 'Ctrl click still annotates', lastLine, tableText].join('\n\n');
 
 function browserSetup() {
   const visible = el => el?.checkVisibility({checkVisibilityCSS: true});
@@ -29,8 +31,22 @@ function browserSetup() {
   window.annotationTest = {
     popup: () => !!visible(popup()),
     note: () => popup()?.querySelector('textarea').value,
+    confirmation: () => {
+      const dialog = document.querySelector('dialog.annotation-delete-confirm[open]');
+      return dialog && {text: dialog.textContent, focused: document.activeElement?.textContent};
+    },
     exists: text => [...editor().querySelectorAll('[data-annotation-id]')].some(el => el.textContent.includes(text)),
     idsAt: text => [...new Set([...editor().querySelectorAll('[data-annotation-id]')].filter(el => el.textContent.includes(text)).map(el => el.dataset.annotationId))],
+    tableIds: () => [...new Set([...editor().querySelectorAll('[data-table-annotation-ids]')].flatMap(el=>JSON.parse(el.dataset.tableAnnotationIds)))],
+    markTable(values) {
+      const view = editor().querySelector('.cm-content').cmTile.root.view;
+      const ranges = values.map(value=>{
+        const from=view.state.doc.toString().indexOf(value);
+        return {from,to:from+value.length};
+      });
+      view.dispatch({effects:view.constructor.scrollIntoView(ranges[0].from,{y:'center'})});
+      view.dom.dispatchEvent(new CustomEvent('hive:table-annotation',{bubbles:true,detail:{action:'mark',ranges}}));
+    },
     selection: () => ({
       range: editor().querySelector('.cm-content').cmTile.root.view.state.selection.main.toJSON(),
       hidden: editor().hasAttribute('data-annotation-selection-hidden'),
@@ -117,6 +133,17 @@ async function worker(port, profile) {
   async function click(point, button = 'left', modifiers = 0) {
     await mouse('mousePressed', point, {button, buttons: button === 'right' ? 2 : 1, modifiers, clickCount: 1});
     await mouse('mouseReleased', point, {button, buttons: 0, modifiers, clickCount: 1});
+  }
+  async function confirmDeletion(cancel = false) {
+    assert.ok(await until(() => call('confirmation')), 'Annotation deletion confirmation did not open');
+    const target = cancel ? 'button:first-child' : '.annotation-delete-danger';
+    await click(await call('point', 'dialog.annotation-delete-confirm ' + target));
+    assert.ok(await until(async () => !(await call('confirmation'))), 'Annotation deletion confirmation did not close');
+  }
+  async function escape() {
+    const params = {key:'Escape', code:'Escape', windowsVirtualKeyCode:27};
+    await cdp.sendCommand('Input.dispatchKeyEvent', {type:'rawKeyDown', ...params});
+    await cdp.sendCommand('Input.dispatchKeyEvent', {type:'keyUp', ...params});
   }
   async function drag({start, end}, modifiers = 0) {
     await mouse('mousePressed', start, {button: 'left', buttons: 1, modifiers, clickCount: 1});
@@ -217,6 +244,7 @@ async function worker(port, profile) {
       const colocated = await call('idsAt', 'Ctrl outside body');
       assert.equal(colocated.length, 2, 'Two notes should share the same visible text range');
       assert.ok(await until(() => call('popup')), 'New co-located note did not open');
+      await cdp.sendCommand('Input.insertText', {text: 'Second note at the same span'});
       const selection = await call('selection');
       await mouse('mouseMoved', await call('blank'));
       await pause(420);
@@ -226,13 +254,46 @@ async function worker(port, profile) {
       await hoverLine('Ctrl outside body');
       check('Pointer return restores the drawn selection', !(await call('selection')).hidden);
       await click(await call('point', firstBubble), 'right');
-      check('Right-click removes only the open note when another annotation shares the same range',
+      assert.ok(await until(() => call('confirmation')), 'Open co-located annotation should require confirmation');
+      const prompt=await call('confirmation');
+      check('Right-click names the displayed note and focuses Cancel with both marks and source range retained',
+        prompt.text.includes('Second note at the same span') && prompt.focused === '取消' &&
+        JSON.stringify(await call('idsAt', 'Ctrl outside body')) === JSON.stringify(colocated) &&
+        JSON.stringify((await call('selection')).range) === JSON.stringify(selection.range), prompt);
+      await confirmDeletion(true);
+      await hoverLine('Ctrl outside body');
+      check('Cancel keeps the open note, range and both annotations', await call('note') === 'Second note at the same span' &&
+        JSON.stringify((await call('selection')).range) === JSON.stringify(selection.range) &&
+        JSON.stringify(await call('idsAt', 'Ctrl outside body')) === JSON.stringify(colocated));
+      await click(await call('point', firstBubble), 'right');
+      assert.ok(await until(() => call('confirmation')), 'Delete dialog did not reopen');
+      await escape();
+      check('Escape dismisses confirmation without modifying either annotation',
+        await until(async()=>!(await call('confirmation'))) &&
+        JSON.stringify(await call('idsAt', 'Ctrl outside body')) === JSON.stringify(colocated));
+      await click(await call('blank'));
+      await hoverLine('Ctrl outside body');
+      await click(await call('point', firstBubble), 'right');
+      const chooser = '.annotation-bubble-choices[aria-label="选择要删除的标注"]';
+      assert.ok(await until(() => evaluate('!!document.querySelector(' + JSON.stringify(chooser) + ')')), 'Ambiguous pencil should offer a chooser');
+      check('Right-click on a shared pencil without an open note asks which note to delete',
+        await evaluate('document.querySelectorAll(' + JSON.stringify(chooser + ' button') + ').length===2') && !(await call('confirmation')));
+      await escape();
+      check('Escape dismisses the chooser without modifying either annotation',
+        await until(() => evaluate('!document.querySelector(' + JSON.stringify(chooser) + ')')) &&
+        JSON.stringify(await call('idsAt', 'Ctrl outside body')) === JSON.stringify(colocated));
+      await hoverLine('Ctrl outside body');
+      await click(await call('point', firstBubble), 'right');
+      await click(await call('point', chooser + ' button[title="Second note at the same span"]'));
+      await confirmDeletion();
+      check('Confirmed deletion removes only the selected note at the shared position',
         await until(async () => JSON.stringify(await call('idsAt', 'Ctrl outside body')) === JSON.stringify([firstId])));
       await hoverLine('Ctrl outside body');
       await click(await call('point', firstBubble));
       check('The other note at the same range keeps its original text', await call('note') === hidden.note);
       await click(await call('point', firstBubble), 'right');
-      check('Right-click removes the targeted mark and note, leaving a neighboring annotation intact',
+      await confirmDeletion();
+      check('Confirmed deletion leaves a neighboring annotation intact',
         await until(async () => !(await call('popup')) && !(await call('exists', 'Ctrl outside body')) && await call('exists', 'Ctrl outside blank')));
     }
 
@@ -246,9 +307,11 @@ async function worker(port, profile) {
       await hoverLine('Ctrl outside blank');
       await click(await call('point', secondBubble));
       assert.ok(await call('popup'), 'Annotation did not reopen after owner blur');
+      await click(await call('point', secondBubble), 'right');
+      assert.ok(await until(() => call('confirmation')), 'Expected confirmation before switching source');
       await evaluate('document.querySelector(\'[data-path="annotation-other.md"]\').click()');
       assert.ok(await until(() => evaluate('document.querySelector(\'.document-pane:not([inert]) .cm-content\')?.textContent === \'Second note for annotation tests.\'')), 'Second source did not open');
-      check('Switching documents hides the old annotation editor', !(await call('popup')));
+      check('Switching documents dismisses the old annotation editor and deletion confirmation', !(await call('popup')) && !(await call('confirmation')));
       await evaluate('document.querySelector(\'[data-path="annotation-source.md"]\').click()');
       assert.ok(await until(() => evaluate('!!document.querySelector(' + JSON.stringify(secondBubble) + ')')), 'Returning to source did not restore its annotation bubble');
       check('Returning to the previous document keeps its popup dismissed', !(await call('popup')));
@@ -265,9 +328,28 @@ async function worker(port, profile) {
     await click(await call('point', '.inline-annotation-editor .gold-button'));
     await hoverLine(pendingText);
     await click(await call('point', pendingBubble), 'right');
+    assert.ok(await until(() => call('confirmation')), 'Pending request should still require confirmation');
+    check('Opening confirmation leaves the submitted annotation and generation in place',
+      await call('exists', pendingText) && await evaluate('!!document.querySelector(".message.thinking")'));
+    await confirmDeletion();
     await pause(850);
-    check('Right-click during a submitted annotation request prevents a late response',
+    check('Confirmed deletion during a submitted annotation request prevents a late response',
       !(await call('exists', pendingText)) && !(await evaluate('[...document.querySelectorAll(".messages .message.assistant")].some(el=>el.textContent.includes("requirement for Toolbar outside blank"))')));
+    await call('markTable', tableCells);
+    assert.ok(await until(async()=> (await call('tableIds')).length===2), 'Expect a group of two cell annotations');
+    const tableIds = await call('tableIds');
+    const groupedPencil = '.annotation-bubble[data-annotation-key="' + tableIds[0] + '"]';
+    await evaluate('document.querySelector('+JSON.stringify(groupedPencil)+').dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,button:2}))');
+    assert.ok(await until(() => call('confirmation')), 'Grouped cell dialog did not open');
+    const grouped=await call('confirmation');
+    check('One logical cell annotation reports the exact two-cell deletion scope',
+      grouped.text.includes('是否删除当前这组标注') && grouped.text.includes('2 个选区'));
+    await confirmDeletion(true);
+    check('Cancel preserves all cells in the group', JSON.stringify(await call('tableIds')) === JSON.stringify(tableIds));
+    await evaluate('document.querySelector('+JSON.stringify(groupedPencil)+').dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,button:2}))');
+    await confirmDeletion();
+    check('Confirm removes the whole logical group and leaves unrelated annotations',
+      await until(async()=> (await call('tableIds')).length===0 && await call('exists','Ctrl outside blank')));
   } catch (error) {
     check('Test harness', false, error.stack);
   } finally {

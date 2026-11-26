@@ -22,7 +22,7 @@
 .office-ribbon .home-ribbon [data-ribbon-group="编辑"] .ribbon-tools > .ribbon-tool-trigger > button span,
 .office-ribbon .home-ribbon [data-ribbon-group="编辑"] > small {display:none;}
 .office-ribbon .home-ribbon [data-ribbon-group="编辑"] .ribbon-tools > .ribbon-tool-trigger > button svg {width:calc(21px * var(--ui-scale,1));height:calc(21px * var(--ui-scale,1));}
-.ribbon-heading-select {grid-column:1/-1;width:100%;height:calc(26px * var(--ui-scale,1));padding:2px 8px;margin:0;border:1px solid var(--hive-input-border);border-radius:3px;background:var(--hive-input-bg);color:var(--hive-input-text);font-size:calc(12px * var(--text-scale,1));}
+.ribbon-heading-select {grid-column:1/-1;justify-self:start;width:50%;min-width:min(100%,7em);height:calc(26px * var(--ui-scale,1));padding:2px 8px;margin:0;border:1px solid var(--hive-input-border);border-radius:3px;background:var(--hive-input-bg);color:var(--hive-input-text);font-size:calc(12px * var(--text-scale,1));}
 .office-ribbon .ribbon-panel-controls {display:flex;align-items:center;flex:none;border-right:1px solid var(--hive-ribbon-border);padding-right:calc(10px * var(--ui-scale,1));}
 .ribbon-panel-controls .layout-menu-button {gap:5px;border:1px solid var(--hive-popup-border);border-radius:4px;padding:5px 8px;font-size:calc(11px * var(--text-scale,1));color:var(--hive-popup-text);}
 .ribbon-panel-controls .layout-menu-button:hover,.ribbon-panel-controls .layout-menu-button[aria-expanded=true] {background:var(--hive-selection-bg);}

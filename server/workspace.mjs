@@ -19,7 +19,8 @@ export async function workspaceStore(local, defaultRoot, {revealFile,repositoryM
   const saved = await readStateObject(configPath, '工作区配置');
   const initialRoot = path.resolve(defaultRoot);
   await fs.mkdir(initialRoot,{recursive:true});
-  const defaultId = idFor(await fs.realpath(initialRoot));
+  const defaultRepositoryRoot = await fs.realpath(initialRoot);
+  const defaultRepositoryId = idFor(defaultRepositoryRoot);
   const contexts=new Map();
   async function resolveRoot(input) {
     if(typeof input !== 'string' || !path.isAbsolute(input.trim()) || input.includes('\0')) throw fail('请填写现有文件夹的绝对路径。');
@@ -34,7 +35,7 @@ export async function workspaceStore(local, defaultRoot, {revealFile,repositoryM
   }
   async function prepare(input, migrate = false) {
     const root = await resolveRoot(input);
-    const id = idFor(root), state = id === defaultId ? local : path.join(local,'workspaces',id);
+    const id = idFor(root), state = id === defaultRepositoryId ? local : path.join(local,'workspaces',id);
     if(contexts.has(id))return contexts.get(id);
     await fs.mkdir(state,{recursive:true});
     const files = fileStore(root, state);
@@ -53,21 +54,23 @@ export async function workspaceStore(local, defaultRoot, {revealFile,repositoryM
     files.suspend();
     contexts.set(id,context);return context;
   }
-  let current = await prepare(saved?.root || initialRoot, !saved?.root || idFor(path.resolve(saved.root)) === defaultId);
+  let current = await prepare(saved?.root || initialRoot, !saved?.root || idFor(path.resolve(saved.root)) === defaultRepositoryId);
   let autoSave = saved?.autoSave !== false, revision = Number.isInteger(saved?.revision) ? saved.revision : 0;
   const validName = value => typeof value==='string' && value.trim().length<=80 && !/[\u0000-\u001f\u007f]/.test(value);
   const entryFor = (root,name) => ({id:idFor(root),root,...(validName(name)&&name.trim()?{name:name.trim()}:{})});
   let repositories = [];
   for(const entry of Array.isArray(saved?.repositories) ? saved.repositories : []) {
     if(!entry || typeof entry.root !== 'string' || !path.isAbsolute(entry.root) || entry.root.includes('\0')) continue;
-    const normalized = entryFor(path.resolve(entry.root),entry.name);
+    const registeredRoot = path.resolve(entry.root);
+    const normalized = entryFor(canonical(registeredRoot)===canonical(initialRoot)?defaultRepositoryRoot:registeredRoot,entry.name);
     if(!repositories.some(item=>item.id===normalized.id)) repositories.push(normalized);
   }
   if(!repositories.some(item=>item.id===current.id)) repositories.push(entryFor(current.root));
+  if(!repositories.some(item=>item.id===defaultRepositoryId)) repositories.push(entryFor(defaultRepositoryRoot));
   await synchronizeManifest(revision,repositories);
   current.files.resume();
   let queue = Promise.resolve();
-  const read = () => ({id:current.id,root:current.root,autoSave,revision,repositories:repositories.map(item=>({...item}))});
+  const read = () => ({id:current.id,root:current.root,defaultRepositoryId,autoSave,revision,repositories:repositories.map(item=>({...item}))});
   function capture(id){
     if(id && id !== current.id) throw fail('写作空间已在其他窗口切换。请刷新页面后继续；当前内容尚未覆盖磁盘。',409);
     return current;
@@ -140,7 +143,7 @@ export async function workspaceStore(local, defaultRoot, {revealFile,repositoryM
     },
     manage(input) {
       return enqueue(input,async()=>{
-        let next=repositories;
+        let next=repositories,nextCurrent=current;
         if(input.action==='add') {
           const entry=entryFor(await resolveRoot(input.root));
           if(!next.some(item=>item.id===entry.id)) next=[...next,entry];
@@ -153,15 +156,16 @@ export async function workspaceStore(local, defaultRoot, {revealFile,repositoryM
             return input.name.trim()?{...entry,name:input.name.trim()}:entry;
           });
         } else if(input.action==='remove') {
-          if(input.id===current.id) throw fail('当前仓库正在使用，请先打开其他仓库再移出列表。');
+          if(input.id===defaultRepositoryId) throw fail('默认根目录不能移出仓库列表。');
           if(!next.some(item=>item.id===input.id)) throw fail('这个仓库已不在列表中，请刷新后重试。',409);
+          if(input.id===current.id) nextCurrent=await prepare(defaultRepositoryRoot);
           next=next.filter(item=>item.id!==input.id);
         } else if(input.action==='reorder') {
           const order=input.order;
           if(!Array.isArray(order)||order.length!==next.length||new Set(order).size!==next.length||order.some(id=>!next.some(item=>item.id===id))) throw fail('仓库排列已变化，请刷新后重试。',409);
           const entries=new Map(next.map(item=>[item.id,item]));next=order.map(id=>entries.get(id));
         } else throw fail('仓库管理操作无效。');
-        return {current,autoSave,repositories:next};
+        return {current:nextCurrent,autoSave,repositories:next};
       });
     }
   };

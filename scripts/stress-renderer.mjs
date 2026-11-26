@@ -3,13 +3,15 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
-import {fork,spawn,execFile} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
+import {launchBackend,workspaceBuildPaths} from '../desktop/backendProcess.mjs';
 
 const require=createRequire(import.meta.url),project=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const output=path.resolve(process.env.HIVE_STRESS_EVIDENCE||path.join(project,'.runtime/stress'));
-const appRoot=path.join(project,'release/win-unpacked'),appExe=path.join(appRoot,'HIVE markdown editor.exe'),asar=path.join(appRoot,'resources/app.asar');
+const paths=workspaceBuildPaths(project);
+const output=path.resolve(process.env.HIVE_STRESS_EVIDENCE||path.join(paths.work,'evidence','stress'));
+const appRoot=path.join(paths.release,'win-unpacked'),appExe=path.join(appRoot,'HIVE markdown editor.exe'),asar=path.join(appRoot,'resources/app.asar');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const safeEnv=()=>Object.fromEntries(Object.entries(process.env).filter(([k])=>!k.toUpperCase().startsWith('HIVE_')&&k!=='ELECTRON_RUN_AS_NODE'));
 const sha=text=>createHash('sha256').update(text).digest('hex');
@@ -78,14 +80,14 @@ async function main(){
     const text='# 压力测试固定标题\n\n![合成图片](压力图片.png)\n\n| 项目 | 数值 | 说明 |\n| --- | ---: | --- |\n| 甲 | 123 | 固定内容 |\n| 乙 | 456 | 合成文本 |\n\n行内公式 $a^2+b^2=c^2$。\n\n$$\nE=mc^2\n$$\n\n'+block.repeat(2200);
     await fs.writeFile(path.join(docs,'压力文稿.md'),text);await fs.writeFile(path.join(temp,'expected.md'),text);await fs.writeFile(path.join(docs,'压力图片.png'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64'));
     await fs.writeFile(path.join(output,'fixture.json'),JSON.stringify({characters:text.length,bytes:Buffer.byteLength(text),sha256:sha(text),formula:true,table:true,image:true,rounds:24,minimumRoundMs:10000,idleSeconds:75},null,2)+'\n');console.log(`fixture ${text.length} characters; using ${asar}`);
-    server=fork(path.join(asar,'server/index.mjs'),['--production'],{execPath:appExe,cwd:project,silent:true,windowsHide:true,env:{...safeEnv(),ELECTRON_RUN_AS_NODE:'1',HIVE_PORT:'0',HIVE_DOCUMENTS:docs,HIVE_STATE_DIR:state,HIVE_API_KEY:''}});server.stdout.on('data',v=>serverLog+=v);server.stderr.on('data',v=>serverLog+=v);
-    const port=await new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(Error('Backend timeout')),30000);server.once('error',reject);server.once('exit',code=>reject(Error('Backend exited '+code)));server.on('message',m=>{if(m?.type==='hive-ready'){clearTimeout(t);resolve(m.port);}});});
-    child=spawn((await import('electron')).default,[fileURLToPath(import.meta.url),'--worker',String(port),temp,String(server.pid),path.join(output,'renderer-stress.json')],{cwd:project,windowsHide:true,env:safeEnv(),stdio:['ignore','pipe','pipe']});child.stdout.on('data',v=>{workerLog+=v;process.stdout.write(v);});child.stderr.on('data',v=>{workerLog+=v;process.stderr.write(v);});
+    server=launchBackend({root:project,resources:path.join(appRoot,'resources'),env:{...safeEnv(),HIVE_PORT:'0',HIVE_DOCUMENTS:docs,HIVE_STATE_DIR:state,HIVE_API_KEY:''},onLine:line=>serverLog+=line+'\n',onError:line=>serverLog+=line});
+    const {port,pid}=await server.ready;
+    child=spawn((await import('electron')).default,[fileURLToPath(import.meta.url),'--worker',String(port),temp,String(pid),path.join(output,'renderer-stress.json')],{cwd:project,windowsHide:true,env:safeEnv(),stdio:['ignore','pipe','pipe']});child.stdout.on('data',v=>{workerLog+=v;process.stdout.write(v);});child.stderr.on('data',v=>{workerLog+=v;process.stderr.write(v);});
     const code=await new Promise((resolve,reject)=>{const t=setTimeout(()=>{child.kill();reject(Error('Worker timeout'));},900000);child.once('error',reject);child.once('exit',code=>{clearTimeout(t);resolve(code);});});assert.equal(code,0,'Stress worker failed');
   }catch(error){await fs.writeFile(path.join(output,'failure.log'),error.stack+'\n'+workerLog+'\n'+serverLog);throw error;}
   finally{
     await fs.writeFile(path.join(output,'worker.log'),workerLog);await fs.writeFile(path.join(output,'backend.log'),serverLog);
-    if(child&&child.exitCode===null&&!child.killed)child.kill();if(server&&server.exitCode===null)await new Promise(resolve=>{server.once('exit',resolve);server.kill();});
+    if(child&&child.exitCode===null&&!child.killed)child.kill();await server?.stop();
     const resolved=path.resolve(temp);assert.equal(path.dirname(resolved),output);assert(path.basename(resolved).startsWith('.stress-fixture-'));await fs.rm(resolved,{recursive:true,force:true,maxRetries:10,retryDelay:100});
   }
 }

@@ -13,6 +13,14 @@ html .cm-editor[data-annotation-selection-hidden] .cm-content *::selection {
 
 .annotation-bubble-choices { position: fixed; z-index: 1201; display:flex; flex-direction:column; background:var(--hive-popup-bg,var(--panel)); color:var(--hive-popup-text,var(--text)); border:1px solid var(--hive-popup-border,var(--line)); padding:4px; }
 .annotation-bubble-choices button { background:transparent; color:inherit; border:0; padding:5px 10px; cursor:pointer; }
+.annotation-bubble-choices[aria-label] button { max-width:min(280px,80vw); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left; }
+.annotation-bubble-choices button:focus-visible { outline:1px solid var(--hive-accent); outline-offset:-1px; }
+
+.annotation-delete-confirm { box-sizing:border-box; }
+.annotation-delete-confirm::backdrop { background:var(--hive-overlay-color); }
+.annotation-delete-confirm :is(blockquote,p) { overflow-wrap:anywhere; white-space:pre-wrap; margin:0 0 8px; }
+.annotation-delete-confirm blockquote { border-inline-start:2px solid var(--hive-accent); padding-inline-start:10px; }
+.annotation-delete-confirm .annotation-delete-danger { border-color:var(--hive-danger); }
 
 .cm-table-annotation-top, .cm-table-annotation-right, .cm-table-annotation-bottom, .cm-table-annotation-left {
   box-shadow: inset 0 2px 0 var(--annotation-top, transparent), inset -2px 0 0 var(--annotation-right, transparent), inset 0 -2px 0 var(--annotation-bottom, transparent), inset 2px 0 0 var(--annotation-left, transparent);

@@ -12,6 +12,8 @@ import {MathWidget} from './mathWidget';
 import {frontmatterVisible,subscribeFrontmatterVisibility} from './frontmatterVisibility';
 import {typographyUpdateQueue} from '../typography/typographyUpdateQueue';
 import {isolateHistory} from '@codemirror/commands';
+import {codeLanguageLabel,codeHighlightRanges} from './codeHighlight';
+import './code-block.css';
 import {codeBlockViewport} from './codeBlockViewport';
 import {MermaidWidget} from './mermaidWidget';
 import {detailsOpenState, detailsReplacements} from './detailsBlocks';
@@ -138,7 +140,9 @@ export const markdownPreview=StateField.define<DecorationSet>({
     if(tr.state.field(displayModeField)==='preview')return value;
     const prior=tr.startState.field(previewFocus,false),next=tr.state.field(previewFocus,false);
     const before=prior?.selection??null,after=next?.selection??null;
-    if(before!==after&&(activeLines(tr.state,before)!==activeLines(tr.state,after)||replacementSelectionSignature(tr.state,'image',before)!==replacementSelectionSignature(tr.state,'image',after)))return build(tr.state);
+    if(before!==after&&(activeLines(tr.state,before)!==activeLines(tr.state,after)||
+      replacementSelectionSignature(tr.state,'image',before)!==replacementSelectionSignature(tr.state,'image',after)||
+      replacementSelectionSignature(tr.state,'ordered-marker',before)!==replacementSelectionSignature(tr.state,'ordered-marker',after)))return build(tr.state);
     const priorMath=prior?.pointerMath??null,nextMath=next?.pointerMath??null;
     if(priorMath!==nextMath){
       const mathChanged=priorMath&&nextMath
@@ -151,15 +155,62 @@ export const markdownPreview=StateField.define<DecorationSet>({
   provide:field=>EditorView.decorations.from(field),
 });
 const punctuationJoin=Decoration.mark({class:'cm-preview-punctuation-join'});
+const codePunctuationJoin=Decoration.mark({class:'cm-preview-code-punctuation-join'});
 const punctuationJoins=EditorView.outerDecorations.compute([displayModeField,previewFocus,'doc'],state=>{
   const mode=state.field(displayModeField);
   if(mode==='source')return Decoration.none;
   const active=mode==='preview'?[]:previewActiveLines(state,state.field(previewFocus).selection);
   return Decoration.set(previewPlan(state).punctuation
     .filter(item=>!active.some(line=>item.from<=line.to&&item.to>line.from))
-    .map(item=>punctuationJoin.range(item.from,item.to)),true);
+    .map(item=>(item.codeGroup?codePunctuationJoin:punctuationJoin).range(item.from,item.to)),true);
 });
 function activeLines(state:EditorState,selection:EditorSelection|null){return previewActiveLines(state,selection).map(line=>`${line.from}:${line.to}`).join(',');}
+class CodePreviewWidget extends WidgetType{
+  constructor(readonly item:PreviewReplacement,readonly readOnly:boolean){super();}
+  eq(other:CodePreviewWidget){return this.item.text===other.item.text&&this.item.language===other.item.language&&this.item.from===other.item.from&&this.readOnly===other.readOnly;}
+  toDOM(view:EditorView){
+    const document=view.dom.ownerDocument;
+    const root=document.createElement('div');
+    root.className='hive-code-block cm-code-block';
+    const language=codeLanguageLabel(this.item.language??'');
+    if(language){const header=document.createElement('div');header.className='hive-code-language';header.textContent=language;root.append(header);}
+    const pre=document.createElement('pre');
+    const code=document.createElement('code');
+    const text=this.item.text??'';
+    let position=0;
+    for(const range of codeHighlightRanges(text,this.item.language??'')){
+      if(range.from>position)code.append(document.createTextNode(text.slice(position,range.from)));
+      const token=document.createElement('span');token.className=range.className;token.textContent=text.slice(range.from,range.to);code.append(token);position=range.to;
+    }
+    code.append(document.createTextNode(text.slice(position)));
+    pre.append(code);root.append(pre);
+    if(!this.readOnly){
+      root.title='单击编辑 Markdown 代码块';
+      root.addEventListener('click',event=>{
+        if(!document.getSelection()?.isCollapsed)return;
+        event.preventDefault();
+        const caret=document.caretRangeFromPoint(event.clientX,event.clientY);
+        let offset=0;
+        if(caret&&code.contains(caret.startContainer)){
+          const range=document.createRange();
+          range.selectNodeContents(code);
+          range.setEnd(caret.startContainer,caret.startOffset);
+          offset=range.toString().length;
+        }
+        const bodyStart=Math.min(this.item.to,view.state.doc.lineAt(this.item.from).to+1);
+        view.dispatch({selection:{anchor:Math.min(this.item.to,bodyStart+offset)},effects:setPreviewFocus.of(true)});
+        view.focus();
+      });
+    }
+    pre.addEventListener('wheel',event=>{
+      if(!event.shiftKey||event.ctrlKey||event.metaKey||pre.scrollWidth<=pre.clientWidth)return;
+      pre.scrollLeft+=(event.deltaX||event.deltaY)*(event.deltaMode===1?view.defaultLineHeight:event.deltaMode===2?pre.clientWidth:1);
+      event.preventDefault();event.stopPropagation();
+    },{passive:false});
+    return root;
+  }
+  ignoreEvent(){return true;}
+}
 class WideTableNotice extends WidgetType{
   constructor(readonly readOnly:boolean){super();}
   eq(other:WideTableNotice){return this.readOnly===other.readOnly;}
@@ -174,16 +225,23 @@ function build(state:EditorState){
   ranges.push(...details.ranges);
   const items=visibleReplacements(state,!!(selection||pointerMath),selection,pointerMath)
     .filter(item=>!details.hidden.some(span=>item.from<span.to&&item.to>span.from));
-  const active=previewActiveLines(state,selection),rawListLines=new Set<number>();
-  if(selection){
-    for(const item of plan.replacements)if(item.list&&active.some(line=>item.reveal.from<=line.to&&item.reveal.to>line.from))rawListLines.add(state.doc.lineAt(item.from).from);
+  const active=previewActiveLines(state,selection),rawTaskLines=new Set<number>();
+  // A revealed source marker occupies the same hanging column as its preview widget.
+  // Task items keep their existing editable prefix and interactive checkbox.
+  const visibleList=new Set(items.filter(item=>item.list));
+  const rawList=selection?plan.replacements.filter(item=>item.list&&!visibleList.has(item)&&active.some(line=>item.reveal.from<=line.to&&item.reveal.to>line.from)):[];
+  for(const item of rawList)if(item.list==='task-marker')rawTaskLines.add(state.doc.lineAt(item.from).from);
+  for(const item of rawList){
+    if(rawTaskLines.has(state.doc.lineAt(item.from).from))continue;
+    const className=item.list==='padding'?'cm-preview-list-source-padding':'cm-preview-list-source-marker';
+    ranges.push(Decoration.mark({class:className}).range(item.from,item.to));
   }
   for(const style of plan.styles){
-    if(style.list&&rawListLines.has(style.from))continue;
+    if(style.list&&rawTaskLines.has(style.from))continue;
     const attributes:Record<string,string>={};if(style.align)attributes.style=`text-align: ${style.align}`;if(style.title)attributes.title=style.title;
     const reveal=style.linkReveal,sourceLink=reveal&&active.some(line=>reveal.from<=line.to&&reveal.to>line.from);
     if(style.link&&!sourceLink)attributes['data-hive-link']=style.link;
-    if(style.list)attributes.style=`--hive-list-depth: ${style.list.depth}; --hive-list-marker-width: ${style.list.width}`;
+    if(style.list)attributes.style=`--hive-list-depth: ${style.list.depth}; --hive-list-offset: ${style.list.offset}; --hive-list-marker-width: ${style.list.width}`;
     if(style.line)ranges.push(Decoration.line({class:style.className,attributes}).range(style.from));
     else if(style.to>style.from)ranges.push(Decoration.mark({class:sourceLink?'cm-source-link':style.className,attributes}).range(style.from,style.to));
   }
@@ -196,6 +254,8 @@ function build(state:EditorState){
       const segments=tableSegments(item,state.doc);
       if(!segments.length){ranges.push(Decoration.widget({widget:new WideTableNotice(state.readOnly),block:true,side:-1}).range(item.from));continue;}
       for(const segment of segments)ranges.push(Decoration.replace({block:true,widget:new TableWidget(item,state.field(imageContext,false)||null,marks.filter(mark=>mark.from<segment.to&&mark.to>segment.from),segment.fromRow,segment.toRow)}).range(segment.from,segment.to));
+    }else if(item.kind==='code'){
+      ranges.push(Decoration.replace({block:true,widget:new CodePreviewWidget(item,state.field(displayModeField)==='preview'||state.readOnly)}).range(item.from,item.to));
     }else if(item.kind==='image'){
       const size=state.field(imageViewSizes,false)?.get(item.from), width=size&&size.src===item.src&&size.to===item.to?size.width:1;
       ranges.push(Decoration.replace({widget:new ImagePreviewWidget(item,state.field(imageContext,false)||null,width,state.readOnly)}).range(item.from,item.to));
@@ -240,6 +300,14 @@ export const markdownDisplayTheme=EditorView.baseTheme({
     '--hive-code-block-bottom':'var(--hive-code-block-edge)',borderBottomLeftRadius:'5px',borderBottomRightRadius:'5px',
   },
   '.cm-preview-punctuation-join':{whiteSpace:'pre'},
+  '.cm-preview-code-punctuation-join':{display:'inline-block',maxWidth:'100%',textIndent:'0',whiteSpace:'pre-wrap'},
+  // The final-grapheme join divides the code mark into two adjacent spans.
+  '.cm-preview-code-punctuation-join:has(.cm-preview-punctuation-join) .cm-preview-inline-code:not(.cm-preview-code-punctuation-join .cm-preview-punctuation-join .cm-preview-inline-code)':{
+    paddingInlineEnd:'0',borderStartEndRadius:'0',borderEndEndRadius:'0',
+  },
+  '.cm-preview-code-punctuation-join .cm-preview-punctuation-join .cm-preview-inline-code':{
+    paddingInlineStart:'0',borderStartStartRadius:'0',borderEndStartRadius:'0',
+  },
   '.cm-preview-inline-code':{fontFamily:'Consolas, monospace',backgroundColor:'color-mix(in srgb, var(--hive-document-text) 5%, transparent)',borderRadius:'3px',padding:'1px 3px'},
   '.cm-preview-quote':{backgroundImage:'linear-gradient(var(--hive-surface-border), var(--hive-surface-border))',backgroundSize:'2px 100%',backgroundRepeat:'no-repeat',backgroundPosition:'max(0px, calc(clamp(12px, 6.4%, 50px) - 10px)) 0',color:'var(--hive-document-text, var(--text))'},
   '.cm-preview-link':{color:'var(--hive-document-text, var(--text))',textDecoration:'underline',textUnderlineOffset:'3px'},
@@ -265,8 +333,8 @@ export const markdownDisplayTheme=EditorView.baseTheme({
   '.cm-preview-table th,.cm-preview-table td':{position:'relative'},
   '.cm-table-resize-col':{position:'absolute',right:'-4px',top:'0',height:'100%',width:'8px',cursor:'col-resize',zIndex:'2'},
   '.cm-table-resize-row':{position:'absolute',bottom:'-4px',left:'0',width:'100%',height:'8px',cursor:'row-resize',zIndex:'2'},
-  '.cm-preview-table':{borderCollapse:'collapse',tableLayout:'fixed',fontSize:'.95em'},
-  '.cm-preview-table td,.cm-preview-table th':{border:'1px solid color-mix(in srgb, var(--hive-document-text, var(--text)) 20%, transparent)',padding:'6px 12px',textAlign:'left'},
+  '.cm-preview-table':{borderCollapse:'collapse',tableLayout:'fixed',fontSize:'.95em',lineHeight:'var(--hive-table-line-height, 1.35)'},
+  '.cm-preview-table td,.cm-preview-table th':{border:'1px solid color-mix(in srgb, var(--hive-document-text, var(--text)) 20%, transparent)',padding:'var(--hive-table-padding-y, .2em) var(--hive-table-padding-x, .4em)',textAlign:'left'},
   '.cm-mermaid-widget':{margin:'12px clamp(12px, 6.4%, 50px)',maxWidth:'100%',overflow:'auto',position:'relative'},
   '.cm-mermaid-widget svg':{display:'block',maxWidth:'100%',height:'auto'},
   '.cm-mermaid-widget button':{display:'block',marginBottom:'6px',font:'inherit',fontSize:'.8em',color:'var(--hive-document-text, var(--text))',background:'transparent',border:'1px solid var(--hive-surface-border)',borderRadius:'4px',cursor:'pointer'},

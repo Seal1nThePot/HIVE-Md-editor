@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import type { EditorView } from "@codemirror/view";
 import { Check, List, Send, Trash2 } from "../../shared/icons";
@@ -40,6 +40,20 @@ export type InlineAnnotationRequest = {
   focus?: boolean;
 };
 type AnnotationBubble={id:string;ids:string[];candidateIds:string[];source:AnnotationSource;file:string;x:number;y:number;target:ScreenRect;paragraph:ScreenRect;scroller:HTMLElement;scaleX:number;scaleY:number};
+type DeletionTarget={item:TextAnnotation;entries:TextAnnotation[]};
+type PencilDeletion={
+  scopeKey:string;
+  editor:EditorView;
+  doc:EditorView['state']['doc'];
+  trigger:HTMLButtonElement;
+  targets:DeletionTarget[];
+  selected:DeletionTarget|null;
+};
+
+function sameDeletionEntry(item:TextAnnotation,current:TextAnnotation){
+  return current.id===item.id&&current.source===item.source&&current.file===item.file&&current.createdAt===item.createdAt&&
+    current.from===item.from&&current.to===item.to&&current.original===item.original&&current.note===item.note&&!current.stale;
+}
 
 function sameRect(a:ScreenRect,b:ScreenRect){
   return a.left===b.left&&a.top===b.top&&a.right===b.right&&a.bottom===b.bottom;
@@ -60,6 +74,7 @@ function screenAnnotationBubble(bubble:AnnotationBubble, target=bubble.target){
 
 export default function InlineAnnotationEditor({
   ownerDocument = document,
+  scopeKey,
   items,
   request,
   editorFor,
@@ -77,6 +92,7 @@ export default function InlineAnnotationEditor({
   bubblePlacement="right",
 }: {
   ownerDocument?: Document;
+  scopeKey: string;
   items: TextAnnotation[];
   request: InlineAnnotationRequest | null;
   editorFor: (source: AnnotationSource) => EditorView | null;
@@ -174,13 +190,23 @@ export default function InlineAnnotationEditor({
   },[toolActive,document]);
   const bubbleItem=items.find(value=>value.id===hovered);
   const [choices,setChoices]=useState<string[]>([]);
-  const open = !!shown || choices.length > 0;
+  const [deletion,setDeletion]=useState<PencilDeletion|null>(null);
+  const deleteMenu=useRef<HTMLDivElement>(null);
+  const deleteTitle=useId();
+  const activeDeletion=deletion && deletion.scopeKey===scopeKey && deletion.trigger.isConnected &&
+    deletion.editor===editorFor(deletion.targets[0].item.source) && deletion.editor.state.doc===deletion.doc &&
+    deletion.targets.every(target=>target.entries.every(entry=>items.some(item=>sameDeletionEntry(entry,item)))) ? deletion : null;
+  useLayoutEffect(()=>{
+    if(deletion&&!activeDeletion)setDeletion(null);
+    if(activeDeletion&&!activeDeletion.selected)deleteMenu.current?.querySelector('button')?.focus({preventScroll:true});
+  },[deletion,activeDeletion]);
+  const open = !!shown || choices.length > 0 || !!activeDeletion;
   useEffect(() => {
     if (!open) return;
-    const dismiss = () => { close(); setChoices([]); };
+    const dismiss = () => { close(); setChoices([]); setDeletion(null); };
     const outside = (event: PointerEvent) => {
       const target = event.target as Element | null;
-      if (target?.nodeType === 1 && (box.current?.contains(target) || target.closest('.annotation-bubble,.annotation-bubble-choices'))) return;
+      if (target?.nodeType === 1 && (box.current?.contains(target) || target.closest('.annotation-bubble,.annotation-bubble-choices,.annotation-delete-confirm'))) return;
       dismiss();
     };
     document.addEventListener('pointerdown', outside, true);
@@ -286,13 +312,17 @@ export default function InlineAnnotationEditor({
     if(shown&&!items.some(value=>value.id===shown.id))setShown(null);
   },[items,hoverIds,shown]);
   useEffect(()=>{window.addEventListener('scroll',measureBubble,true);window.addEventListener('resize',measureBubble);return()=>{window.removeEventListener('scroll',measureBubble,true);window.removeEventListener('resize',measureBubble);};},[bubbleItem,bubblePlacement]);
+  function annotationCell(id:string,editor:EditorView|null){
+    const cells=[...editor?.dom.querySelectorAll<HTMLElement>('[data-table-annotation-ids]')??[]];
+    const matches=cells.filter(cell=>tableAnnotationIds(cell).includes(id));
+    return matches.find(cell=>cell===hoveredCell.current)||matches.find(cell=>cell.contains(document.activeElement))||matches[0];
+  }
   function openBubble(id:string){
     const bubbleItem=items.find(item=>item.id===id);if(!bubbleItem)return;
     onFocusGlobal?.(id);
     const clicked=bubbles.find(b=>b.id===id);if(clicked){const {x,y}=screenAnnotationBubble(clicked);setBubblePosition({x,y});}
     const editor=editorFor(bubbleItem.source);
-    const cells=editor?[...editor.dom.querySelectorAll<HTMLElement>('[data-table-annotation-ids]')]:[];
-    const cell=cells.find(el=>el===hoveredCell.current&&tableAnnotationIds(el).includes(bubbleItem.id))||cells.find(el=>el.contains(document.activeElement)&&tableAnnotationIds(el).includes(bubbleItem.id))||cells.find(el=>tableAnnotationIds(el).includes(bubbleItem.id));
+    const cell=annotationCell(bubbleItem.id,editor);
     const currentBatch=tableBatchIds(bubbleItem,items,editor,groups.current);
     if(shown && shown.ids.some(id=>currentBatch.includes(id)||clicked?.candidateIds.includes(id))){close();setChoices([]);return;}
     const ids=cell?tableAnnotationIds(cell).filter(id=>items.some(item=>item.id===id)):(clicked?.candidateIds||[]);
@@ -300,15 +330,44 @@ export default function InlineAnnotationEditor({
     if(representatives.length>1){setChoices(representatives);return;}
     setChoices([]);setShown(current=>current?.id===bubbleItem.id?null:{id:bubbleItem.id,ids:tableBatchIds(bubbleItem,items,editor,groups.current),pinned:true,focus:false});
   }
-  function cancelBubble(bubble:AnnotationBubble){
-    const related=[...bubble.ids,...bubble.candidateIds];
-    const displayed=shown?.ids.filter(id=>related.includes(id));
-    const ids=displayed?.length ? displayed : bubble.ids;
-    if(displayed?.length)close();
-    setChoices(current=>current.filter(id=>!ids.includes(id)));
+  function requestBubbleDeletion(bubble:AnnotationBubble,trigger:HTMLButtonElement){
+    if(activeDeletion||!trigger.isConnected)return;
+    const editor=editorFor(bubble.source);
+    if(!editor||editor.scrollDOM!==bubble.scroller)return;
+    const cell=annotationCell(bubble.id,editor);
+    const ids=cell?tableAnnotationIds(cell):bubble.candidateIds;
+    const byId=new Map(items.filter(item=>item.source===bubble.source&&item.file===bubble.file&&!item.stale).map(item=>[item.id,item]));
+    const targets:DeletionTarget[]=[];
+    for(const id of ids){
+      const item=byId.get(id);
+      if(!item||targets.some(target=>target.entries.includes(item)))continue;
+      const entries=tableBatchIds(item,items,editor,groups.current).flatMap(member=>{
+        const entry=byId.get(member);
+        return entry?[entry]:[];
+      });
+      if(entries.length)targets.push({item,entries});
+    }
+    if(!targets.length)return;
+    const selected=targets.find(target=>target.entries.some(entry=>entry.id===shown?.id))??(targets.length===1?targets[0]:null);
+    setChoices([]);
+    const {x,y}=screenAnnotationBubble(bubble);
+    setBubblePosition({x,y});
+    setDeletion({scopeKey,editor,doc:editor.state.doc,trigger,targets,selected});
+  }
+  function dismissBubbleDeletion(dialog?:HTMLDialogElement){
+    dialog?.close();
+    activeDeletion?.trigger.focus({preventScroll:true});
+    setDeletion(null);
+  }
+  function confirmBubbleDeletion(){
+    const target=activeDeletion?.selected;
+    if(!target||!onCancel)return;
+    const ids=target.entries.map(entry=>entry.id);
+    setDeletion(null);
+    if(shown?.ids.some(id=>ids.includes(id)))close();
     setVisibleIds(hoverIds.filter(id=>!ids.includes(id)));
     for(const id of ids)groups.current.delete(id);
-    onCancel?.(ids);
+    onCancel(ids);
   }
   const item = items.find((value) => value.id === shown?.id);
   const noteVisible=!!shown?.ids.some(id=>hoverIds.includes(id));
@@ -350,9 +409,39 @@ export default function InlineAnnotationEditor({
       data-annotation-visible={[...bubble.ids,...bubble.candidateIds].some(id=>hoverIds.includes(id))||undefined}
       title={`标注：${items.find(item=>item.id===bubble.id)?.original.slice(0,30)||''}`} aria-label="打开标注要求"
       aria-expanded={noteVisible&&!!shown&&shown.ids.some(id=>bubble.ids.includes(id)||bubble.candidateIds.includes(id))} style={{left:bubble.x,top:bubble.y}}
-      onContextMenu={event=>{if(!onCancel)return;event.preventDefault();event.stopPropagation();cancelBubble(bubble);}}
+      onContextMenu={event=>{if(!onCancel)return;event.preventDefault();event.stopPropagation();requestBubbleDeletion(bubble,event.currentTarget);}}
       onClick={()=>{setVisibleIds([...new Set([...bubble.ids,...bubble.candidateIds])]);openBubble(bubble.id);}}>✎</button>,bubble.scroller,bubble.id))}
-    {choices.length>0 && <div className="annotation-bubble-choices" data-annotation-visible={choices.some(id=>hoverIds.includes(id))||undefined} role="menu" style={{left:Math.max(2,Math.min(window.innerWidth-130,bubblePosition.x)),top:Math.max(2,Math.min(window.innerHeight-Math.min(choices.length*34+8,window.innerHeight-4)-2,bubblePosition.y+28)),maxHeight:"calc(100vh - 8px)",overflowY:"auto"}}>{choices.map((id,index)=><button type="button" role="menuitem" key={id} onClick={()=>{const selected=items.find(value=>value.id===id);if(selected)setShown({id,ids:tableBatchIds(selected,items,editorFor(selected.source),groups.current),pinned:true,focus:false});setChoices([]);}}>标注 {index+1}</button>)}</div>}
+    {(choices.length>0||activeDeletion&&!activeDeletion.selected) && <div ref={deleteMenu} className="annotation-bubble-choices"
+      data-annotation-visible={!!activeDeletion||choices.some(id=>hoverIds.includes(id))||undefined} role="menu" aria-label={activeDeletion?'选择要删除的标注':undefined}
+      style={{left:Math.max(2,Math.min(window.innerWidth-(activeDeletion?Math.min(288,window.innerWidth*.8+8):130),bubblePosition.x)),top:Math.max(2,Math.min(window.innerHeight-Math.min((activeDeletion?.targets.length??choices.length)*34+8,window.innerHeight-4)-2,bubblePosition.y+28)),maxHeight:"calc(100vh - 8px)",overflowY:"auto"}}
+      onKeyDown={event=>{
+        if(!activeDeletion)return;
+        if(event.key==='Escape'){event.preventDefault();event.stopPropagation();dismissBubbleDeletion();return;}
+        if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+        event.preventDefault();
+        const buttons=[...event.currentTarget.querySelectorAll('button')];
+        const current=buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:current+(event.key==='ArrowDown'?1:-1);
+        buttons[(next+buttons.length)%buttons.length]?.focus();
+      }}>
+      {activeDeletion?activeDeletion.targets.map((target,index)=><button type="button" role="menuitem" key={target.item.id}
+        title={target.item.note.trim()||target.item.original}
+        onClick={()=>setDeletion({...activeDeletion,selected:target})}>标注 {index+1} · {target.item.note.trim()||target.item.original}</button>):
+        choices.map((id,index)=><button type="button" role="menuitem" key={id} onClick={()=>{const selected=items.find(value=>value.id===id);if(selected)setShown({id,ids:tableBatchIds(selected,items,editorFor(selected.source),groups.current),pinned:true,focus:false});setChoices([]);}}>标注 {index+1}</button>)}</div>}
+    {activeDeletion?.selected&&<dialog className="modal small-modal annotation-delete-confirm" role="alertdialog" aria-labelledby={deleteTitle} aria-describedby={deleteTitle+'-detail'}
+      ref={node=>{if(node&&!node.open)node.showModal();}}
+      onCancel={event=>{event.preventDefault();dismissBubbleDeletion(event.currentTarget);}}>
+      <h2 id={deleteTitle}>{activeDeletion.selected.entries.length===1?'是否删除当前标注？':'是否删除当前这组标注？'}</h2>
+      <div id={deleteTitle+'-detail'} className="confirm-text">
+        {activeDeletion.selected.entries.length>1&&<p>这组标注包含 {activeDeletion.selected.entries.length} 个选区。</p>}
+        <blockquote>{activeDeletion.selected.item.original}</blockquote>
+        {activeDeletion.selected.item.note&&<p>{activeDeletion.selected.item.note}</p>}
+      </div>
+      <div className="modal-footer">
+        <button type="button" className="secondary-button" autoFocus onClick={event=>dismissBubbleDeletion(event.currentTarget.closest('dialog')??undefined)}>取消</button>
+        <button type="button" className="secondary-button annotation-delete-danger" onClick={confirmBubbleDeletion}>{activeDeletion.selected.entries.length===1?'删除标注':'删除这组标注'}</button>
+      </div>
+    </dialog>}
     {shown && item && <div
       ref={box}
       className="inline-annotation-editor"

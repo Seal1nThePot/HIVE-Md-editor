@@ -10,6 +10,7 @@ export type EditorSession = {
     disk: DiskFile | null;
     imagePath?: string;
     trashPreview?: TrashDocument;
+    external?: {disk: DiskFile; editable: boolean};
     state: EditorState | null;
     view: EditorView | null;
     dirty: boolean;

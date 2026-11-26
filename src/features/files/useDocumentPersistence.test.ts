@@ -1,6 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import type {DependencyList,EffectCallback} from 'react';
 import {EditorState} from '@codemirror/state';
+import {history,undo,undoDepth} from '@codemirror/commands';
 import {useDocumentPersistence} from './useDocumentPersistence';
 import type {EditorSession} from '../editor/editorSessionTypes';
 import type {DiskFile} from '../../shared/fileTypes';
@@ -23,13 +24,13 @@ vi.mock('react',async original=>({
     },
 }));
 
-function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(yes=>{resolve=yes;});return {promise,resolve};}
+function deferred<T>(){let resolve!:(value:T)=>void,reject!:(error:Error)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 const disk=(text='original',hash='baseline'):DiskFile=>({path:'draft.md',text,hash,eol:'LF',bom:false});
 function fixture(){
     vi.useFakeTimers();hooks.slots=[];hooks.cursor=0;hooks.effects=[];
     const session:EditorSession={id:'editor',disk:disk(),state:EditorState.create({doc:'original'}),view:null,dirty:false};
     const options={api:vi.fn<(...args:any[])=>Promise<any>>(),workspace:{id:'a',root:'first'},sessions:{current:new Map([['editor',session]])},switching:{current:false},structuring:{current:false},fileBusy:false,tick:0,autoSave:false,
-        setFileBusy:vi.fn(),setEntries:vi.fn(),setError:vi.fn(),inform:vi.fn(),redraw:vi.fn(),appAlive:{current:true}};
+        setFileBusy:vi.fn(),setEntries:vi.fn(),reportTree:vi.fn(),setError:vi.fn(),inform:vi.fn(),redraw:vi.fn(),appAlive:{current:true}};
     let result!:ReturnType<typeof useDocumentPersistence>;
     const render=()=>{hooks.cursor=0;hooks.effects=[];result=useDocumentPersistence(options);for(const effect of hooks.effects)effect();return result;};
     render();
@@ -38,7 +39,7 @@ function fixture(){
         replayEffects:()=>{for(const slot of hooks.slots)if(slot?.create){slot.cleanup?.();slot.cleanup=slot.create()||undefined;}},
         response:(files:unknown[],extra:object={})=>({workspace:options.workspace,treeVersion:'opaque',files,...extra})};
 }
-afterEach(()=>{for(const slot of hooks.slots)slot?.cleanup?.();vi.useRealTimers();vi.clearAllMocks();});
+afterEach(()=>{for(const slot of hooks.slots)slot?.cleanup?.();vi.useRealTimers();vi.clearAllMocks();vi.unstubAllGlobals();});
 
 it('adopts the committed baseline when only the file-time record failed', async () => {
     const t = fixture();
@@ -52,6 +53,70 @@ it('adopts the committed baseline when only the file-time record failed', async 
     expect(t.session.dirty).toBe(false);
     expect(t.options.inform).toHaveBeenCalledWith(warning);
     expect(t.options.setError).not.toHaveBeenCalled();
+});
+
+it('writes a normalized snapshot and maps the stored selection and prior undo after success',async()=>{
+    const t=fixture(),raw='1. Alpha\n3. Charlie\n';
+    t.session.state=EditorState.create({doc:raw,extensions:history()}).update({
+        changes:{from:raw.length,insert:'\nNew paragraph'},selection:{anchor:raw.length+6},userEvent:'input.type',
+    }).state;
+    t.session.dirty=true;
+    const before=t.session.state,pending=deferred<unknown>();
+    t.options.api.mockReturnValueOnce(pending.promise);
+    const saving=t.result.saveSession('editor',true);
+    expect(t.options.api).toHaveBeenCalledWith('/file',expect.objectContaining({text:'1. Alpha\n2. Charlie\n\nNew paragraph',baseline:'baseline'}));
+    expect(t.session.state).toBe(before);
+    pending.resolve({path:'draft.md',hash:'normalized'});
+    await expect(saving).resolves.toBe(true);
+    expect(t.session.state?.doc.toString()).toBe(t.session.disk?.text);
+    expect(t.session.state?.selection.main.anchor).toBe(before.selection.main.anchor);
+    expect(undoDepth(t.session.state!)).toBe(1);
+    expect(t.session.dirty).toBe(false);
+    expect(undo({state:t.session.state!,dispatch:tr=>{t.session.state=tr.state;}})).toBe(true);
+    expect(t.session.state?.doc.toString()).toBe('1. Alpha\n2. Charlie\n');
+});
+
+it('keeps the editor and undo untouched after a save failure and preserves concurrent edits after a retry',async()=>{
+    const t=fixture(),raw='1) First\n4) Second\n';
+    t.session.state=EditorState.create({doc:raw,extensions:history()}).update({
+        changes:{from:raw.length,insert:'\nBefore save'},userEvent:'input.type',
+    }).state;
+    t.session.dirty=true;
+    const original=t.session.state;
+    t.options.api.mockRejectedValueOnce(new Error('Disk conflict'));
+    await expect(t.result.saveSession('editor',true)).resolves.toBe(false);
+    expect(t.session.state).toBe(original);
+    expect(t.session.disk?.hash).toBe('baseline');
+    expect(undoDepth(t.session.state)).toBe(1);
+    const pending=deferred<unknown>();
+    t.options.api.mockReturnValueOnce(pending.promise);
+    const saving=t.result.saveSession('editor',true);
+    t.session.state=original.update({changes:{from:original.doc.length,insert:'\nWhile saving'},userEvent:'input.type'}).state;
+    pending.resolve({path:'draft.md',hash:'normalized'});
+    await expect(saving).resolves.toBe(true);
+    expect(t.session.disk?.text).toBe('1) First\n2) Second\n\nBefore save');
+    expect(t.session.state?.doc.toString()).toBe(raw+'\nBefore save\nWhile saving');
+    expect(t.session.dirty).toBe(true);
+});
+
+it('autosaves and writes an editable external Markdown through the same normalization',async()=>{
+    const t=fixture(),raw='9) First\n1) Second\n',expected='9) First\n10) Second\n';
+    t.session.state=EditorState.create({doc:raw});t.session.dirty=true;
+    t.options.autoSave=true;t.options.tick++;t.render();
+    t.options.api.mockResolvedValueOnce({path:'draft.md',hash:'auto'});
+    await vi.advanceTimersByTimeAsync(900);
+    expect(t.session.state?.doc.toString()).toBe(expected);
+    expect(t.session.disk?.text).toBe(expected);
+    const external=vi.fn(async()=>({path:'D:/external.md',hash:'external'}));
+    vi.stubGlobal('window',{hiveDesktop:{saveLocalMarkdown:external}});
+    t.session.disk=null;
+    t.session.external={editable:true,disk:{...disk(raw),path:'D:/external.md',eol:'CRLF',bom:true}};
+    t.session.state=EditorState.create({doc:raw});t.session.dirty=true;
+    await expect(t.result.saveSession('editor')).resolves.toBe(true);
+    expect(external).toHaveBeenCalledWith({path:'D:/external.md',text:expected,baseline:'baseline',eol:'CRLF',bom:true});
+    expect(t.session.external.disk.text).toBe(expected);
+    expect(t.session.state?.doc.toString()).toBe(expected);
+    expect(t.session.dirty).toBe(false);
 });
 
 it('ignores a save receipt after switching repositories with the same open path', async () => {
@@ -78,11 +143,38 @@ it('sends the learned tree version and processes disk updates without replacing 
     await vi.advanceTimersByTimeAsync(2000);
     expect(t.options.api.mock.calls[0][1]).toEqual({paths:['draft.md'],baselines:{'draft.md':'baseline'}});
     expect(t.options.setEntries).toHaveBeenCalledExactlyOnceWith(entries);
-    t.options.api.mockResolvedValueOnce(t.response([disk('external','new-hash')],{treeVersion:'v1'}));
+    t.options.api.mockResolvedValueOnce(t.response([disk('external','new-hash')],{entries:[...entries],treeVersion:'v1'}));
     await vi.advanceTimersByTimeAsync(2000);
     expect(t.options.api.mock.calls[1][1].treeVersion).toBe('v1');
     expect(t.options.setEntries).toHaveBeenCalledTimes(1);
     expect(t.session.state?.doc.toString()).toBe('external');expect(t.session.disk?.hash).toBe('new-hash');
+});
+it('keeps the last successful tree on failure and reports the next successful scan', async ()=>{
+    const t=fixture(), entries=[{path:'draft.md',name:'draft.md',type:'file'}];
+    const warnings=[{path:'locked',message:'Permission denied'}];
+    t.options.api.mockResolvedValueOnce(t.response([],{entries,warnings,treeVersion:'v1'}));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(t.options.reportTree).toHaveBeenLastCalledWith({warnings});
+    t.options.api.mockRejectedValueOnce(new Error('directory offline'));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(t.options.reportTree).toHaveBeenLastCalledWith({error:'directory offline'});
+    expect(t.options.setEntries).toHaveBeenCalledExactlyOnceWith(entries);
+    expect(t.options.setError).not.toHaveBeenCalled();
+    t.options.api.mockResolvedValueOnce(t.response([],{entries,treeVersion:'v1'}));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(t.options.reportTree).toHaveBeenLastCalledWith({warnings:undefined});
+    expect(t.options.setEntries).toHaveBeenCalledTimes(1);
+});
+it('does not display a late error from the previous repository',async()=>{
+    const t=fixture(), pending=deferred<unknown>();
+    t.options.api.mockReturnValueOnce(pending.promise);
+    await vi.advanceTimersByTimeAsync(2000);
+    t.options.workspace={id:'b',root:'second'};
+    t.render();
+    pending.reject(new Error('repository switched'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.options.reportTree).not.toHaveBeenCalled();
+    expect(t.options.setError).not.toHaveBeenCalled();
 });
 it('preserves dirty local text and reports conflict when a response omits entries',async()=>{
     const t=fixture();t.session.state=EditorState.create({doc:'local edits'});t.session.dirty=true;
