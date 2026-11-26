@@ -4,6 +4,7 @@ import type {EditorView} from '@codemirror/view';
 const barrier = new Compartment();
 const readOnlyChanges = EditorState.changeFilter.of(transaction=>!transaction.docChanged || transaction.isUserEvent('input.disk-sync'));
 const inputEvents = ['keydown','beforeinput','input','change','paste','drop'];
+const capture = {capture:true};
 
 export function freezeWorkspaceInput(documents:readonly Document[], views:readonly EditorView[]) {
   const stop = (event:Event) => {event.preventDefault();event.stopImmediatePropagation();};
@@ -16,14 +17,14 @@ export function freezeWorkspaceInput(documents:readonly Document[], views:readon
     released = true;
     for (const {document,body,inert,focus} of bodies) {
       body.inert = inert;
-      for (const name of inputEvents) document.removeEventListener(name,stop,true);
+      for (const name of inputEvents) document.removeEventListener(name,stop,capture);
       if (restoreFocus && !inert && focus?.isConnected && focus!==body) focus.focus({preventScroll:true});
     }
     for (const view of guarded) if (view.dom.isConnected) view.dispatch({effects:barrier.reconfigure([])});
   }
   try {
     for (const {document,body} of bodies) {
-      for (const name of inputEvents) document.addEventListener(name,stop,true);
+      for (const name of inputEvents) document.addEventListener(name,stop,capture);
       body.inert = true;
     }
     for (const view of new Set(views)) {
