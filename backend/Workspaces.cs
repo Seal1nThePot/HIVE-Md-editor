@@ -21,6 +21,7 @@ public sealed class Repository(string root, string state)
 
 public sealed class Workspaces : IDisposable
 {
+    const string WorkspaceChanged = "写作空间已在其他窗口切换。请刷新页面后继续；当前内容尚未覆盖磁盘。";
     readonly string local, manifestDirectory;
     string defaultRoot;
     readonly ShellBridge shell;
@@ -80,10 +81,16 @@ public sealed class Workspaces : IDisposable
     static bool ValidName(string name) => name.Trim().Length <= 80 && !Regex.IsMatch(name, "[\\x00-\\x1f\\x7f]");
     JsonNode Read(Configuration value) => N(new { id = value.Current.Id, root = value.Current.Root, defaultRepositoryId = DefaultId, autoSave = value.AutoSave, revision = value.Revision, repositories = value.Repositories });
     public JsonNode Read() => Read(config);
+    public JsonNode Read(Repository repository)
+    {
+        var value = config;
+        Require(value.Current == repository, WorkspaceChanged, 409);
+        return Read(value);
+    }
     public Repository Capture(string? id)
     {
         var current = config.Current;
-        Require(string.IsNullOrEmpty(id) || id == current.Id, "写作空间已在其他窗口切换。请刷新页面后继续；当前内容尚未覆盖磁盘。", 409);
+        Require(string.IsNullOrEmpty(id) || id == current.Id, WorkspaceChanged, 409);
         return current;
     }
     async Task<JsonNode> WriteManifest(Configuration configuration)

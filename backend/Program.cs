@@ -51,8 +51,8 @@ builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = Tim
 await using var app = builder.Build();
 using var stopUpdates = app.Lifetime.ApplicationStopping.Register(updates.Stop);
 
-async Task WriteJson(HttpContext context, JsonNode node) =>
-    await context.Response.WriteAsJsonAsync(node, Options, context.RequestAborted);
+async Task WriteJson(HttpContext context, JsonNode node, JsonSerializerOptions? options = null) =>
+    await context.Response.WriteAsJsonAsync(node, options ?? Options, context.RequestAborted);
 
 async Task<byte[]> ReadBytes(HttpContext context, int limit)
 {
@@ -115,7 +115,7 @@ async Task<JsonNode> Sync(Repository repository, JsonNode body, CancellationToke
         }
     });
     var snapshot = await repository.Files.Snapshot();
-    snapshot["workspace"] = spaces.Read();
+    snapshot["workspace"] = spaces.Read(repository);
     snapshot["files"] = Array(files);
     return snapshot;
 }
@@ -226,7 +226,7 @@ async Task DispatchWorkspace(HttpContext context, Repository repository, string 
             break;
         default: throw new ApiException("接口不存在。", 404);
     }
-    await WriteJson(context, result);
+    await WriteJson(context, result, route is "/tree" or "/workspace/sync" ? Files.TreeJsonOptions : Options);
 }
 
 app.Map("/api", (IApplicationBuilder branch) => branch.Run(async context =>

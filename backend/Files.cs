@@ -11,26 +11,27 @@ namespace Hive;
 public sealed class Files : IDisposable
 {
     public const int MaxBytes = 2_000_000;
+    // A folder contributes both an object and a children array to the response.
+    internal static readonly JsonSerializerOptions TreeJsonOptions = new(Options) { MaxDepth = 32_768 };
     public string Root { get; }
     public string State { get; }
     readonly FileTimes fileTimes;
     readonly SemaphoreSlim gate = new(1);
     readonly FileSystemWatcher watcher;
-    sealed record ProbeResult(long Length, DateTime Modified, DateTime Creation, DateTime Checked, string Hash);
+    sealed record ProbeResult(long Length, DateTime Modified, DateTime Creation, DateTime Checked, long Generation, string Hash);
     readonly ConcurrentDictionary<string, ProbeResult> probes = new(StringComparer.Ordinal);
     volatile bool active;
     volatile bool sourceCheckout;
     readonly object publication = new();
     long dirty = 1, scanned;
-    JsonArray? cached;
-    string version = "";
+    JsonObject? cached;
     DateTime lastScan;
     public Files(string root, string state)
     {
         Root = root;
         State = state;
         fileTimes = new(state);
-        watcher = new(root) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size };
+        watcher = new(root) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.Security };
         watcher.Changed += (_, e) => OnChange(e.Name);
         watcher.Created += (_, e) => OnChange(e.Name);
         watcher.Deleted += (_, e) => OnChange(e.Name);
@@ -93,10 +94,11 @@ public sealed class Files : IDisposable
         var length = info.Length;
         var modified = info.LastWriteTimeUtc;
         var creation = info.CreationTimeUtc;
-        if (probes.TryGetValue(relative, out var prior) && prior.Hash == known && prior.Length == length &&
-            prior.Modified == modified && prior.Creation == creation && DateTime.UtcNow - prior.Checked < TimeSpan.FromSeconds(30))
-            return N(new { path = relative, hash = prior.Hash, unchanged = true });
         var stamp = Interlocked.Read(ref dirty);
+        if (probes.TryGetValue(relative, out var prior) && prior.Hash == known && prior.Length == length &&
+            prior.Modified == modified && prior.Creation == creation && prior.Generation == stamp &&
+            DateTime.UtcNow - prior.Checked < TimeSpan.FromSeconds(30) && Interlocked.Read(ref dirty) == stamp)
+            return N(new { path = relative, hash = prior.Hash, unchanged = true });
         var result = await ReadDocument(relative, path, known);
         info.Refresh();
         if (Interlocked.Read(ref dirty) == stamp && info.Exists && info.Length == length && info.LastWriteTimeUtc == modified && info.CreationTimeUtc == creation)
@@ -106,7 +108,7 @@ public sealed class Files : IDisposable
                 if (active && Interlocked.Read(ref dirty) == stamp)
                 {
                     if (probes.Count >= 100) probes.Clear();
-                    probes[relative] = new(length, modified, creation, DateTime.UtcNow, result.S("hash"));
+                    probes[relative] = new(length, modified, creation, DateTime.UtcNow, stamp, result.S("hash"));
                 }
             }
         }
@@ -218,12 +220,13 @@ public sealed class Files : IDisposable
         try
         {
             var previous = cached;
-            if (!force && previous != null && scanned == Interlocked.Read(ref dirty) && DateTime.UtcNow - lastScan < TimeSpan.FromSeconds(60)) return N(new { entries = previous, treeVersion = version });
+            if (!force && previous != null && scanned == Interlocked.Read(ref dirty) && DateTime.UtcNow - lastScan < TimeSpan.FromSeconds(60)) return previous.DeepClone();
             var stamp = Interlocked.Read(ref dirty);
             var times = await fileTimes.Read();
             var timesChanged = false;
             var count = 0;
             long chars = 0;
+            var unreadable = new List<string>();
             sourceCheckout = await SourceCheckout();
             var compare = CultureInfo.GetCultureInfo("zh-CN").CompareInfo;
             JsonArray Scan(string dir, string prefix)
@@ -233,19 +236,26 @@ public sealed class Files : IDisposable
                 {
                     var name = Path.GetFileName(p); var relative = prefix + name;
                     if (Ignored(relative)) continue;
-                    FileAttributes attrs; try { attrs = File.GetAttributes(p); } catch (FileNotFoundException) { continue; } catch (DirectoryNotFoundException) { continue; }
-                    if ((attrs & FileAttributes.ReparsePoint) != 0) continue;
-                    var directory = (attrs & FileAttributes.Directory) != 0; if (!directory && !Document(name)) continue;
-                    JsonNode item;
                     try
                     {
+                        var attrs = File.GetAttributes(p);
+                        if ((attrs & FileAttributes.ReparsePoint) != 0) continue;
+                        var directory = (attrs & FileAttributes.Directory) != 0;
+                        if (!directory && !Document(name)) continue;
                         var createdAt = Observe(times, relative, p, null, out var changed);
                         timesChanged |= changed;
-                        item = N(new { name, path = relative, type = directory ? "folder" : "file", modifiedAt = FileSystemIdentity.UnixMilliseconds(File.GetLastWriteTimeUtc(p).Ticks - DateTime.UnixEpoch.Ticks), createdAt });
+                        var item = N(new { name, path = relative, type = directory ? "folder" : "file", modifiedAt = FileSystemIdentity.UnixMilliseconds(File.GetLastWriteTimeUtc(p).Ticks - DateTime.UnixEpoch.Ticks), createdAt });
+                        if (directory) item["children"] = Scan(p, relative + "/");
+                        items.Add(item);
+                        count++;
+                        chars += relative.Length + name.Length;
                     }
-                    catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { continue; }
-                    if (directory) { try { item["children"] = Scan(p, relative + "/"); } catch (DirectoryNotFoundException) { continue; } }
-                    items.Add(item); count++; chars += relative.Length + name.Length;
+                    catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { }
+                    catch (UnauthorizedAccessException)
+                    {
+                        unreadable.Add(relative);
+                        chars += relative.Length;
+                    }
                 }
                 items.Sort((a, b) =>
                 {
@@ -268,11 +278,19 @@ public sealed class Files : IDisposable
                 }
             }
             Walk(entries);
-            version = Convert.ToHexStringLower(fingerprint.GetHashAndReset());
-            lock (publication) cached = active && count <= 25000 && chars <= 4_000_000 ? entries : null;
+            unreadable.Sort(StringComparer.Ordinal);
+            foreach (var path in unreadable) fingerprint.AppendData(Encoding.UTF8.GetBytes(N(path).ToJsonString(Options) + "\n"));
+            var result = new JsonObject { ["entries"] = entries, ["treeVersion"] = Convert.ToHexStringLower(fingerprint.GetHashAndReset()) };
+            if (unreadable.Count > 0) result["warnings"] = N(unreadable.Select(path => new { path, message = "无法读取此项，请检查访问权限。" }));
+            bool retained;
+            lock (publication)
+            {
+                retained = active && count + unreadable.Count <= 25000 && chars <= 4_000_000;
+                cached = retained ? result : null;
+            }
             scanned = stamp;
             lastScan = DateTime.UtcNow;
-            return N(new { entries, treeVersion = version });
+            return retained ? result.DeepClone() : result;
         }
         catch { fileTimes.Clear(); Invalidate(); throw; }
         finally { gate.Release(); }

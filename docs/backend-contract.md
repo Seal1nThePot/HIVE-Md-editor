@@ -16,11 +16,11 @@
 
 `POST /api/workspace/sync` 保留 `paths`、`baselines`，新增可选 `treeVersion`。响应为 `{workspace, treeVersion, entries, files}`；`entries` 恒返回，`treeVersion` 未变化时省略的是目录重扫而非响应字段（2026-11-19 实测）。该版本独立于仓库配置的 revision。
 
-`GET /api/tree` 返回完整的当前快照；`?refresh=1` 强制校验磁盘，复用仍在进行的扫描。`files.list()` 保持即时扫描兼容语义，供显式搜索与旧接口使用。扫描、保存与元数据写入沿用同仓库事务队列。
+`GET /api/tree` 返回当前快照，`?refresh=1` 强制校验磁盘。`files.list()` 保持即时扫描兼容语义，供显式搜索与旧接口使用。扫描、保存与元数据写入沿用同仓库事务队列。树响应使用支持深层目录的序列化配置，请求解析深度与正文体积上限沿用原配置。
 
-`Files.cs` 管理仓库扫描、目录监听和 60 秒兜底。变化使快照失效，下次请求重建过滤范围内的树。同步探测最多缓存 100 项属性与哈希，30 秒重验内容。保存始终重新核对磁盘基线。`FileTimes.cs` 复用最多 16 MiB 创建时间状态文件的解析结果，磁盘签名变化或读写失败时失效。
+`Files.cs` 管理仓库扫描、目录监听和 60 秒兜底。变化使快照失效，下次请求重建过滤范围内的树。权限拒绝的子项会跳过，`/api/tree` 和 `/api/workspace/sync` 都会随可读条目返回 `warnings: [{path, message}]`。`path` 为仓库内斜杠分隔的相对路径。警告参与快照版本计算，权限恢复后重扫会清除警告。根目录和时间记录的读取失败返回错误，损坏的记录保留原样。同步探测最多缓存 100 项属性与哈希，监听到变化后重验内容，并保留 30 秒兜底。保存始终重新核对磁盘基线。`FileTimes.cs` 复用最多 16 MiB 创建时间状态文件的解析结果，磁盘签名变化或读写失败时失效。
 
-切换仓库停止旧监听并释放索引和同步探测缓存。已捕获的请求继续访问原仓库。退出时停止监听并回收服务资源。
+切换仓库停止旧监听并释放索引和同步探测缓存。已捕获的请求继续访问原仓库。同步准备响应时若当前仓库已切换，返回 409。退出时停止监听并回收服务资源。
 
 本地 HTTP 服务绑定 `127.0.0.1`。命令行入口 `server/index.mjs` 启动同一个 C# 可执行程序，开发模式下另开 Vite 提供前端热更新。生产桌面直接启动包内 C# 可执行程序。磁盘保存业务状态，C# 进程管理队列、锁、模型密钥和回收站清理令牌。
 
@@ -43,11 +43,11 @@
 | GET | `/api/workspace` | — | `{id,root,defaultRepositoryId,autoSave,revision,repositories:[{id,root,name?}]}`。列表包含当前仓库和默认文档根。 |
 | POST | `/api/workspace` | `{root,autoSave,revision}` | 同 GET；`revision` 过期 → 409 |
 | POST | `/api/workspace/repositories` | `{action:"add"\|"rename"\|"remove"\|"reorder", revision, …}` | 同 GET。`add` 须现有普通目录（拒符号链接/junction），`rename` 备注 ≤80 单行，`reorder` 须全量 id。`remove` 仅移出登记，保留文件与元数据。默认文档根禁止移出。移出当前仓库时同一事务切回默认文档根。`revision` 过期 → 409。 |
-| POST | `/api/workspace/sync` | `{paths: string[], baselines?: Record<path, sha256>, treeVersion?}`（paths ≤100，`baselines` 可选，兼容旧请求） | `{workspace,treeVersion,entries,files}`；服务端最多 4 个并发读文件；hash 与 `baselines[path]` 相同的文件只回 `{path,hash,unchanged:true}`，不带 `text`；不排队 |
+| POST | `/api/workspace/sync` | `{paths: string[], baselines?: Record<path, sha256>, treeVersion?}`（paths ≤100，`baselines` 可选，兼容旧请求） | `{workspace,treeVersion,entries,files,warnings?}`；服务端最多 4 个并发读文件；hash 与 `baselines[path]` 相同的文件只回 `{path,hash,unchanged:true}`，不带 `text`；不排队 |
 | POST | `/api/references/resolve` | `{sources,budget,currentFile?,overrides?}`，来源格式见 §10 | `{sources,files:[{path,source,characters,truncated,text,unsaved?}],warnings}` |
 | POST | `/api/references/attachments` | UTF-8 Markdown 原始字节（`application/octet-stream`，≤2 MB）和 `?name=` | `{type:"attachment",id,path}`，`path` 为显示文件名 |
 | DELETE | `/api/references/attachments/:id` | 附件 ID | `{ok:true}` |
-| GET | `/api/tree` | — | `{root,entries}`（文件夹优先，`zh-CN` 排序） |
+| GET | `/api/tree` | — | `{root,treeVersion,entries,warnings?}`（文件夹优先，`zh-CN` 排序） |
 | GET | `/api/file` | `?path=` | `{path,text,hash,eol,bom}` |
 | POST | `/api/file` | `{path,text,baseline,eol,bom}` | `{path,hash,warning?}` |
 | POST | `/api/folder` | `{path}` | `{ok:true}` |
