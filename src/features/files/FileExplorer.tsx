@@ -41,7 +41,7 @@ export default function FileExplorer({entries,workspaceId,root,file,dirty,filter
 
   const [order,setOrder]=useState<ExplorerOrder>(()=>{try{return readOrder(localStorage.getItem(storage));}catch{return readOrder(null);}});
   const [selected,setSelected]=useState(''),[scope,setScope]=useState(''),[menu,setMenu]=useState<Menu|null>(null),[rename,setRename]=useState<{path:string;value:string}|null>(null),[pendingOperation,setOperation]=useState<'open'|'manage'|null>(null),[error,setError]=useState(''),[warning,setWarning]=useState('');
-  useEffect(()=>{if(filter||scope)setSearchExpanded(true);},[filter,scope]);
+  useEffect(()=>{if(filter)setSearchExpanded(true);},[filter]);
   const busy=pendingOperation!==null;
   const [selection,setSelection]=useState<Set<string>>(new Set()),anchor=useRef(''),[batch,setBatch]=useState<{kind:'move'|'trash';entries:Entry[]}|null>(null),[batchResult,setBatchResult]=useState<string[]>([]);
   const foldersSeen=useRef<{workspace:string;paths:Set<string>}>({workspace:workspaceId,paths:new Set()});

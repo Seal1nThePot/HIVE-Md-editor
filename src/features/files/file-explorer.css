@@ -63,5 +63,27 @@
   .explorer-tree.drop-inside>.explorer-empty{opacity:0}
 }
 
-.explorer-search-toggle{font:inherit;background:none;color:var(--muted);cursor:pointer;min-height:27px;text-align:left}.explorer-search-toggle:hover,.explorer-search-toggle:focus-visible{background:var(--gold-bg);color:var(--text)}
-.explorer-search>button{display:inline-flex;align-items:center;justify-content:center;flex:none;border:0;background:none;color:inherit;padding:0;cursor:pointer}.explorer-search:focus-within{border-color:var(--gold)}
+.explorer-search-toggle {
+  font:inherit;
+  background:none;
+  color:var(--muted);
+  cursor:pointer;
+  min-height:27px;
+  text-align:left;
+}
+.explorer-search-toggle:hover,.explorer-search-toggle:focus-visible {
+  background:var(--gold-bg);
+  color:var(--text);
+}
+.explorer-search>button {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:none;
+  border:0;
+  background:none;
+  color:inherit;
+  padding:0;
+  cursor:pointer;
+}
+.explorer-search:focus-within {border-color:var(--gold)}
