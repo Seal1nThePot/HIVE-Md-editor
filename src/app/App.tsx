@@ -106,7 +106,7 @@ import ViewControls from "../features/workspace/ViewControls";
 import PanelIconRail from "../features/workspace/PanelIconRail";
 import type {DockEdge} from "../features/workspace/panelLayout";
 import WritingModeControl from "../features/chat/WritingModeControl";
-import GlobalToolbar from "../features/chat/GlobalToolbar";
+import {createGlobalToolbarStore,PersistentGlobalToolbar} from '../features/chat/GlobalToolbar';
 import {useReferenceSources,type AttachmentReferenceSource,type ReferenceSource,type WorkspaceReferenceSource} from '../features/chat/referenceSources';
 import {REFERENCE_DRAG_TYPE,readReferenceDrag} from '../features/files/referenceDrag';
 import {CHAPTER_DRAG_TYPE,appendDraftContext,chapterForQuickAI,readChapterDrag,type ChapterDrag} from '../features/chat/contextDraft';
@@ -176,6 +176,7 @@ export default function App() {
   useApplyTheme();
   const [current,setCurrent]=useState<{info:WorkspaceInfo;placement?:RepositoryPanelPlacement}|null>(null);
   const [error,setError]=useState(''),[attempt,setAttempt]=useState(0);
+  const [toolbarStore]=useState(createGlobalToolbarStore);
   const capturePlacement=useRef<(()=>RepositoryPanelPlacement)|null>(null);
   useEffect(()=>{let alive=true;fetch('/api/workspace').then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);if(alive){setCurrent({info:data});setError('');}}).catch(error=>{if(alive)setError(error.message);});return()=>{alive=false;};},[attempt]);
   if(!current)return <div className="workspace-loading" role="status">{error||'正在打开写作空间…'}{error&&<button onClick={()=>setAttempt(value=>value+1)}>重试</button>}</div>;
@@ -183,13 +184,17 @@ export default function App() {
   function changeWorkspace(next:WorkspaceInfo){
     setCurrent({info:next,placement:next.id===info.id?placement:capturePlacement.current?.()});
   }
-  return <WorkspaceProvider key={info.id} info={info} onChange={changeWorkspace}><ShortcutPreferencesProvider><WindowAnnotationProvider><DesktopPanelsProvider>
-    <WritingApp initialPlacement={placement} capturePlacement={capturePlacement}/>
-  </DesktopPanelsProvider></WindowAnnotationProvider></ShortcutPreferencesProvider></WorkspaceProvider>;
+  return <WindowAnnotationProvider scopeKey={info.id}><DesktopPanelsProvider>
+    <WorkspaceProvider key={info.id} info={info} onChange={changeWorkspace}><ShortcutPreferencesProvider>
+      <WritingApp initialPlacement={placement} capturePlacement={capturePlacement} toolbarStore={toolbarStore}/>
+    </ShortcutPreferencesProvider></WorkspaceProvider>
+    <PersistentGlobalToolbar store={toolbarStore}/>
+  </DesktopPanelsProvider></WindowAnnotationProvider>;
 }
-function WritingApp({initialPlacement,capturePlacement}:{
+function WritingApp({initialPlacement,capturePlacement,toolbarStore}:{
   initialPlacement?:RepositoryPanelPlacement;
   capturePlacement:RefObject<(()=>RepositoryPanelPlacement)|null>;
+  toolbarStore:ReturnType<typeof createGlobalToolbarStore>;
 }) {
   const desktopPanels = useDesktopPanels();
   const latestDesktop = useRef(desktopPanels);
@@ -1649,6 +1654,13 @@ function WritingApp({initialPlacement,capturePlacement}:{
     : false;
   // 建议就地显示在正文锚点后面，不再用底部浮层压住文字。
   const inlineProposal=useMemo<InlineProposal|null>(()=>p?{id:p.id,from:p.from,to:p.to,mode:modeLabels[p.mode],count:p.count,text:p.text,original:p.original,reason:p.reason,stale,node:p.node,placement:p.placement,refinementNote:p.refinementNote}:null,[p,stale]);
+  useLayoutEffect(()=>{
+    if(appearanceSettings.appearance.floatingToolbarVisible===false){toolbarStore.publish(null);return;}
+    const available=()=>appAlive.current&&!switching.current&&!closing.current;
+    toolbarStore.publish({mode,continuationLimit:config.continuationLimit,aiOpen:chatOpen&&!desktopPanels.hiddenWindows.has('conversation'),
+      annotationTool,busy,onRun:mode=>{if(available())runFromDock(mode);},onToggleAi:()=>{if(available())revealConversation();},
+      onAnnotate:()=>{if(available())setAnnotationTool(active=>!active);}});
+  });
   return (
     <div className="app-shell" data-revision={tick}>
       <AppHeader
@@ -1971,10 +1983,6 @@ function WritingApp({initialPlacement,capturePlacement}:{
         bubblePlacement={annotationPreferences.preferences.bubblePlacement}
       />)}
       {closingWindow&&([document,...[...desktopPanels.windows.values()].map(popup=>popup.document)]).map((doc,index)=>createPortal(<div className="desktop-closing" role="status">正在保存并退出…</div>,doc.body,`closing-${index}`))}
-      {appearanceSettings.appearance.floatingToolbarVisible!==false&&<GlobalToolbar mode={mode} continuationLimit={config.continuationLimit} aiOpen={chatOpen&&!desktopPanels.hiddenWindows.has('conversation')} annotationTool={annotationTool} onAnnotate={()=>{
-        setAnnotationTool(active=>!active);
-      }}
-        onRun={runFromDock} busy={busy} onToggleAi={revealConversation}/>}
       {notice && (
         <div className="toast" role="status">
           <CheckCheck size={16} />

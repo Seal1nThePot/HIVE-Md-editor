@@ -13,18 +13,23 @@ const WindowAnnotations=createContext<{
 }>({markedPanels:[],marks:[],remove:()=>{},clear:()=>{},toggle:()=>{}});
 export const useWindowAnnotations=()=>useContext(WindowAnnotations);
 
-export function WindowAnnotationProvider({children}:{children:ReactNode}){
-  const [marks,setMarks]=useState<WindowMark[]>([]);
-  const remove=useCallback((mark:WindowMark)=>setMarks(old=>old.filter(current=>current!==mark)),[]);
-  const toggle=useCallback((mark:WindowMark)=>setMarks(old=>{
+export function WindowAnnotationProvider({children,scopeKey=''}:{children:ReactNode;scopeKey?:string}){
+  const [stored,setStored]=useState<{scopeKey:string;marks:WindowMark[]}>({scopeKey,marks:[]});
+  const marks=stored.scopeKey===scopeKey?stored.marks:[];
+  useEffect(()=>setStored(old=>old.scopeKey===scopeKey?old:{scopeKey,marks:[]}),[scopeKey]);
+  const update=useCallback((change:(old:WindowMark[])=>WindowMark[])=>{
+    setStored(old=>({scopeKey,marks:change(old.scopeKey===scopeKey?old.marks:[])}));
+  },[scopeKey]);
+  const remove=useCallback((mark:WindowMark)=>update(old=>old.filter(current=>current!==mark)),[update]);
+  const toggle=useCallback((mark:WindowMark)=>update(old=>{
     const current=old.find(item=>item.id===mark.id);
     if(!current)return [...old,mark];
     const a=current.document,b=mark.document;
     if(current.workspaceId===mark.workspaceId&&a?.sessionId===b?.sessionId&&a?.file===b?.file)return old.filter(item=>item!==current);
     return old.map(item=>item===current?mark:item);
-  }),[]);
+  }),[update]);
   return <WindowAnnotations.Provider value={{
-    marks,markedPanels:marks.map(mark=>mark.id),remove,clear:()=>setMarks([]),toggle,
+    marks,markedPanels:marks.map(mark=>mark.id),remove,clear:()=>update(()=>[]),toggle,
   }}>{children}</WindowAnnotations.Provider>;
 }
 
