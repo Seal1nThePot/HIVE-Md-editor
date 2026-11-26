@@ -43,7 +43,7 @@ function pointerDrag(handle:HTMLElement,start:(event:PointerEvent)=>((dx:number,
 }
 
 export function mountMermaidViewer(slot:HTMLElement, svg:SVGSVGElement, editorScroller:HTMLElement) {
-  const doc=slot.ownerDocument, win=doc.defaultView!;
+  const doc=slot.ownerDocument, editor=editorScroller.closest('.cm-editor');
   const box=svg.viewBox.baseVal;
   const width=box.width || svg.getBoundingClientRect().width || 1;
   const height=box.height || svg.getBoundingClientRect().height || 1;
@@ -90,7 +90,7 @@ export function mountMermaidViewer(slot:HTMLElement, svg:SVGSVGElement, editorSc
     svg.style.translate=`${x}px ${y}px`;
   }
   function placeBoard(left:number,top:number){
-    const root=doc.documentElement;
+    const root=board.ownerDocument.documentElement;
     const maxX=Math.max(0,root.clientWidth-board.offsetWidth);
     const maxY=Math.max(0,root.clientHeight-board.offsetHeight);
     board.style.left=Math.min(maxX,Math.max(0,left))+'px';
@@ -139,38 +139,43 @@ export function mountMermaidViewer(slot:HTMLElement, svg:SVGSVGElement, editorSc
   button('适应窗口','适应窗口',fitImage);
   button('按实际大小显示','原大',()=>zoom(1));
   const expand=button('展开 Mermaid 看板','展开看板',()=>{
+    bindOwner();
     if(board.isConnected){raiseBoard();close.focus({preventScroll:true});return;}
+    const owner=slot.ownerDocument;
     saved={scale,fit,left:viewport.scrollLeft,top:viewport.scrollTop};
     cancelPan();
     slot.style.height=slot.getBoundingClientRect().height+'px';
-    doc.body.append(board);board.append(viewer);expand.hidden=true;
-    placeBoard((doc.documentElement.clientWidth-board.offsetWidth)/2,(doc.documentElement.clientHeight-board.offsetHeight)/2);
+    owner.body.append(board);board.append(viewer);expand.hidden=true;
+    const {clientWidth,clientHeight}=owner.documentElement;
+    placeBoard((clientWidth-board.offsetWidth)/2,(clientHeight-board.offsetHeight)/2);
     raiseBoard();
     fitImage();
     close.focus({preventScroll:true});
   });
   function raiseBoard(){
-    const previous=raisedBoards.get(doc);
+    const owner=board.ownerDocument,previous=raisedBoards.get(owner);
     if(previous===board)return;
     if(previous)delete previous.dataset.mermaidRaised;
-    raisedBoards.set(doc,board);
+    raisedBoards.set(owner,board);
     board.dataset.mermaidRaised='';
   }
   function removeBoard(){
-    if(raisedBoards.get(doc)===board)raisedBoards.delete(doc);
+    const owner=board.ownerDocument;
+    if(raisedBoards.get(owner)===board)raisedBoards.delete(owner);
     delete board.dataset.mermaidRaised;
     board.remove();
   }
-  function closeBoard(){
+  function closeBoard(restoreFocus=true){
     if(!saved)return;
     cancelDrags();
     slot.append(viewer);slot.style.removeProperty('height');removeBoard();
     expand.hidden=false;
     svg.style.removeProperty('translate');
     fit=saved.fit;resize(fit?fitScale():saved.scale);viewport.scrollTo(saved.left,saved.top);
-    saved=undefined;expand.focus({preventScroll:true});
+    saved=undefined;
+    if(restoreFocus)expand.focus({preventScroll:true});
   }
-  close.addEventListener('click',closeBoard);
+  close.addEventListener('click',()=>closeBoard());
   board.addEventListener('pointerdown',raiseBoard,true);
   board.addEventListener('focusin',raiseBoard);
   board.addEventListener('keydown',event=>{
@@ -208,24 +213,41 @@ export function mountMermaidViewer(slot:HTMLElement, svg:SVGSVGElement, editorSc
     return (dx,dy)=>placeBoard(offsetLeft+dx,offsetTop+dy);
   });
   function cancelDrags(){cancelPan();cancelMove();}
-  win.addEventListener('blur',cancelDrags);
-  win.addEventListener('resize',keepBoardVisible);
-  let resizeFrame=0;
-  const observer=new win.ResizeObserver(()=>{
-    if(resizeFrame)return;
-    resizeFrame=win.requestAnimationFrame(()=>{
-      resizeFrame=0;
-      if(fit)resize(fitScale());
-      keepBoardVisible();
+  let ownerWindow:Document['defaultView']=null,observer:ResizeObserver|undefined,resizeFrame=0;
+  function unbindOwner(){
+    observer?.disconnect();
+    observer=undefined;
+    ownerWindow?.cancelAnimationFrame(resizeFrame);
+    ownerWindow?.removeEventListener('blur',cancelDrags);
+    ownerWindow?.removeEventListener('resize',keepBoardVisible);
+    ownerWindow=null;resizeFrame=0;
+  }
+  function bindOwner(){
+    const next=slot.ownerDocument.defaultView;
+    if(next===ownerWindow)return;
+    cancelDrags();
+    closeBoard(false);
+    unbindOwner();
+    if(!next)return;
+    ownerWindow=next;
+    next.addEventListener('blur',cancelDrags);
+    next.addEventListener('resize',keepBoardVisible);
+    observer=new next.ResizeObserver(()=>{
+      if(ownerWindow!==next||resizeFrame)return;
+      resizeFrame=next.requestAnimationFrame(()=>{
+        resizeFrame=0;
+        if(fit)resize(fitScale());
+        keepBoardVisible();
+      });
     });
-  });
-  observer.observe(viewport);
+    observer.observe(viewport);
+  }
+  editor?.addEventListener('hive:panel-document-changed',bindOwner);
+  bindOwner();
   fitImage();
   return ()=>{
-    observer.disconnect();
-    win.cancelAnimationFrame(resizeFrame);
-    win.removeEventListener('blur',cancelDrags);
-    win.removeEventListener('resize',keepBoardVisible);
+    editor?.removeEventListener('hive:panel-document-changed',bindOwner);
+    unbindOwner();
     cancelDrags();
     removeBoard();
   };
