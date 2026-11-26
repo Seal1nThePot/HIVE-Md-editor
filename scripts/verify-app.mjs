@@ -8,6 +8,7 @@ import {spawn} from 'node:child_process';
 import {launchBackend,workspaceBuildPaths} from '../desktop/backendProcess.mjs';
 const project=fileURLToPath(new URL('../',import.meta.url)),require=createRequire(import.meta.url);
 const pkg=JSON.parse(await fs.readFile(path.join(project,'package.json'),'utf8'));
+const expectedVersion=process.env.HIVE_VERIFY_EXPECTED_VERSION||pkg.version;
 const paths=workspaceBuildPaths(project);
 const output=path.resolve(process.env.HIVE_VERIFY_OUTPUT||path.join(paths.work,'evidence','ui'));
 const packaged=process.argv.includes('--package'),bundle=path.resolve(process.env.HIVE_VERIFY_BUNDLE||paths.release),prefix=packaged?'packaged':'source';
@@ -42,21 +43,22 @@ async function worker(){
         }
       }finally{settingsRoot.setProperty('--ui-scale',priorScale);}
       const fixtureEditor=get('.active-editor .split-main .cm-content').cmTile.root.view;
-      const codeLines=()=>[...document.querySelectorAll('.active-editor .cm-line.cm-preview-code-line')];
-      check('hidden code fences leave a framed code body',codeLines().length===3
-        &&getComputedStyle(codeLines()[0]).borderTopLeftRadius==='5px'
-        &&getComputedStyle(codeLines().at(-1)).borderBottomLeftRadius==='5px'
-        &&getComputedStyle(codeLines()[1]).boxShadow!=='none');
+      const codeWidget=()=>get('.active-editor .cm-code-block');
+      await wait(()=>codeWidget()?.querySelector('pre > code'),'short code block preview');
+      const framed=codeWidget();
+      const codeStyle=getComputedStyle(framed);
+      check('short code preview shows its frame, language and exact body',framed.querySelector('.hive-code-language')?.textContent==='C#'
+        &&framed.querySelector('pre > code').textContent.replace(/\\n$/,'')==='log 1\\n\\nlog 2'
+        &&parseFloat(codeStyle.borderTopWidth)>0&&parseFloat(codeStyle.borderTopLeftRadius)>0&&parseFloat(codeStyle.borderBottomLeftRadius)>0);
+      framed.querySelector('pre > code').click();
+      const fence=String.fromCharCode(96).repeat(3);
+      const editorLines=()=>[...document.querySelectorAll('.active-editor .split-main .cm-line')].map(line=>line.textContent);
+      await wait(()=>!codeWidget()&&editorLines().includes(fence+'csharp')&&editorLines().includes(fence),'editable code fences');
       const insideCode=fixtureEditor.state.sliceDoc().indexOf('log 1');
-      fixtureEditor.focus();
-      fixtureEditor.dispatch({selection:{anchor:insideCode+1},userEvent:'select.widget'});
-      check('both visible fences join the same code frame',
-        codeLines().length===5&&codeLines()[0].classList.contains('cm-preview-code-opening')
-        &&codeLines().at(-1).classList.contains('cm-preview-code-closing')
-        &&getComputedStyle(codeLines()[0]).borderTopLeftRadius==='5px'
-        &&getComputedStyle(codeLines()[1]).borderTopLeftRadius==='0px'
-        &&getComputedStyle(codeLines().at(-1)).borderBottomLeftRadius==='5px',
-        codeLines().map(line=>[line.textContent,line.className,getComputedStyle(line).borderRadius]));
+      check('clicking short code enters the editable Markdown frame',insideCode>=0&&fixtureEditor.state.selection.main.from>=insideCode
+        &&fixtureEditor.state.selection.main.from<fixtureEditor.state.sliceDoc().indexOf(fence,insideCode),editorLines());
+      fixtureEditor.dispatch({changes:{from:insideCode,to:insideCode+5,insert:'log 3'},userEvent:'input.type'});
+      check('editing the frame updates source and keeps both fences',fixtureEditor.state.sliceDoc().includes(fence+'csharp\\nlog 3\\n\\nlog 2\\n'+fence));
       get('.home-ribbon [aria-label="居中"]').click();
       await wait(()=>get('.error-toast'),'formatting error toast');
       const errorToast=get('.error-toast'),toastStart=performance.now();
@@ -156,7 +158,7 @@ async function worker(){
       get('[aria-label="切换仓库"]').click();await wait(()=>get('.recent-repositories-manage'),'recent repository menu');
       get('.recent-repositories-manage').click();await wait(()=>get('.repository-card'),'repository manager');check('shared repository manager is integrated',!!get('.repository-current')&&!!get('.repository-rename')&&!get('.repository-auto-save'));
       [...get('.repository-card-actions').querySelectorAll('button')].find(b=>b.textContent.includes('返回写作')).click();await pause();
-      const build=await(await fetch('/build-info.json')).json();check('current build metadata is present',build.version===${JSON.stringify(pkg.version)}&&!!build.buildNumber);
+      const build=await(await fetch('/build-info.json')).json();check('current build metadata is present',build.version===${JSON.stringify(expectedVersion)}&&!!build.buildNumber);
       const menuAction=async(path,text)=>{const row=get('.explorer-row[data-path="'+path+'"]');if(!row)throw Error('Missing file '+path);row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:110,clientY:240}));await wait(()=>get('.explorer-menu'),'file menu');const button=[...get('.explorer-menu').querySelectorAll('button')].find(b=>b.textContent.includes(text));if(!button)throw Error('Missing menu '+text);button.click();await pause();};
       const trash=async path=>{await menuAction(path,'删除到回收站');await wait(()=>get('dialog[aria-label="删除到回收站"]'),'delete confirmation');[...get('dialog[aria-label="删除到回收站"]').querySelectorAll('button')].find(b=>b.textContent==='移到回收站').click();await wait(()=>!get('.explorer-row[data-path="'+path+'"]'),'delete complete');await pause();};
       const open=async(path,text)=>{get('.explorer-row[data-path="'+path+'"]').click();await wait(()=>get('.document-pane .cm-content')?.textContent.includes(text),'open '+path);};
