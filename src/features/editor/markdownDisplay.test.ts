@@ -206,13 +206,21 @@ describe('live Markdown display',()=>{
     });
     expect(exposedMarker).toBe('1. ');
   });
-  it('shows code contents literally while hiding fence lines outside editing',()=>{
-    const state=create('```md\n# 这是代码\n**照原样显示**\n```');
-    expect(hidden(state).join('')).toBe('```md\n```');expect(previewPlan(state).styles.some(style=>style.className==='cm-preview-h1')).toBe(false);
-    const code=previewPlan(state).styles.filter(style=>style.className?.includes('cm-preview-code-line'));
-    expect(code.map(style=>style.className!.split(' ')[1])).toEqual([
-      'cm-preview-code-first','cm-preview-code-last','cm-preview-code-opening','cm-preview-code-closing',
-    ]);
+  it('renders literal fenced code in an independent block and reveals its complete source for editing',()=>{
+    const source='```md\n# 这是代码\n**照原样显示**\n```';
+    const state=create(source);
+    const block=previewPlan(state).replacements.find(item=>item.kind==='code');
+    expect(block).toMatchObject({text:'# 这是代码\n**照原样显示**',language:'md',block:true});
+    expect(previewPlan(state).styles.some(style=>style.className==='cm-preview-h1')).toBe(false);
+    expect(visibleReplacements(state,true).some(item=>item.kind==='code')).toBe(false);
+    expect(state.sliceDoc()).toBe(source);
+  });
+  it('keeps huge fences in the existing virtual line viewport',()=>{
+    const source='```ts\n'+'const value=1;\n'.repeat(2000)+'```';
+    const state=create(source);
+    expect(previewPlan(state).replacements.some(item=>item.kind==='code')).toBe(false);
+    expect(previewPlan(state).styles.filter(style=>style.className?.includes('cm-preview-code-line')).length).toBe(2002);
+    expect(state.sliceDoc()).toBe(source);
   });
   it('hides HTML underline and alignment markers while preserving their effects',()=>{
     const state=create('<div style="text-align: center;">\n\n<u>正文</u>\n\n</div>');

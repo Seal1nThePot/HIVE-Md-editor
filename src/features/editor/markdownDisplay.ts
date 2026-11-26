@@ -12,6 +12,8 @@ import {MathWidget} from './mathWidget';
 import {frontmatterVisible,subscribeFrontmatterVisibility} from './frontmatterVisibility';
 import {typographyUpdateQueue} from '../typography/typographyUpdateQueue';
 import {isolateHistory} from '@codemirror/commands';
+import {codeLanguageLabel,codeHighlightRanges} from './codeHighlight';
+import './code-block.css';
 import {codeBlockViewport} from './codeBlockViewport';
 import {MermaidWidget} from './mermaidWidget';
 import {detailsOpenState, detailsReplacements} from './detailsBlocks';
@@ -163,6 +165,52 @@ const punctuationJoins=EditorView.outerDecorations.compute([displayModeField,pre
     .map(item=>(item.codeGroup?codePunctuationJoin:punctuationJoin).range(item.from,item.to)),true);
 });
 function activeLines(state:EditorState,selection:EditorSelection|null){return previewActiveLines(state,selection).map(line=>`${line.from}:${line.to}`).join(',');}
+class CodePreviewWidget extends WidgetType{
+  constructor(readonly item:PreviewReplacement,readonly readOnly:boolean){super();}
+  eq(other:CodePreviewWidget){return this.item.text===other.item.text&&this.item.language===other.item.language&&this.item.from===other.item.from&&this.readOnly===other.readOnly;}
+  toDOM(view:EditorView){
+    const document=view.dom.ownerDocument;
+    const root=document.createElement('div');
+    root.className='hive-code-block cm-code-block';
+    const language=codeLanguageLabel(this.item.language??'');
+    if(language){const header=document.createElement('div');header.className='hive-code-language';header.textContent=language;root.append(header);}
+    const pre=document.createElement('pre');
+    const code=document.createElement('code');
+    const text=this.item.text??'';
+    let position=0;
+    for(const range of codeHighlightRanges(text,this.item.language??'')){
+      if(range.from>position)code.append(document.createTextNode(text.slice(position,range.from)));
+      const token=document.createElement('span');token.className=range.className;token.textContent=text.slice(range.from,range.to);code.append(token);position=range.to;
+    }
+    code.append(document.createTextNode(text.slice(position)));
+    pre.append(code);root.append(pre);
+    if(!this.readOnly){
+      root.title='单击编辑 Markdown 代码块';
+      root.addEventListener('click',event=>{
+        if(!document.getSelection()?.isCollapsed)return;
+        event.preventDefault();
+        const caret=document.caretRangeFromPoint(event.clientX,event.clientY);
+        let offset=0;
+        if(caret&&code.contains(caret.startContainer)){
+          const range=document.createRange();
+          range.selectNodeContents(code);
+          range.setEnd(caret.startContainer,caret.startOffset);
+          offset=range.toString().length;
+        }
+        const bodyStart=Math.min(this.item.to,view.state.doc.lineAt(this.item.from).to+1);
+        view.dispatch({selection:{anchor:Math.min(this.item.to,bodyStart+offset)},effects:setPreviewFocus.of(true)});
+        view.focus();
+      });
+    }
+    pre.addEventListener('wheel',event=>{
+      if(!event.shiftKey||event.ctrlKey||event.metaKey||pre.scrollWidth<=pre.clientWidth)return;
+      pre.scrollLeft+=(event.deltaX||event.deltaY)*(event.deltaMode===1?view.defaultLineHeight:event.deltaMode===2?pre.clientWidth:1);
+      event.preventDefault();event.stopPropagation();
+    },{passive:false});
+    return root;
+  }
+  ignoreEvent(){return true;}
+}
 class WideTableNotice extends WidgetType{
   constructor(readonly readOnly:boolean){super();}
   eq(other:WideTableNotice){return this.readOnly===other.readOnly;}
@@ -206,6 +254,8 @@ function build(state:EditorState){
       const segments=tableSegments(item,state.doc);
       if(!segments.length){ranges.push(Decoration.widget({widget:new WideTableNotice(state.readOnly),block:true,side:-1}).range(item.from));continue;}
       for(const segment of segments)ranges.push(Decoration.replace({block:true,widget:new TableWidget(item,state.field(imageContext,false)||null,marks.filter(mark=>mark.from<segment.to&&mark.to>segment.from),segment.fromRow,segment.toRow)}).range(segment.from,segment.to));
+    }else if(item.kind==='code'){
+      ranges.push(Decoration.replace({block:true,widget:new CodePreviewWidget(item,state.field(displayModeField)==='preview'||state.readOnly)}).range(item.from,item.to));
     }else if(item.kind==='image'){
       const size=state.field(imageViewSizes,false)?.get(item.from), width=size&&size.src===item.src&&size.to===item.to?size.width:1;
       ranges.push(Decoration.replace({widget:new ImagePreviewWidget(item,state.field(imageContext,false)||null,width,state.readOnly)}).range(item.from,item.to));

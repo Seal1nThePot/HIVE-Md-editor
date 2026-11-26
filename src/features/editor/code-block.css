@@ -1,0 +1,36 @@
+.hive-code-block {
+  border:1px solid color-mix(in srgb,var(--hive-document-text,var(--text)) 20%,transparent);
+  border-radius:6px;
+  background:color-mix(in srgb,var(--hive-accent) 7%,var(--hive-document-bg,var(--bg)));
+  color:var(--hive-document-text,var(--text));
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+  font-family:Consolas,monospace;
+  line-height:1.5;
+}
+.cm-editor .cm-code-block {margin:5px clamp(12px,6.4%,50px)}
+.hive-code-language {
+  padding:.4em .8em;
+  border-bottom:1px solid color-mix(in srgb,currentColor 15%,transparent);
+  font-family:inherit;
+  font-size:.85em;
+}
+.hive-code-block>pre,.chat-markdown .hive-code-block>pre {
+  margin:0;
+  padding:.65em .8em;
+  border:0;
+  background:none;
+  color:inherit;
+  font:inherit;
+  white-space:pre;
+  overflow:auto;
+  overflow-wrap:normal;
+  word-break:normal;
+}
+.hive-code-block>pre>code {padding:0;background:none;font:inherit;white-space:inherit}
+.hive-code-block .tok-keyword,.hive-code-block .tok-modifier {color:color-mix(in srgb,currentColor 35%,#a258d4)}
+.hive-code-block .tok-string,.hive-code-block .tok-string2 {color:color-mix(in srgb,currentColor 35%,#249e66)}
+.hive-code-block .tok-number,.hive-code-block .tok-bool,.hive-code-block .tok-null {color:color-mix(in srgb,currentColor 35%,#df7b29)}
+.hive-code-block .tok-comment {opacity:.65;font-style:italic}
+.hive-code-block .tok-variableName.tok-definition,.hive-code-block .tok-propertyName,.hive-code-block .tok-typeName,.hive-code-block .tok-tagName,.hive-code-block .tok-attributeName {color:color-mix(in srgb,currentColor 35%,#3d8bdf)}

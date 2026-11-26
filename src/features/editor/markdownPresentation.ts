@@ -5,12 +5,13 @@ import {inspectFormatting} from './formatting';
 import {markdownTree} from './markdownParse';
 import {scanMath,mergeSourceSpans,outsideMath,type SourceSpan} from './mathSyntax';
 import {paragraphTypographyStyles} from '../typography/paragraphTypography';
+import {fencedCodeBody} from './codeHighlight';
 import {listItemMarker} from './listStructure';
 
 type Span={from:number;to:number};
 type Node=SyntaxNode;
 export type PreviewCell=Span&{text:string;virtual?:number;trailing?:boolean};
-export type PreviewReplacement=Span&{reveal:Span;block?:boolean;kind?:'bullet'|'task'|'image'|'rule'|'table'|'properties'|'math'|'mermaid';text?:string;src?:string;rows?:PreviewCell[][];columns?:number;rowEnds?:{to:number;trailing:boolean}[];tableOrdinal?:number;list?:'padding'|'marker'|'ordered-marker'|'task-marker'};
+export type PreviewReplacement=Span&{reveal:Span;block?:boolean;kind?:'bullet'|'task'|'image'|'rule'|'table'|'properties'|'math'|'mermaid'|'code';language?:string;text?:string;src?:string;rows?:PreviewCell[][];columns?:number;rowEnds?:{to:number;trailing:boolean}[];tableOrdinal?:number;list?:'padding'|'marker'|'ordered-marker'|'task-marker'};
 export type PreviewStyle=Span&{className?:string;line?:boolean;align?:'left'|'center'|'right';title?:string;link?:string;linkReveal?:Span;list?:{depth:number;width:string;offset:number}};
 type PunctuationJoin=Span&{codeGroup?:true};
 export type PreviewPlan={replacements:PreviewReplacement[];styles:PreviewStyle[];punctuation:PunctuationJoin[]};
@@ -175,16 +176,21 @@ export function previewPlan(state:EditorState):PreviewPlan{
     if(node.name==='FencedCode'){
       const info=parts.find(item=>item.name==='CodeInfo');
       if(info&&/^mermaid(?:\s|$)/i.test(text.slice(info.from,info.to))){hide(node.from,node.to,span,{kind:'mermaid',block:true,text:parts.find(item=>item.name==='CodeText')?text.slice(parts.find(item=>item.name==='CodeText')!.from,parts.find(item=>item.name==='CodeText')!.to):''});return;}
+      const language=info?text.slice(info.from,info.to):'';
+      const body=fencedCodeBody(text,node);
       const [opening,closing]=parts.filter(item=>item.name==='CodeMark');
-      const openingLine=doc.lineAt(opening.from).number;
-      const lastBodyLine=closing?doc.lineAt(closing.from).number-1:doc.lineAt(Math.max(node.from,node.to-1)).number;
-      codeLines(openingLine+1,lastBodyLine);
-      lineStyles(opening.from,opening.to,'cm-preview-code-line cm-preview-code-opening');
-      hideLine(opening.from,span);
-      if(closing){
-        lineStyles(closing.from,closing.to,'cm-preview-code-line cm-preview-code-closing');
-        hideLine(closing.from,span);
-      }
+      const first=doc.lineAt(opening.from).number;
+      const last=closing?doc.lineAt(closing.from).number-1:doc.lineAt(Math.max(node.from,node.to-1)).number;
+      // Keep very large fences in CodeMirror's line viewport, avoiding a single huge DOM widget.
+      if(last-first>400||body.length>65536){
+        codeLines(first+1,last);
+        lineStyles(opening.from,opening.to,'cm-preview-code-line cm-preview-code-opening');
+        hideLine(opening.from,span);
+        if(closing){
+          lineStyles(closing.from,closing.to,'cm-preview-code-line cm-preview-code-closing');
+          hideLine(closing.from,span);
+        }
+      }else hide(node.from,node.to,span,{kind:'code',block:true,text:body,language});
       return;
     }
     if(node.name==='CodeBlock'){codeLines(doc.lineAt(node.from).number,doc.lineAt(Math.max(node.from,node.to-1)).number);return;}
