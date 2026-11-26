@@ -211,6 +211,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
   const plugins=usePlugins();
   const statusPlugins=plugins.catalog?.plugins.filter(plugin=>plugin.enabled);
   const switching=useRef(false),structuring=useRef(false);
+  const committingWorkspace=useRef(false);
 
   const workbenchRef = useRef<HTMLDivElement>(null);
   const appearanceSettings=useAppearance();
@@ -838,7 +839,12 @@ function WritingApp({initialPlacement,capturePlacement}:{
       const views=[...sessions.current.values()].flatMap(session=>session.view?[session.view]:[]);
       if(scratchView.current)views.push(scratchView.current);
       if(desktop.isComposing()||views.some(view=>view.composing))throw new Error('请先完成当前输入法组词，再切换文件夹。');
-      return freezeWorkspaceInput([document,...[...desktop.windows.values()].map(popup=>popup.document)],views);
+      const release=freezeWorkspaceInput([document,...[...desktop.windows.values()].map(popup=>popup.document)],views);
+      committingWorkspace.current=true;
+      return restoreFocus=>{
+        try {release(restoreFocus);}
+        finally {committingWorkspace.current=false;}
+      };
     },
     proposal, undo, prompt, dialog, running, requestAnchor, structuring, switching, viewApplying,
     creatingNote, savingPaths, fileWorkspace, saveSession, finalizeTrashedSessions, applyDiskFile,
@@ -1161,6 +1167,7 @@ function WritingApp({initialPlacement,capturePlacement}:{
   }, [dirty,hasUnsentDraft,proposalFor]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      if(committingWorkspace.current){event.preventDefault();event.stopImmediatePropagation();return;}
       if(event.defaultPrevented||event.isComposing||desktopPanels.isComposing())return;
       const target=event.target as HTMLElement|null;
       const doc=target?.ownerDocument||window.document;

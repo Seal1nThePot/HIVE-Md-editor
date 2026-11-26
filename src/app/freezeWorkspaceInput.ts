@@ -3,7 +3,7 @@ import type {EditorView} from '@codemirror/view';
 
 const barrier = new Compartment();
 const readOnlyChanges = EditorState.changeFilter.of(transaction=>!transaction.docChanged || transaction.isUserEvent('input.disk-sync'));
-const inputEvents = ['beforeinput','input','change','paste','drop'];
+const inputEvents = ['keydown','beforeinput','input','change','paste','drop'];
 
 export function freezeWorkspaceInput(documents:readonly Document[], views:readonly EditorView[]) {
   const stop = (event:Event) => {event.preventDefault();event.stopImmediatePropagation();};
