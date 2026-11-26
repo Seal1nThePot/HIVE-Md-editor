@@ -62,11 +62,18 @@ async function markUpdateReady(resources, token = process.env.HIVE_UPDATE_STARTU
 }
 
 function createLocalUpdate({ app, dialog, getParent, isMainOrigin, requestClose, resources, sourceFile,
-  rawFs = require('original-fs'), runtime, internetUpdate = createInternetUpdate(), execPath = process.execPath, launch = spawn }) {
+  rawFs = require('original-fs'), runtime, internetUpdate = createInternetUpdate(), execPath = process.execPath, launch = spawn,
+  sendProgress = () => {} }) {
   const archive = path.join(resources, 'app.asar');
   const supported = () => runtime.platform === 'win32' && app.isPackaged && app.getAppPath() === archive &&
     !process.env.PORTABLE_EXECUTABLE_FILE;
   let busy = false;
+  let progress = { phase: 'idle' };
+
+  function publish(event, next) {
+    progress = next;
+    sendProgress(event, next);
+  }
 
   async function releaseDirectory() {
     try {
@@ -124,11 +131,7 @@ function createLocalUpdate({ app, dialog, getParent, isMainOrigin, requestClose,
     return confirm.response === 0;
   }
 
-  async function apply(event) {
-    authorize(event);
-    if (!supported()) return { status: 'error', message: '应用内更新适用于 Windows 目录版。' };
-    if (busy) return { status: 'error', message: '已有更新正在处理。' };
-    busy = true;
+  async function applyUpdate(event) {
     let directory;
     let handedOff = false;
     try {
@@ -173,7 +176,16 @@ function createLocalUpdate({ app, dialog, getParent, isMainOrigin, requestClose,
       directory = candidateDirectory;
       const staged = path.join(directory, 'app.asar');
       if (online) {
-        await internetUpdate.stage(release, staged, rawFs);
+        const totalBytes = manifest.bytes;
+        let lastUpdate = performance.now();
+        publish(event, { phase: 'downloading', receivedBytes: 0, totalBytes });
+        await internetUpdate.stage(release, staged, rawFs, receivedBytes => {
+          const now = performance.now();
+          if (receivedBytes === totalBytes || now - lastUpdate < 100) return;
+          lastUpdate = now;
+          publish(event, { phase: 'downloading', receivedBytes, totalBytes });
+        });
+        publish(event, { phase: 'downloaded', receivedBytes: totalBytes, totalBytes });
       } else {
         const source = path.join(path.dirname(manifestPath), 'app.asar');
         const stat = await rawFs.promises.lstat(source);
@@ -209,6 +221,21 @@ function createLocalUpdate({ app, dialog, getParent, isMainOrigin, requestClose,
       return { status: 'error', message };
     } finally {
       if (directory && !handedOff) await cleanStage(directory, rawFs.promises);
+    }
+  }
+
+  async function apply(event) {
+    authorize(event);
+    if (!supported()) return { status: 'error', message: '应用内更新适用于 Windows 目录版。' };
+    if (busy) return { status: 'error', message: '已有更新正在处理。' };
+    busy = true;
+    try {
+      publish(event, { phase: 'checking' });
+      const result = await applyUpdate(event);
+      publish(event, result.status === 'restarting' ? { ...progress, phase: 'restarting' }
+        : result.status === 'error' ? { phase: 'error', message: result.message } : { phase: 'idle' });
+      return result;
+    } finally {
       busy = false;
     }
   }
@@ -219,6 +246,10 @@ function createLocalUpdate({ app, dialog, getParent, isMainOrigin, requestClose,
       return mode();
     },
     setSource,
+    progress(event) {
+      authorize(event);
+      return progress;
+    },
     apply,
   };
 }

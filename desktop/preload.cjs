@@ -40,6 +40,12 @@ contextBridge.exposeInMainWorld('hiveDesktop', Object.freeze({
   saveLocalMarkdown: document => ipcRenderer.invoke('hive:save-local-markdown', document),
   getUpdateMode: () => ipcRenderer.invoke('hive:update-available'),
   setUpdateSource: source => ipcRenderer.invoke('hive:update-source', source),
+  getUpdateProgress: () => ipcRenderer.invoke('hive:update-progress'),
+  onUpdateProgress: callback => {
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on('hive:update-progress-event', listener);
+    return () => ipcRenderer.removeListener('hive:update-progress-event', listener);
+  },
   installUpdate: () => ipcRenderer.invoke('hive:update'),
   windowCommand: (command, panelId) => { if (['minimize','maximize','close','focus','hide'].includes(command) && (panelId === undefined || typeof panelId === 'string')) ipcRenderer.send('hive:window-command', command, panelId); },
   panelReady: (id, placement, inactive) => { if (typeof id === 'string') return ipcRenderer.sendSync('hive:panel-ready', id, placement, inactive === true); return false; },

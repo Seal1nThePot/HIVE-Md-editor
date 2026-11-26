@@ -80,7 +80,7 @@ function createInternetUpdate(fetchFile = globalThis.fetch) {
       return { manifest, archiveUrl: new URL(archiveName, base) };
     },
 
-    async stage(release, destination, rawFs) {
+    async stage(release, destination, rawFs, onProgress = () => {}) {
       const signal = AbortSignal.timeout(10 * 60 * 1000);
       const response = await download(release.archiveUrl, signal);
       if (!response.ok || !response.body) {
@@ -93,6 +93,7 @@ function createInternetUpdate(fetchFile = globalThis.fetch) {
         transform(chunk, _encoding, done) {
           received += chunk.length;
           if (received > limit) return done(new Error('下载的更新包大小与清单不符。'));
+          onProgress(received);
           done(null, chunk);
         },
       });

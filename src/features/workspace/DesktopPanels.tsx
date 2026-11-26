@@ -15,6 +15,7 @@ import type {AboutInfo} from '../../shared/buildInfo';
 import type {DockIconOverrides} from '../../../shared/iconPack.mjs';
 import type {DiskFile} from '../../shared/fileTypes';
 import type {DocumentWrite,DocumentWriteResult} from '../files/writeDocument';
+import type {UpdateProgress} from '../settings/updateProgress';
 
 declare global {
   interface Window {hiveDesktop?:{
@@ -27,6 +28,8 @@ declare global {
     saveLocalMarkdown?:(document:DocumentWrite)=>Promise<DocumentWriteResult>;
     getUpdateMode?:()=>Promise<'unsupported'|'directory'|'picker'|'internet'>;
     setUpdateSource?:(source:'local'|'internet')=>Promise<'unsupported'|'directory'|'picker'|'internet'>;
+    getUpdateProgress?:()=>Promise<UpdateProgress>;
+    onUpdateProgress?:(callback:(progress:UpdateProgress)=>void)=>()=>void;
     installUpdate?:()=>Promise<{status:'cancelled'|'restarting'|'current'|'empty'}|{status:'error';message:string}>;
     onCloseRequested:(callback:()=>void)=>()=>void;finishClose:(allow:boolean)=>void;
     onServiceError:(callback:()=>void)=>()=>void;onPanelCloseRequested:(callback:(id:string)=>void)=>()=>void;

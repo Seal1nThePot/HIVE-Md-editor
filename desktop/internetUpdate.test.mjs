@@ -70,4 +70,18 @@ describe('GitHub updates', () => {
     await expect(updates.stage({ archiveUrl: new URL('https://github.com/update'), manifest: { bytes: 4 } },
       path.join(folder, 'app.asar'), fs)).rejects.toThrow('更新包');
   });
+
+  it('emits cumulative bytes for streamed chunks even without a Content-Length header', async () => {
+    const source = [Buffer.from('a'), Buffer.from('sa'), Buffer.from('r')];
+    const body = new ReadableStream({ pull(controller) {
+      if (source.length) controller.enqueue(source.shift());
+      else controller.close();
+    }});
+    const updates = createInternetUpdate(vi.fn().mockResolvedValue(new Response(body)));
+    const folder = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'hive-internet-update-'));
+    folders.push(folder);
+    const progress = vi.fn();
+    await updates.stage({archiveUrl:new URL('https://github.com/update'),manifest:{bytes:4}}, path.join(folder,'app.asar'), fs, progress);
+    expect(progress.mock.calls).toEqual([[1],[3],[4]]);
+  });
 });

@@ -13,6 +13,9 @@
 .about-settings .about-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
 .about-settings .about-actions button { white-space:normal; text-align:left; }
 .about-settings .about-update-source { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.about-settings .about-download-progress { display:grid; gap:6px; margin-top:14px; font-variant-numeric:tabular-nums; }
+.about-settings .about-download-progress > div { display:flex; justify-content:space-between; flex-wrap:wrap; gap:5px 14px; }
+.about-settings .about-download-progress progress { width:100%; height:9px; accent-color:var(--hive-accent); }
 .about-settings .about-feedback { color:var(--hive-settings-text); }
 @container (max-width:310px) {
   .about-settings dl > div { grid-template-columns:minmax(0,1fr); gap:4px; }

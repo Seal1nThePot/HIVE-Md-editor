@@ -216,6 +216,9 @@ const localUpdate = createLocalUpdate({
   app, dialog, isMainOrigin: isMainFrame, resources: process.resourcesPath,
   sourceFile: path.join(app.getPath('userData'), 'update-source.json'),
   runtime: { electron: process.versions.electron, platform: process.platform, arch: process.arch },
+  sendProgress: (event, progress) => {
+    if (!event.sender.isDestroyed() && isMainFrame(event)) event.sender.send('hive:update-progress-event', progress);
+  },
   getParent: () => panelWindows.get('settings') || mainWindow,
   requestClose: start => new Promise((resolve, reject) => {
     if (!mainWindowPresented || !rendererReady || closePending || exiting) { resolve(false); return; }
@@ -225,6 +228,7 @@ const localUpdate = createLocalUpdate({
 });
 ipcMain.handle('hive:update-available', localUpdate.available);
 ipcMain.handle('hive:update-source', localUpdate.setSource);
+ipcMain.handle('hive:update-progress', localUpdate.progress);
 ipcMain.handle('hive:update', localUpdate.apply);
 ipcMain.handle('hive:repository-directory',createRepositoryPicker({
   isMainOrigin,
