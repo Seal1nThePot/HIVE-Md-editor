@@ -4,7 +4,7 @@ import {isolateHistory, invertedEffects} from '@codemirror/commands';
 import {createUiIcon} from '../../shared/icons';
 import type {PreviewCell, PreviewReplacement} from './markdownPresentation';
 import type {ImageContext} from './insertions';
-import {defaultTableWidths,sameSourceTable,tableCell} from './tableViewport';
+import {defaultTableWidths,fitTableWidths,sameSourceTable,tableCell} from './tableViewport';
 import {tableOperation,type TableAction} from './tableOperations';
 import {renderTableCell,tableCellSourceOffset} from './tableCellPresentation';
 import './table-actions.css';
@@ -71,10 +71,12 @@ function tableColumns(table:HTMLTableElement,controller:Controller){
     table.prepend(group);
   }
   if(group.children.length!==defaults.length)return;
-  const widths=defaults.map((width,col)=>{
-    const resized=controller.sizes.widths[col];
-    return typeof resized==='number'?`${resized}px`:`${width}em`;
-  });
+  const window=controller.root.ownerDocument.defaultView!;
+  const rootStyle=window.getComputedStyle(controller.root);
+  const tableStyle=window.getComputedStyle(table);
+  const fontSize=Number.parseFloat(rootStyle.fontSize)||16;
+  const available=Math.max(0,controller.root.clientWidth-(Number.parseFloat(tableStyle.marginLeft)||0)-(Number.parseFloat(tableStyle.marginRight)||0)-1);
+  const widths=fitTableWidths(defaults,controller.sizes.widths,available,fontSize).map(width=>`${width}px`);
   for(let col=0;col<widths.length;col++){
     const column=group.children[col] as HTMLElement;
     if(column.style.width!==widths[col])column.style.width=widths[col];
@@ -515,5 +517,5 @@ function render(c:Controller){
       if(col===(c.item.columns??row.length)-1){const button=edge('在右侧添加列','cm-table-add-column',()=>{activeRow=r;activeCol=col;runAction('column-after');});button.dataset.tableAction='column-after';}
       if(r===(c.item.rows?.length??1)-1){root.classList.add('cm-table-final-segment');const button=edge('在下方添加行','cm-table-add-row',()=>{activeRow=r;activeCol=col;runAction('row-after');});button.dataset.tableAction='row-after';}
       tr.append(td);queueMicrotask(fit);});(r===0?head!:body).append(tr);});
-  const ResizeObserverCtor=document.defaultView?.ResizeObserver;const widths=new WeakMap<Element,number>();const observer=ResizeObserverCtor?new ResizeObserverCtor(entries=>{for(const entry of entries){const width=entry.contentRect.width;if(widths.get(entry.target)===width)continue;widths.set(entry.target,width);const input=entry.target.querySelector<HTMLTextAreaElement>('textarea');if(input){input.style.height='auto';input.style.height=Math.max(24,input.scrollHeight)+'px';}}}):undefined;root.querySelectorAll('[data-cell]').forEach(cell=>observer?.observe(cell));const priorDispose=c.dispose;c.dispose=()=>{observer?.disconnect();priorDispose?.();};updateCellReadOnly(c);renderMarks(c);applySize();refreshActions();
+  const ResizeObserverCtor=document.defaultView?.ResizeObserver;const widths=new WeakMap<Element,number>();const observer=ResizeObserverCtor?new ResizeObserverCtor(entries=>{for(const entry of entries){const width=entry.contentRect.width;if(widths.get(entry.target)===width)continue;widths.set(entry.target,width);if(entry.target===root||entry.target===view.dom){applySize();continue;}const input=entry.target.querySelector<HTMLTextAreaElement>('textarea');if(input){input.style.height='auto';input.style.height=Math.max(24,input.scrollHeight)+'px';}}}):undefined;observer?.observe(root);observer?.observe(view.dom);root.querySelectorAll('[data-cell]').forEach(cell=>observer?.observe(cell));const priorDispose=c.dispose;c.dispose=()=>{observer?.disconnect();priorDispose?.();};updateCellReadOnly(c);renderMarks(c);applySize();refreshActions();
 }

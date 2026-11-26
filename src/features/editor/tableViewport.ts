@@ -73,3 +73,14 @@ export function sameSourceTable(a:Element|null|undefined,b:Element|null|undefine
   const first=(a as HTMLElement).dataset.tableOrdinal,second=(b as HTMLElement).dataset.tableOrdinal;
   return first!==undefined&&first===second&&a.closest('.cm-editor')===b.closest('.cm-editor');
 }
+
+/** Keep manual sizes, fit automatic columns to the page, then overflow at readable minima. */
+export function fitTableWidths(weights:number[],manual:(number|null)[],available:number,fontSize:number){
+  const minimum=weights.map(weight=>(weight<=8?4:6)*fontSize);
+  const result=weights.map((_,index)=>typeof manual[index]==='number'?manual[index]!:minimum[index]);
+  const automatic=weights.map((_,index)=>index).filter(index=>typeof manual[index]!=='number');
+  let remaining=Math.max(0,available-result.reduce((sum,width)=>sum+width,0));
+  const weightSum=automatic.reduce((sum,index)=>sum+weights[index],0);
+  for(const index of automatic)result[index]+=remaining*(weights[index]/Math.max(1,weightSum));
+  return result;
+}

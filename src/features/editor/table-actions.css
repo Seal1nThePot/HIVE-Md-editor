@@ -5,7 +5,7 @@
 .cm-editor .cm-table-sticky .cm-table-select-table-button{position:relative;opacity:1}
 .cm-editor .cm-table-widget{overflow-x:auto;max-width:100%;box-sizing:border-box;padding-top:26px}
 .cm-editor .cm-table-widget[data-table-segment]:not([data-table-segment="0"]){padding-top:0}
-.cm-editor .cm-table-widget .cm-preview-table{margin:0 clamp(24px,6.4%,50px)}
+.cm-editor .cm-table-widget .cm-preview-table{margin:0 clamp(12px,6.4%,50px)}
 .cm-editor .cm-table-sticky{position:absolute;z-index:5;overflow:hidden;pointer-events:none;background:var(--hive-document-bg,var(--bg))}
 .cm-editor .cm-table-sticky .cm-table-sticky-track{padding-top:26px}
 .cm-editor .cm-table-sticky .cm-preview-table{margin:0}
