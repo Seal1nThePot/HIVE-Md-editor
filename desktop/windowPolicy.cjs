@@ -29,8 +29,8 @@ function restoredPosition(maxBounds, normalBounds, cursor) {
   const offset = Math.max(0,Math.min(32,cursor.y-maxBounds.y));
   return {x:Math.round(cursor.x-normalBounds.width*ratio),y:Math.round(cursor.y-offset)};
 }
-function toolbarPosition(base, area) {
-  const x = base.x + (base.width-352)/2, y = base.y + base.height-104-24;
+function toolbarPosition(base, area, previous) {
+  const x = previous?.x ?? (base.x + (base.width-352)/2), y = previous?.y ?? (base.y + base.height-104-24);
   return {x:Math.round(Math.max(area.x,Math.min(x,area.x+Math.max(0,area.width-352)))),y:Math.round(Math.max(area.y,Math.min(y,area.y+Math.max(0,area.height-104))))};
 }
 function resizeBounds(bounds, start, cursor, edge, minWidth = 220, minHeight = 140) {

@@ -36,6 +36,7 @@ const panels = new Set();
 const panelWindows = new Map();
 const readyPanelIds = new Set();
 const deliberatelyHiddenPanels = new Set();
+let movedToolbarBounds;
 const sizeTargets = new WeakMap();
 const panelGeometry=createPanelGeometry({mainWindow:()=>mainWindow});
 let lastActivePanel = null, restoringWindows = false;
@@ -81,7 +82,10 @@ function panelBounds(features, id) {
   const values = Object.fromEntries((features || '').split(',').map(part => part.trim().split('=')));
   const number = (key, fallback) => Number.isFinite(Number(values[key])) && values[key] !== undefined ? Math.round(Number(values[key])) : fallback;
   const base = mainWindow.getBounds();
-  if (id === 'global-toolbar') return {...windowPolicy.toolbarPosition(base, screen.getDisplayMatching(base).workArea),width:352,height:104};
+  if (id === 'global-toolbar') {
+    const display = screen.getDisplayMatching(movedToolbarBounds || base);
+    return {...windowPolicy.toolbarPosition(base, display.workArea, movedToolbarBounds),width:352,height:104};
+  }
   const editor = id === 'editor' || id.startsWith('editor:');
   const maxWidth = id === 'settings' || id === 'repositories' ? 900 : editor ? 760 : 380, maxHeight = id === 'settings' || id === 'repositories' ? 800 : editor ? 620 : 520;
   const desired = { x: number('left', number('x', base.x + 50)), y: number('top', number('y', base.y + 50)), width: Math.min(maxWidth, Math.max(220, number('width', maxWidth))), height: Math.min(maxHeight, Math.max(140, number('height', maxHeight))) };
@@ -378,6 +382,7 @@ ipcMain.on('hive:panel-drag', (event, id, phase, edge, free) => {
   if (panelDrag.edge) { const [minWidth,minHeight] = child.getMinimumSize(), requested=windowPolicy.resizeBounds(panelDrag.startBounds, panelDrag.startCursor, screen.getCursorScreenPoint(), panelDrag.edge, minWidth, minHeight); child.setBounds(requested); sizeTargets.set(child,{width:requested.width,height:requested.height}); }
   else child.setBounds(windowPolicy.dragBounds(panelDrag.startBounds, panelDrag.startCursor, screen.getCursorScreenPoint()));
   const resizing = !!panelDrag.edge;
+  if (phase === 'end' && id === 'global-toolbar') movedToolbarBounds = child.getBounds();
   if (phase === 'end' && process.env.HIVE_DESKTOP_USER_DATA) console.log('HIVE drag end:',JSON.stringify({id,from:panelDrag.startBounds,to:child.getBounds(),edge:panelDrag.edge}));
   const freeMove=panelDrag.free;
   if (phase === 'end') panelDrag = null;

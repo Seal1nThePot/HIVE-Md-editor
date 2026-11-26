@@ -77,6 +77,8 @@ describe('desktop window policy', () => {
     const area={x:0,y:0,width:1920,height:1040};
     expect(policy.toolbarPosition({x:100,y:100,width:1280,height:800},area)).toEqual({x:564,y:772});
     expect(policy.toolbarPosition({x:-500,y:900,width:640,height:420},area)).toEqual({x:0,y:936});
+    expect(policy.toolbarPosition({x:100,y:100,width:1280,height:800},area,{x:815,y:223})).toEqual({x:815,y:223});
+    expect(policy.toolbarPosition({x:100,y:100,width:1280,height:800},area,{x:-172,y:1502})).toEqual({x:0,y:936});
   });
   it('accepts only bounded dock feedback and copies its display fields', () => {
     const rect={x:1,y:-2,width:30,height:40};
